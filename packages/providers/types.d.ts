@@ -22,6 +22,8 @@ interface ProviderModel {
   imageSizes?: string[];
   imageRatios?: string[];
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
+  /** 此视频模型必须使用宿主的持久化操作记录。 */
+  taskRecovery?: boolean;
   voices?: { title: string; voice: string }[];
 }
 
@@ -39,6 +41,25 @@ interface ProviderContext<TConfig = Record<string, unknown>> {
   signal?: AbortSignal;
   /** 宿主直接注入工具，供应商无需 import；FFmpeg 为按需安装的插件能力。 */
   tool: ProviderTools;
+  videoTask?: ProviderVideoTask;
+}
+
+interface ProviderVideoTaskState {
+  phase: "prepared" | "submitting" | "queued" | "in_progress" | "downloading" | "failed";
+  taskId?: string;
+  progress?: number;
+  error?: string;
+}
+
+interface ProviderVideoTask {
+  readonly id: string;
+  readonly state: ProviderVideoTaskState;
+  readonly requestSaved: boolean;
+  readRequest(): Promise<string>;
+  saveRequest(body: string): Promise<void>;
+  update(state: Partial<ProviderVideoTaskState>): Promise<void>;
+  /** 下载原始 MP4，保存断点并校验完整性；凭据只用于当前请求，不持久化。 */
+  download(url: string, headers: Record<string, string>): Promise<Uint8Array>;
 }
 
 interface MediaRequest {

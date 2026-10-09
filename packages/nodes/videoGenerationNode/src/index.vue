@@ -57,7 +57,7 @@
             class="modelSelect"
             filterable
             :loading="modelsLoading"
-            :disabled="generating || deleting"
+            :disabled="generating || deleting || pendingTask"
             placeholder="选择模型"
             aria-label="生成模型"
             noDataText="请先在设置中添加视频模型"
@@ -80,14 +80,20 @@
             v-model:generateAudio="data.generateAudio"
             :ratios="ratioOptions"
             :model="selectedModel"
-            :disabled="generating || deleting || !selectedModel" />
+            :disabled="generating || deleting || pendingTask || !selectedModel" />
           <el-button
             class="sendButton"
             :icon="generating ? IconPlayerStop : IconArrowUp"
-            :disabled="deleting || uploading || (!generating && (!generationPrompt || !selectedModel))"
-            :title="generating ? '停止生成' : '生成视频'"
-            :aria-label="generating ? '停止生成' : '生成视频'"
+            :disabled="deleting || uploading || taskChecking || (!generating && !pendingTask && (!generationPrompt || !selectedModel))"
+            :title="generating ? '停止本地等待' : pendingTask ? '恢复原视频任务' : '生成视频'"
+            :aria-label="generating ? '停止本地等待' : pendingTask ? '恢复原视频任务' : '生成视频'"
             @click="generating ? generationController?.abort() : startGeneration().catch((error) => showNodeError(error, '视频生成失败'))" />
+        </div>
+        <div v-if="videoTask || taskStatusError" class="taskStatus" role="status" aria-live="polite">
+          <div v-if="videoTask">{{ taskPhaseLabel }}<span v-if="videoTask.phase === 'in_progress' && videoTask.progress !== undefined"> · {{ videoTask.progress }}%</span></div>
+          <div v-if="videoTask?.taskId">任务编号：{{ videoTask.taskId }}</div>
+          <div v-if="pendingTask && !generating">原任务已保存，点击箭头恢复；不会新建视频。</div>
+          <div v-if="videoTask?.error || taskStatusError" class="taskError">{{ taskStatusError || videoTask?.error }}</div>
         </div>
       </el-card>
     </template>
@@ -99,7 +105,7 @@
 import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from "vue";
 import { ElButton, ElCard, ElSelect, ElOption, ElOptionGroup, ElLoading, ElDropdown, ElDropdownMenu, ElDropdownItem } from "element-plus";
 import { IconCameraAi, IconSparkles, IconArrowUp, IconPlayerStop, IconTransfer, IconMusic, IconLayersSubtract, IconScissors, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
-import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeVideoRequest, type NodeHandle } from "@toonflow/nodes-scaffold/runtime";
+import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeVideoRequest, type NodeHandle, type VideoTaskStatus } from "@toonflow/nodes-scaffold/runtime";
 import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useNodeGeneration } from "@toonflow/node-shared/useNodeGeneration";
@@ -124,7 +130,7 @@ const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals 
   label: "视频生成",
 });
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
-const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean });
+const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean; appliedVideoTaskId?: string });
 data.value.prompt ??= "";
 data.value.promptModel ??= [];
 data.value.model ??= "";
@@ -143,10 +149,17 @@ const player = ref<InstanceType<typeof videoPlayer>>();
 const actions = ref<InstanceType<typeof videoActions>>();
 const videoWidth = ref(0);
 let generationController: AbortController | undefined;
-const generationState = useNodeGeneration(outputs, () => generationController?.abort());
+const generationState = useNodeGeneration(outputs, () => generationController?.abort(), "已停止本地等待；已提交的视频任务及费用不会因此取消");
 const { generating } = generationState;
 let generation: Promise<void> | undefined;
 let modelsRequest: Promise<void> | undefined;
+const videoTask = ref<VideoTaskStatus | null>(null);
+const taskChecking = ref(true);
+const taskStatusError = ref("");
+const pendingTask = computed(() => !!videoTask.value && !["completed", "failed"].includes(videoTask.value.phase));
+const taskPhaseLabel = computed(() => videoTask.value ? ({ prepared: "准备提交", submitting: "确认提交回执", queued: "排队中", in_progress: "生成中", downloading: "保存原片中", completed: "原片已保存", failed: "原任务失败" })[videoTask.value.phase] : "");
+let taskTimer: ReturnType<typeof setTimeout> | undefined;
+let taskWorkspaceDirectory = "";
 // ACT: 供应商未声明视频比例范围，沿用界面的通用比例，具体支持范围由供应商校验。
 const ratioOptions = ["16:9", "9:16", "1:1", "4:3", "3:4"];
 const selectedModel = computed(() => models.value.find((item) => JSON.stringify([item.providerId, item.modelId]) === data.value.model));
@@ -216,10 +229,18 @@ const previewUrl = files.useFileUrl(
   (error) => showNodeError(error, "视频读取失败")
 );
 
-onMounted(() => loadModels().catch((error) => showNodeError(error, "模型读取失败")));
+onMounted(async () => {
+  try {
+    await loadModels();
+    await refreshVideoTask();
+    if (pendingTask.value && videoTask.value?.taskId && !videoTask.value.running) await resumeGeneration();
+  } catch (error) { showNodeError(error, "视频任务读取失败"); }
+  finally { taskChecking.value = false; }
+});
 onScopeDispose(() => {
   disposed = true;
   generationController?.abort();
+  clearTimeout(taskTimer);
 });
 
 async function replaceOutput(event: Event) {
@@ -265,6 +286,8 @@ function loadModels() {
 }
 
 async function startGeneration() {
+  await refreshVideoTask();
+  if (pendingTask.value) return resumeGeneration();
   const choice = selectedModel.value;
   if (generating.value) throw new Error("视频正在生成，请等待完成");
   if (uploading.value) throw new Error("视频正在替换，请等待完成");
@@ -278,6 +301,7 @@ async function startGeneration() {
   const controller = new AbortController();
   const input: Omit<NodeVideoRequest, "directory"> = {
     providerId: choice.providerId,
+    ...(choice.taskRecovery ? { operationId: crypto.randomUUID() } : {}),
     modelId: choice.modelId,
     prompt: generationPrompt.value,
     mode: selectedMode.value,
@@ -293,6 +317,7 @@ async function startGeneration() {
     audios: refList.value.flatMap((item) => item.dataType === "AUDIO" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []),
   };
   generationController = controller;
+  if (choice.taskRecovery) pollVideoTask();
   // ACT: 工具立即返回，任务由节点持有，停止或卸载时取消。
   generation = generationState.run(() => workspace
     .list()
@@ -304,10 +329,61 @@ async function startGeneration() {
       controller.signal.throwIfAborted();
       if (!result) throw new Error("供应商未返回视频");
       outputs.value.video = { dataType: "VIDEO", value: { url: result.path, mimeType: result.mimeType } };
+      if (input.operationId) data.value.appliedVideoTaskId = input.operationId;
     }))
     .catch((error) => showNodeError(error, "视频生成失败"))
     .finally(() => {
       generationController = undefined;
+      clearTimeout(taskTimer);
+      if (choice.taskRecovery && !disposed) refreshVideoTask().catch(error => { taskStatusError.value = error.message; });
+    });
+  return { status: "generating" };
+}
+
+async function refreshVideoTask() {
+  const directory = taskWorkspaceDirectory ||= (await files.getWorkspaceFiles().list()).directory;
+  const task = await ai.getVideoTask({ directory, outputDirectory: `assets/${id}` });
+  if (disposed) return;
+  videoTask.value = task;
+  taskStatusError.value = "";
+  if (task?.phase === "completed" && task.operationId !== data.value.appliedVideoTaskId) {
+    const result = task.result?.[0];
+    if (result) {
+      outputs.value.video = { dataType: "VIDEO", value: { url: result.path, mimeType: result.mimeType } };
+      data.value.appliedVideoTaskId = task.operationId;
+    }
+  }
+}
+
+function pollVideoTask() {
+  clearTimeout(taskTimer);
+  taskTimer = setTimeout(async () => {
+    try { await refreshVideoTask(); }
+    catch (error) { if (!disposed) taskStatusError.value = error instanceof Error ? error.message : "进度查询暂时不可用，原任务仍保留"; }
+    if (!disposed && (generating.value || videoTask.value?.running)) pollVideoTask();
+  }, 5000);
+}
+
+async function resumeGeneration() {
+  if (generating.value) throw new Error("视频任务仍在等待，请勿重复恢复");
+  const task = videoTask.value;
+  if (!task) throw new Error("没有可恢复的视频任务");
+  if (task.running) { pollVideoTask(); return { status: "generating" }; }
+  const { directory } = await files.getWorkspaceFiles().list();
+  const controller = new AbortController();
+  generationController = controller;
+  pollVideoTask();
+  generation = generationState.run(() => ai.resumeVideoTask({ directory, outputDirectory: `assets/${id}`, operationId: task.operationId }, controller.signal))
+    .then(([result]) => {
+      if (!result || disposed) return;
+      outputs.value.video = { dataType: "VIDEO", value: { url: result.path, mimeType: result.mimeType } };
+      data.value.appliedVideoTaskId = task.operationId;
+    })
+    .catch(error => showNodeError(error, "原视频任务恢复中断"))
+    .finally(() => {
+      generationController = undefined;
+      clearTimeout(taskTimer);
+      if (!disposed) refreshVideoTask().catch(error => { taskStatusError.value = error.message; });
     });
   return { status: "generating" };
 }
@@ -485,6 +561,14 @@ nodeTools.register({
       --el-button-hover-border-color: transparent;
       --el-button-hover-text-color: var(--el-bg-color);
     }
+  }
+  .taskStatus {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+    overflow-wrap: anywhere;
+    .taskError { color: var(--el-color-warning); }
   }
 }
 </style>

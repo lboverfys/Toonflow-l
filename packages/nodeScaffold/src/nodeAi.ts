@@ -2,7 +2,8 @@ import { onScopeDispose } from "vue";
 import { runAgentLoop, type AgentTool, type AgentToolResult } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, type AssistantMessage, type Context, type Message, type Model } from "@earendil-works/pi-ai";
 import { EventSourceParserStream } from "eventsource-parser/stream";
-import type { MediaGenerationRequest, MediaModel } from "@toonflow/tools-scaffold/runtime";
+import type { MediaGenerationRequest, MediaModel, VideoTaskStatus } from "@toonflow/tools-scaffold/runtime";
+export type { VideoTaskStatus } from "@toonflow/tools-scaffold/runtime";
 import type { NodeOutput } from "./values";
 
 export type NodeAiModel = {
@@ -175,6 +176,19 @@ export function useNodeAi() {
     return generateMedia("video", input, signal);
   }
 
+  async function getVideoTask(input: { directory: string; outputDirectory: string }, signal?: AbortSignal) {
+    return readResult<VideoTaskStatus | null>(await fetch(`/api/ai/media/videoTask/get?${new URLSearchParams(input)}`, {
+      headers: { "x-toonflow-workspace": "1" }, cache: "no-store", signal: requestSignal(signal),
+    }));
+  }
+
+  async function resumeVideoTask(input: { directory: string; outputDirectory: string; operationId: string }, signal?: AbortSignal) {
+    return readResult<NodeVideoResult[]>(await fetch("/api/ai/media/videoTask/resume", {
+      method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-workspace": "1" },
+      body: JSON.stringify(input), signal: requestSignal(signal),
+    }));
+  }
+
   function generateAudio(input: NodeAudioRequest, signal?: AbortSignal) {
     return generateMedia("audio", input, signal);
   }
@@ -229,5 +243,5 @@ export function useNodeAi() {
     return { text, ...(reasoning ? { reasoning } : {}) };
   }
 
-  return { getModels, getMediaModels, generateImage, generateVideo, generateAudio, generate };
+  return { getModels, getMediaModels, generateImage, generateVideo, getVideoTask, resumeVideoTask, generateAudio, generate };
 }

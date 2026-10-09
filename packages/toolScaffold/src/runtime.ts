@@ -81,6 +81,7 @@ export interface MediaModel {
   imageSizes?: string[];
   imageRatios?: string[];
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
+  taskRecovery?: boolean;
   audio?: boolean | "optional";
   voices?: { title: string; voice: string }[];
 }
@@ -91,6 +92,7 @@ export interface MediaReference {
 }
 
 export interface MediaGenerationRequest {
+  operationId?: string;
   providerId: string;
   modelId: string;
   prompt: string;
@@ -120,6 +122,19 @@ export interface GeneratedMedia {
   path: string;
   mimeType: string;
   mediaType: "image" | "video" | "audio";
+}
+
+export interface VideoTaskStatus {
+  operationId: string;
+  providerId: string;
+  modelId: string;
+  phase: "prepared" | "submitting" | "queued" | "in_progress" | "downloading" | "failed" | "completed";
+  taskId?: string;
+  progress?: number;
+  error?: string;
+  running: boolean;
+  result?: GeneratedMedia[];
+  updatedAt: number;
 }
 
 export interface MediaContext {

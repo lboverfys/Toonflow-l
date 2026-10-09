@@ -2,7 +2,7 @@ import { computed, ref, type Ref } from "vue";
 import { nodeTools, z } from "@toonflow/nodes-scaffold/nodeTools";
 import type { NodeOutputs } from "@toonflow/nodes-scaffold/values";
 
-export function useNodeGeneration(outputs: Readonly<Ref<NodeOutputs>>, cancel: () => void) {
+export function useNodeGeneration(outputs: Readonly<Ref<NodeOutputs>>, cancel: () => void, cancelMessage = "生成已取消") {
   const status = ref<"idle" | "running" | "succeeded" | "failed">("idle");
   const error = ref("");
   const generating = computed(() => status.value === "running");
@@ -36,7 +36,7 @@ export function useNodeGeneration(outputs: Readonly<Ref<NodeOutputs>>, cancel: (
     } catch (failure) {
       status.value = "failed";
       const message = (failure as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      error.value = failure instanceof Error && failure.name === "AbortError" ? "生成已取消"
+      error.value = failure instanceof Error && failure.name === "AbortError" ? cancelMessage
         : message || (failure instanceof Error ? failure.message : "生成失败");
       throw failure;
     }

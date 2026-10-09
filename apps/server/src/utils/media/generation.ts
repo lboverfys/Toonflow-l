@@ -1,11 +1,14 @@
 import { t, translateMessage } from "@/lib/i18n";
 import { mkdir, readFile, realpath, stat, unlink } from "@toonflow/file";
 import { join, relative } from "node:path";
-import { mediaProviders, type Provider } from "@toonflow/providers";
+import { createHash } from "node:crypto";
+import { mediaProviders, type Provider, type VideoTaskContext } from "@toonflow/providers";
 import type { GeneratedMedia, MediaGenerationRequest, MediaModel, MediaReference } from "@toonflow/tools-scaffold/runtime";
 import conf from "@/utils/conf";
 import { getMediaProvider, listMediaProviders, loadMediaProviderSource } from "@/utils/media/provider";
 import { lockWorkspaceFiles, resolveWorkspacePath, writeWorkspaceFile } from "@/utils/workspace/files";
+import { runVideoTask } from "@/utils/media/videoTasks";
+export { getVideoTask, getVideoTaskRequest } from "@/utils/media/videoTasks";
 
 const maxMediaSize = 100 * 1024 * 1024;
 const mediaExtensions: Record<string, string> = {
@@ -36,6 +39,7 @@ export async function listMediaModels(): Promise<MediaModel[]> {
     return [{
       providerId: provider.id, providerLabel: provider.label, modelId: model.id, label: model.label, type: model.type,
       mode: model.mode, durationResolutionMap: model.durationResolutionMap, audio: model.audio,
+      taskRecovery: model.taskRecovery === true,
       ...(model.type === "audio" ? { voices: model.voices } : {}),
       ...(model.type === "image" ? {
         imageSizes: imageOptions(Array.isArray(model.imageSizes) ? model.imageSizes : builtIn?.imageSizes, /^[^\u0000-\u001f\u007f]+$/),
@@ -133,6 +137,7 @@ export async function generateMedia(
   mediaType: "image" | "video" | "audio",
   request: MediaGenerationRequest,
   signal?: AbortSignal,
+  videoTask?: VideoTaskContext,
 ): Promise<GeneratedMedia[]> {
   signal?.throwIfAborted();
   if (!request.prompt.trim()) invalid("请输入生成提示词");
@@ -143,13 +148,30 @@ export async function generateMedia(
   const model = providerInfo.models.find(model => model.id === request.modelId && model.type === mediaType);
   if (!model) invalid("所选媒体模型不存在或类型不匹配，请重新选择");
   const configurations = record(conf.get("settings", {}).mediaProviderConfigs);
-  const provider = await loadMediaProviderSource(providerInfo.source, record(configurations[providerInfo.id]), signal, undefined, directory);
+  const provider = await loadMediaProviderSource(providerInfo.source, record(configurations[providerInfo.id]), signal, undefined, directory, videoTask);
   const generate = mediaType === "image" ? provider.generateImage : mediaType === "video" ? provider.generateVideo : provider.generateAudio;
   if (typeof generate !== "function") invalid(t`此供应商不支持${translateMessage({ image: "图片", video: "视频", audio: "音频" }[mediaType])}生成`);
   const rules = Array.isArray(provider.rules) ? provider.rules : [];
   if (rules.some(rule => rule.field === "apiKey") && (typeof provider.config.apiKey !== "string" || !provider.config.apiKey.trim())) invalid("请先在媒体模型设置中配置供应商 API Key");
+  if (mediaType === "video" && model.taskRecovery === true && !videoTask) {
+    return runVideoTask(directory, request, provider.config,
+      (saved, context) => generateMedia(directory, "video", saved, signal, context), provider.tool.errorMessage, signal);
+  }
+  // 恢复使用首次保存的原始请求，不重新读取可能已修改或删除的参考素材。
+  const restoring = videoTask?.requestSaved === true;
+  if (!restoring && providerInfo.id === "laoliVideo") {
+    if ((request.images?.length ?? 0) > 30) invalid("特价 2.5 最多使用 30 张参考图片");
+    let total = 0;
+    for (const image of request.images ?? []) {
+      const { path } = await resolveWorkspacePath(directory, image.path);
+      const info = await stat(path);
+      if (!info.isFile() || !info.size || info.size > 50 * 1024 * 1024) invalid("参考图片为空或超过 50 MiB");
+      total += info.size;
+      if (total > 70 * 1024 * 1024) invalid("参考图片合计不能超过 70 MiB");
+    }
+  }
   const references = async (items: MediaReference[] | undefined, type: string) => items ? Promise.all(items.map(item => readReference(directory, item, type, signal))) : undefined;
-  const images = await references(request.images, "image");
+  const images = restoring ? undefined : await references(request.images, "image");
   signal?.throwIfAborted();
   const assets = mediaType === "audio"
     ? await provider.generateAudio!({
@@ -160,13 +182,14 @@ export async function generateMedia(
     ? await provider.generateImage!({ model: request.modelId, prompt: request.prompt, images, ratio: request.ratio, size: request.size })
     : await provider.generateVideo!({
       model: request.modelId, prompt: request.prompt, images,
-      videos: await references(request.videos, "video"), audios: await references(request.audios, "audio"),
-      firstFrame: request.firstFrame ? await readReference(directory, request.firstFrame, "image", signal) : undefined,
-      lastFrame: request.lastFrame ? await readReference(directory, request.lastFrame, "image", signal) : undefined,
+      videos: restoring ? undefined : await references(request.videos, "video"), audios: restoring ? undefined : await references(request.audios, "audio"),
+      firstFrame: !restoring && request.firstFrame ? await readReference(directory, request.firstFrame, "image", signal) : undefined,
+      lastFrame: !restoring && request.lastFrame ? await readReference(directory, request.lastFrame, "image", signal) : undefined,
       ratio: request.ratio, resolution: request.resolution, duration: request.duration,
       generateAudio: request.generateAudio, mode: request.mode,
     });
   if (!Array.isArray(assets) || !assets.length) invalid("供应商未返回生成结果");
+  if (videoTask && assets.length !== 1) invalid("此任务应生成一条视频");
   const written: string[] = [];
   const result: GeneratedMedia[] = [];
   try {
@@ -178,11 +201,17 @@ export async function generateMedia(
       const release = lockWorkspaceFiles([output.path]);
       try {
         await mkdir(output.path, { recursive: true });
-        const file = join(outputDirectory, `${mediaType}${crypto.randomUUID()}.${mediaExtensions[mimeType]}`);
+        const file = join(outputDirectory, `${mediaType}${videoTask?.id ?? crypto.randomUUID()}.${mediaExtensions[mimeType]}`);
         const { path } = await resolveWorkspacePath(directory, file);
         signal?.throwIfAborted();
-        await writeWorkspaceFile(path, bytes, true);
-        written.push(path);
+        try { await writeWorkspaceFile(path, bytes, true); written.push(path); }
+        catch (error) {
+          if (!videoTask || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          const existing = await stat(path);
+          if (!existing.isFile() || existing.size !== bytes.byteLength) throw new Error("原任务视频文件已发生变化，请保留文件并检查");
+          const digest = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
+          if (digest(await readFile(path)) !== digest(bytes)) throw new Error("原任务视频文件内容不同，未覆盖已有文件");
+        }
         result.push({ path: relative(directory, path).replace(/\\/g, "/"), mimeType, mediaType });
       } finally { release(); }
     }
@@ -190,7 +219,7 @@ export async function generateMedia(
     return result;
   } catch (err) {
     // ACT: 只回滚本次创建的文件，保留目录中已有的节点资源。
-    await Promise.all(written.map(path => unlink(path).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; })));
+    if (!videoTask) await Promise.all(written.map(path => unlink(path).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; })));
     throw err;
   }
 }
