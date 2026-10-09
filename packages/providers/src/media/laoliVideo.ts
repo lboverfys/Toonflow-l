@@ -80,6 +80,7 @@ async function imageBytes(context: ProviderContext, input: MediaInput) {
 export default {
   id: "laoliVideo",
   label: "老李视频",
+  icon: "",
   version: "1.0.0",
   apiUrl: "https://video.laoliimage2.win",
   readme: "特价 2.5：16～30 秒整数时长、720p，最多 30 张 PNG/JPEG/WebP 图片，不支持视频和音频参考。基础价 2 元/条，再乘账户或分组倍率。每次点击新生成都会产生独立任务；中断后请恢复原任务。此型号没有人脸开关。密钥仅在配置中填写。",
@@ -140,7 +141,7 @@ export default {
           continue;
         }
         const value = await readJson(response);
-        const id = value.id ?? value.task_id;
+        const id = [value.id, value.task_id].find(value => typeof value === "string" && value.trim());
         if (response.ok && typeof id === "string" && id.trim()) {
           await task.update({ taskId: id, phase: "queued" });
           break;

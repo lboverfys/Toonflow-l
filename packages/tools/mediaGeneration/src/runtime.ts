@@ -27,6 +27,7 @@ export const imageGenerationSchema = z.strictObject({
 });
 export const videoGenerationSchema = z.strictObject({
   ...sharedFields,
+  prompt: z.string().min(1).max(100000).refine(value => !!value.trim(), "请输入生成提示词"),
   operationId: z.uuid().optional(),
   videos: z.array(videoReference).max(64).optional(),
   audios: z.array(audioReference).max(64).optional(),

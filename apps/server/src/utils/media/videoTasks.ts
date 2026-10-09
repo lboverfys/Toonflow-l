@@ -45,6 +45,9 @@ async function readRecord(path: string) {
 
 async function currentRecord(cwd: string, directory: string) {
   const path = (await resolveWorkspacePath(cwd, relative(cwd, join(directory, "current.json")))).path;
+  const info = await stat(path).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+  if (!info) return null;
+  if (!info.isFile() || info.size > 128) invalid("视频任务索引无效，请保留现场，不能重新提交");
   const id = await readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
   if (id === null) return null;
   const parsed = taskIdSchema.parse(JSON.parse(id));
@@ -114,6 +117,11 @@ async function downloadVideo(
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300000)]) : AbortSignal.timeout(300000), redirect: "error",
   });
   const reject = async (message: string): Promise<never> => { await response.body?.cancel(); return invalid(message, 502); };
+  if (response.status === 416) {
+    record.download = undefined;
+    await save();
+    return reject("原片续传长度已变化；断点已重置，恢复时将从头下载原任务，不会重新生成");
+  }
   if (!response.ok) return reject(`原片下载暂未完成（HTTP ${response.status}），请恢复原任务，不要重新生成`);
   if (response.headers.get("x-video-quality")?.toLowerCase() !== "original") return reject("接口未返回原片标记，已保留任务，请稍后恢复下载");
   const mime = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();

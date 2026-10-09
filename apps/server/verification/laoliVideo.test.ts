@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
-import { mkdir, mkdtemp, readFile, readdir, stat, writeAtomic } from "@toonflow/file";
+import { mkdir, mkdtemp, open, readFile, readdir, stat, writeAtomic } from "@toonflow/file";
 
 if (!process.env.TOONFLOW_TEST_DIR || !process.env.TOONFLOW_TEST_VIDEO) throw new Error("请设置 D 盘的 TOONFLOW_TEST_DIR 和 TOONFLOW_TEST_VIDEO，测试不会自动下载素材");
 await mkdir(process.env.TOONFLOW_TEST_DIR, { recursive: true });
@@ -16,6 +16,7 @@ let mode = "success";
 let posts: { key: string; body: string }[] = [];
 let queries = 0;
 let downloads: Headers[] = [];
+let redirected = 0;
 const submitted = new Map<string, { body: string; id: string }>();
 const processes: ReturnType<typeof Bun.spawn>[] = [];
 const controllers: AbortController[] = [];
@@ -23,8 +24,9 @@ const pending: Promise<unknown>[] = [];
 let releaseCreate: (() => void) | undefined;
 
 async function handleRequest(request: Request) {
-    if (request.headers.get("authorization") !== `Bearer ${key}`) return Response.json({ error: { message: "认证失败" } }, { status: 401 });
     const path = new URL(request.url).pathname;
+    if (path === "/leak") { redirected++; return new Response(video); }
+    if (request.headers.get("authorization") !== `Bearer ${key}`) return Response.json({ error: { message: "认证失败" } }, { status: 401 });
     if (request.method === "POST" && path === "/v1/videos") {
       const body = await request.text();
       const idempotencyKey = request.headers.get("idempotency-key") ?? "";
@@ -41,15 +43,18 @@ async function handleRequest(request: Request) {
       if (mode === "missingId" && posts.length === 1) return Response.json({ status: "queued" }, { status: 202 });
       if (mode === "idempotencyPending" && posts.length === 1) return Response.json({ error: { code: "idempotency_in_progress" } }, { status: 409, headers: { "retry-after": "0" } });
       if (mode === "unknownReceipt") return Response.json({ error: { message: "网关暂不可用" } }, { status: 503 });
+      if (mode === "receiptTaskId") return Response.json({ id: "", task_id: task.id, status: "queued" });
       return Response.json({ id: task.id, status: "queued" }, { status: 202 });
     }
     if (path.endsWith("/download")) {
       downloads.push(new Headers(request.headers));
+      if (mode === "redirectDownload") return new Response(null, { status: 302, headers: { location: `http://localhost:${port}/leak` } });
       if (mode === "downloadFailure") return Response.json({ error: { message: "暂时不能取片" } }, { status: 503 });
       if (mode === "htmlDownload") return new Response("<html>failed</html>", { headers: { "content-type": "text/html", "x-video-quality": "original" } });
       if (mode === "fakeMp4") return new Response("not-a-video", { headers: { "content-type": "video/mp4", "x-video-quality": "original" } });
       const headers: Record<string, string> = { "content-type": "video/mp4", "x-video-quality": mode === "previewDownload" ? "preview" : "original", etag: '"sample"' };
       const range = request.headers.get("range");
+      if (range && mode === "rangeExpired") return new Response(null, { status: 416 });
       if (range && mode !== "ignoreRange") {
         const offset = Number(/^bytes=(\d+)-$/.exec(range)![1]);
         headers["content-range"] = `bytes ${mode === "badRange" ? offset + 1 : offset}-${video.length - 1}/${video.length}`;
@@ -118,7 +123,7 @@ async function files(directory: string): Promise<string[]> {
 }
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-beforeEach(() => { mode = "success"; posts = []; queries = 0; downloads = []; submitted.clear(); configure(); });
+beforeEach(() => { mode = "success"; posts = []; queries = 0; downloads = []; redirected = 0; submitted.clear(); configure(); });
 afterEach(async () => {
   releaseCreate?.();
   releaseCreate = undefined;
@@ -160,6 +165,33 @@ for (const overrides of [{ duration: 15 }, { duration: 31 }, { duration: 16.5 },
 test("允许三十张参考图并保留重复图", async () => {
   await generateMedia(await workspace(), "video", request({ images: Array(30).fill({ path: "one.png", mimeType: "image/png" }) }));
   expect(JSON.parse(posts[0]!.body).images).toHaveLength(30);
+});
+test("保留提示词原文和空白，接受 task_id 回执", async () => {
+  mode = "receiptTaskId";
+  const prompt = "  第一行\n第二行  ";
+  await generateMedia(await workspace(), "video", request({ prompt }));
+  expect(JSON.parse(posts[0]!.body).prompt).toBe(prompt);
+  expect(posts.length).toBe(1);
+});
+for (const sizes of [[50 * 1024 * 1024 + 1], [36 * 1024 * 1024, 35 * 1024 * 1024]]) test(`在读取大图及提交前检查图片体积：${sizes.length} 张`, async () => {
+  const cwd = await workspace();
+  const images: { path: string; mimeType: string }[] = [];
+  for (const [index, size] of sizes.entries()) {
+    const path = `large${index}.png`;
+    const handle = await open(join(cwd, path), "wx");
+    try { await handle.truncate(size); } finally { await handle.close(); }
+    images.push({ path, mimeType: "image/png" });
+  }
+  await expect(generateMedia(cwd, "video", request({ images }))).rejects.toThrow(sizes.length === 1 ? "50 MiB" : "70 MiB");
+  expect(posts.length).toBe(0);
+});
+test("认证下载拒绝自动重定向，不向其他来源发送密钥", async () => {
+  mode = "redirectDownload";
+  const cwd = await workspace(), input = request();
+  await expect(generateMedia(cwd, "video", input)).rejects.toThrow();
+  expect(redirected).toBe(0);
+  expect(posts.length).toBe(1);
+  expect((await getVideoTask(cwd, input.outputDirectory))?.phase).toBe("downloading");
 });
 test("拒绝音视频参考和首尾帧", async () => {
   const cwd = await workspace();
@@ -316,6 +348,18 @@ test("拒绝错位的续传范围", async () => {
   await expect(generateMedia(cwd, "video", input)).rejects.toThrow();
   mode = "badRange";
   await expect(generateMedia(cwd, "video", input)).rejects.toThrow("续传范围");
+  expect(posts.length).toBe(1);
+});
+test("416 重置失效断点，继续下载原任务", async () => {
+  const cwd = await workspace(), input = request();
+  mode = "partialDownload";
+  await expect(generateMedia(cwd, "video", input)).rejects.toThrow();
+  mode = "rangeExpired";
+  await expect(generateMedia(cwd, "video", input)).rejects.toThrow("断点已重置");
+  mode = "success";
+  const result = await generateMedia(cwd, "video", input);
+  expect(downloads[2]!.get("range")).toBeNull();
+  expect(digest(await readFile(join(cwd, result[0]!.path)))).toBe(digest(video));
   expect(posts.length).toBe(1);
 });
 test("任务状态和磁盘记录不暴露密钥", async () => {
