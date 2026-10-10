@@ -361,5 +361,12 @@ export default function createWindowsUpdater(resourcesDirectory: string, lifecyc
     }
   }
 
+  if (process.env.TOONFLOW_PORTABLE === "1") {
+    return {
+      getLocalInfo,
+      updateInfo: () => ({}),
+      async checkForUpdate() { return { error: t`便携测试版暂不支持在线更新，请使用新的便携包，并保留 data、profile 和项目目录。` }; },
+    };
+  }
   return { getLocalInfo, updateInfo: () => ({ ...state, installError, updateProgress }), checkForUpdate, downloadUpdate, applyUpdate };
 }
