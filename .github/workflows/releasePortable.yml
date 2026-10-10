@@ -1,13 +1,19 @@
 name: 发布 Windows 便携版
-run-name: 发布 Windows 便携版 ${{ inputs.version }}
+run-name: 发布 Windows 便携版 ${{ inputs.version || '自动版本' }}
 
 on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - docs/**
+      - README.md
+      - AGENTS.md
   workflow_dispatch:
     inputs:
       version:
-        description: 新版本号（例如 2.0.3，必须高于当前正式版本）
+        description: 留空自动递增；也可指定更高版本号（例如 2.1.0）
         type: string
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -21,17 +27,14 @@ defaults:
     shell: pwsh
 
 jobs:
-  build:
-    name: 构建 Windows x64 便携包
+  prepare:
+    name: 自动确定发布版本
     runs-on: windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.parameters.outputs.version }}
+      needed: ${{ steps.parameters.outputs.needed }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
       - name: 校验版本与发布来源
         id: parameters
         env:
@@ -40,20 +43,63 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ($env:GITHUB_REF -ne "refs/heads/$env:defaultBranch") { throw '请从仓库默认分支运行此发布流程' }
-          $version = $env:releaseVersion.Trim()
-          if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw '版本号必须为 X.Y.Z，不带 v 前缀' }
+          $version = ([string]$env:releaseVersion).Trim()
           $api = "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY"
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $head = Invoke-RestMethod "$api/git/ref/heads/$env:defaultBranch" -Headers $headers -TimeoutSec 30
+          if ($head.object.sha -ne $env:GITHUB_SHA) {
+            'needed=false' >> $env:GITHUB_OUTPUT
+            '分支已有更新的提交，跳过此旧任务。' >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
           $latest = Invoke-RestMethod "$api/releases/latest" -Headers $headers -TimeoutSec 30
           if ($latest.tag_name -notmatch '^portable-v(\d+\.\d+\.\d+)$') { throw '当前最新版不是便携版，请先检查 Releases' }
-          if ([version]$version -le [version]$Matches[1]) { throw '新版本必须高于当前正式版本' }
+          $current = [version]$Matches[1]
+          if (!$version -and $latest.target_commitish -eq $env:GITHUB_SHA) {
+            'needed=false' >> $env:GITHUB_OUTPUT
+            '此提交已经发布，跳过重复构建。' >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+          if (!$version) {
+            $patch = $current.Build
+            # ACT: 分页只保留最大补丁号，避开失败草稿和已有版本，不逐条查询发布记录。
+            for ($page = 1; ; $page++) {
+              $releases = Invoke-RestMethod "$api/releases?per_page=100&page=$page" -Headers $headers -TimeoutSec 30
+              foreach ($release in $releases) {
+                if ($release.tag_name -notmatch '^portable-v(\d+\.\d+\.\d+)$') { continue }
+                $used = [version]$Matches[1]
+                if ($used.Major -eq $current.Major -and $used.Minor -eq $current.Minor) { $patch = [Math]::Max($patch, $used.Build) }
+              }
+              if ($releases.Count -lt 100) { break }
+            }
+            $version = '{0}.{1}.{2}' -f $current.Major, $current.Minor, ($patch + 1)
+          }
+          if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw '版本号必须为 X.Y.Z，不带 v 前缀' }
+          if ([version]$version -le $current) { throw '新版本必须高于当前正式版本' }
           foreach ($endpoint in @("git/ref/tags/portable-v$version", "releases/tags/portable-v$version")) {
             $existing = Invoke-WebRequest "$api/$endpoint" -Headers $headers -SkipHttpErrorCheck -TimeoutSec 30
             if ($existing.StatusCode -eq 200) { throw '同名版本标签或发布已存在，请检查 Releases；不覆盖已有版本' }
             if ($existing.StatusCode -ne 404) { throw "无法确认版本是否存在：HTTP $($existing.StatusCode)" }
           }
           "version=$version" >> $env:GITHUB_OUTPUT
-          "appVersion=$version" >> $env:GITHUB_ENV
+          'needed=true' >> $env:GITHUB_OUTPUT
+          "本次发布版本：$version" >> $env:GITHUB_STEP_SUMMARY
+
+  build:
+    name: 构建 Windows x64 便携包
+    needs: prepare
+    if: needs.prepare.outputs.needed == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      appVersion: ${{ needs.prepare.outputs.version }}
+    outputs:
+      version: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: 准备 D 盘构建目录
         run: |
           if (!(Test-Path -LiteralPath 'D:\')) { throw '运行器没有 D 盘，停止构建' }
@@ -117,7 +163,7 @@ jobs:
       - name: 保存三个发布文件
         uses: actions/upload-artifact@v7
         with:
-          name: toonflowPortable-${{ steps.parameters.outputs.version }}
+          name: toonflowPortable-${{ needs.prepare.outputs.version }}
           path: |
             ${{ env.portableOutput }}/toonflowPortable.zip
             ${{ env.portableOutput }}/stable-win-x64-toonflowPortable.tar.zst
