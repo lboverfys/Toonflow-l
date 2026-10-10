@@ -4,6 +4,7 @@ import cors from "cors";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { readFile } from "@toonflow/file";
+import { mediaProviders } from "@toonflow/providers";
 import type { Request, Response, NextFunction } from "express";
 import buildRoute from "@/core";
 import { errorFromCause } from "@/lib/responseFormat";
@@ -12,7 +13,7 @@ import initializePlugins from "@/utils/plugins/initialize";
 import { languageRequest, resolveRequestLocale, runWithLocale, setLocaleFallback, translateError, translateMessage } from "@/lib/i18n";
 import { detectLocale, normalizeLocale } from "@toonflow/i18n";
 
-const autoInstallProviders = ["tfRouter.ts", "apiMart.ts", "metaso.ts", "compshare.ts", "laoliVideo.ts", "laoliImage.ts"];
+const autoInstallProviders = mediaProviders.map(provider => `${provider.id}.ts`);
 
 export async function createApp({
   webRoot,
@@ -55,7 +56,7 @@ export async function createApp({
     let providerRevision = pluginRevision;
     if (providerRevision === undefined) {
       const hash = createHash("sha256");
-      for (const name of [...autoInstallProviders, "sub2apiImage.ts"]) {
+      for (const name of autoInstallProviders) {
         const source = await readFile(resolve(sourceDirectory, name)).catch((error: NodeJS.ErrnoException) => {
           if (error.code === "ENOENT") return Buffer.alloc(0);
           throw error;

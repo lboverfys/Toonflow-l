@@ -1,11 +1,11 @@
 # Sub2API 生图扩展
 
-`sub2apiImage.ts` 可通过 Toonflow 2.0 的自定义媒体供应商入口导入，现有便携版无需重新打包。默认站点为 `https://yuzapi.fun`，预置 `gpt-image-2.5-sunburst` 与 `gpt-image-2.5-flare`。
+从便携版 2.0.2 起，Sub2API 生图作为内置媒体供应商自动安装，已有的模型列表及配置保留。旧版仍可通过自定义媒体供应商入口导入 `sub2apiImage.ts`，无需重新打包。默认站点为 `https://yuzapi.fun`，预置 `gpt-image-2.5-sunburst` 与 `gpt-image-2.5-flare`。
 
 ## 导入与调整
 
-1. 打开「设置 → 媒体模型 → 添加自定义供应商」。
-2. 选择「文件导入」，导入 `sub2apiImage.ts`，点击「确定添加供应商」。
+1. 打开「设置 → 媒体模型」，找到「Sub2API 生图」。
+2. 若此前删除了它，可通过「添加供应商 → Sub2API 生图」重新添加；旧版使用「添加自定义供应商 → 文件导入」导入 `sub2apiImage.ts`。
 3. 打开该供应商的「编辑模型」，填写本站点签发的 API Key 并保存。
 4. 在画布图片生成节点中选择「Sub2API 生图」下的模型；文本 AI 也能通过媒体模型查询工具找到它。
 

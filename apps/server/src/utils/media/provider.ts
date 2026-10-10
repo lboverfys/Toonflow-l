@@ -242,11 +242,9 @@ export async function initializeMediaProviders(sourceDirectory: string, bundled:
   const marker = join(targetDirectory, "initialized");
   const previous = await readFile(marker, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
   if (previous === revision) return;
-  // ACT: Sub2API 仍由用户首次导入；仅在已经安装时随便携版本更新适配代码。
-  for (const name of [...bundled, "sub2apiImage.ts"]) {
+  for (const name of bundled) {
     const target = join(targetDirectory, name);
     const current = await readProvider(targetDirectory, name).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
-    if (!current && !bundled.includes(name)) continue;
     const source = await readFile(join(sourceDirectory, name), "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
     if (source === null) continue;
     const next = current ? replaceModels(source, parseProvider(current.source).models) : source;

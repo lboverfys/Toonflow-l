@@ -13,7 +13,6 @@ export type TfBalance = {
 export type TfPayment = { orderNumber: string; payUrl?: string };
 type TfOrder = { orderNumber: string; status: string | number };
 export type TfRechargeSku = { id: number; price: number; integral: number; describe: string };
-export type TfSponsor = { id: number; name: string; logoUrl: string; readme: string };
 type TfResponse<T> = { code: number; data: T; message?: string };
 
 export type TfPayParams = {
@@ -82,14 +81,6 @@ function balanceAmount(value: unknown): number {
 }
 
 export default {
-  async getSponsorList(options?: Pick<TfRequestOptions, "signal">): Promise<TfSponsor[]> {
-    const { data } = await client.post<TfResponse<TfSponsor[]>>("/web/sponsor/getSponsorList", null, { signal: options?.signal, timeout: 20000 });
-    const sponsors = responseData(data, "加载赞助商失败");
-    if (!Array.isArray(sponsors) || sponsors.some(item => !item || !Number.isSafeInteger(item.id) || item.id < 1
-      || typeof item.name !== "string" || typeof item.logoUrl !== "string" || typeof item.readme !== "string")) throw new Error("赞助商响应格式不正确");
-    return sponsors;
-  },
-
   async queryOrder(orderNumber: string, options?: TfRequestOptions): Promise<TfOrder> {
     if (!orderNumber.trim()) throw new Error("订单号不能为空");
     const { data } = await client.get<TfResponse<TfOrder>>("/v1/recharge/queryOrder", { ...requestOptions(options), params: { orderNumber: orderNumber.trim() } });
