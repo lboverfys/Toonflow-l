@@ -5,6 +5,7 @@ import type { AgentSession, CreateAgentSessionOptions, ToolDefinition } from "@e
 import type { QuestionContext } from "@toonflow/tools-scaffold/runtime";
 import { createAgentToolContext } from "@/agent/tools";
 import { createAgentModel } from "@/agent/runtime/model";
+import { installRequestBudget } from "@/utils/ai/requestBudget";
 import { getToolResultText } from "@/agent/runtime/sessions";
 import { createQuestionContext, answerQuestion } from "@/agent/bridge/question";
 import { listTools, loadTool, validateToolConfig } from "@/utils/plugins/tools";
@@ -195,7 +196,7 @@ export async function run(options: {
       },
     }));
     const thinkingLevel = options.thinkingLevel ?? "off";
-    const { runtime } = await createAgentModel(options.providerId, options.modelId, thinkingLevel);
+    const { runtime, provider } = await createAgentModel(options.providerId, options.modelId, thinkingLevel);
     active.controller.signal.throwIfAborted();
     const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
     const agentDir = join(state.cwd, ".agent");
@@ -213,6 +214,7 @@ export async function run(options: {
       tools: tools.map(tool => tool.name), customTools: tools,
     });
     active.session = session;
+    installRequestBudget(session, provider);
     active.controller.signal.throwIfAborted();
     const streamFunction = session.agent.streamFunction;
     session.agent.streamFunction = async (...args) => {

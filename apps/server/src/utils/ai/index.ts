@@ -7,6 +7,7 @@ import { z } from "zod";
 import conf from "@/utils/conf";
 import { readReference } from "@/utils/media/generation";
 import modelContextLimits from "@/utils/ai/modelContextLimits";
+import { withRequestBudget } from "@/utils/ai/requestBudget";
 
 export { fetchProviderModels } from "@/utils/ai/models";
 export { refreshProviderModels } from "@/utils/ai/initialize";
@@ -14,6 +15,7 @@ export { refreshProviderModels } from "@/utils/ai/initialize";
 export const providerSchema = z.object({
   apiUrl: z.url({ protocol: /^https?$/ }),
   apiKey: z.string(),
+  requestBodyLimitMiB: z.number().int().min(1).max(128).optional(),
   protocol: z.enum(["openai-completions", "openai-responses", "anthropic-messages"]),
   models: z.array(z.object({
     id: z.string(), label: z.string(),
@@ -135,7 +137,10 @@ export function streamAi(
     maxTokens: configuredModel.maxOutputTokens,
   };
   // ACT: 不按模型名预判附件能力；按供应商协议传递，是否支持由上游接口决定。
-  return aiApis[provider.protocol].streamSimple(model, context, {
+  const stream = withRequestBudget(aiApis[provider.protocol].streamSimple, provider, {
+    canCompact: () => false, isCompacting: () => false,
+  });
+  return stream(model, context, {
     apiKey: provider.apiKey,
     signal,
     onPayload: references.length ? (payload) => {
