@@ -137,6 +137,19 @@ export interface VideoTaskStatus {
   updatedAt: number;
 }
 
+export interface ImageTaskStatus {
+  operationId: string;
+  providerId: string;
+  modelId: string;
+  phase: "prepared" | "submitting" | "accepted" | "queued" | "processing" | "reconciling" | "settling" | "downloading" | "failed" | "expired" | "completed";
+  taskId?: string;
+  retryAt?: number;
+  error?: string;
+  running: boolean;
+  result?: GeneratedMedia[];
+  updatedAt: number;
+}
+
 export interface MediaContext {
   listModels(): Promise<MediaModel[]>;
   generateImage(request: MediaGenerationRequest, signal?: AbortSignal): Promise<GeneratedMedia[]>;

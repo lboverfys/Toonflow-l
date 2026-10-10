@@ -2,13 +2,15 @@ import { t, translateMessage } from "@/lib/i18n";
 import { mkdir, readFile, realpath, stat, unlink } from "@toonflow/file";
 import { join, relative } from "node:path";
 import { createHash } from "node:crypto";
-import { mediaProviders, type Provider, type VideoTaskContext } from "@toonflow/providers";
+import { mediaProviders, type Provider, type VideoTaskContext, type ImageTaskContext } from "@toonflow/providers";
 import type { GeneratedMedia, MediaGenerationRequest, MediaModel, MediaReference } from "@toonflow/tools-scaffold/runtime";
 import conf from "@/utils/conf";
 import { getMediaProvider, listMediaProviders, loadMediaProviderSource } from "@/utils/media/provider";
 import { lockWorkspaceFiles, resolveWorkspacePath, writeWorkspaceFile } from "@/utils/workspace/files";
 import { runVideoTask } from "@/utils/media/videoTasks";
 export { getVideoTask, getVideoTaskRequest } from "@/utils/media/videoTasks";
+import { runImageTask } from "@/utils/media/imageTasks";
+export { getImageTask, getImageTaskRequest } from "@/utils/media/imageTasks";
 
 const maxMediaSize = 100 * 1024 * 1024;
 const mediaExtensions: Record<string, string> = {
@@ -138,6 +140,7 @@ export async function generateMedia(
   request: MediaGenerationRequest,
   signal?: AbortSignal,
   videoTask?: VideoTaskContext,
+  imageTask?: ImageTaskContext,
 ): Promise<GeneratedMedia[]> {
   signal?.throwIfAborted();
   if (!request.prompt.trim()) invalid("请输入生成提示词");
@@ -148,7 +151,7 @@ export async function generateMedia(
   const model = providerInfo.models.find(model => model.id === request.modelId && model.type === mediaType);
   if (!model) invalid("所选媒体模型不存在或类型不匹配，请重新选择");
   const configurations = record(conf.get("settings", {}).mediaProviderConfigs);
-  const provider = await loadMediaProviderSource(providerInfo.source, record(configurations[providerInfo.id]), signal, undefined, directory, videoTask);
+  const provider = await loadMediaProviderSource(providerInfo.source, record(configurations[providerInfo.id]), signal, undefined, directory, videoTask, imageTask);
   const generate = mediaType === "image" ? provider.generateImage : mediaType === "video" ? provider.generateVideo : provider.generateAudio;
   if (typeof generate !== "function") invalid(t`此供应商不支持${translateMessage({ image: "图片", video: "视频", audio: "音频" }[mediaType])}生成`);
   const rules = Array.isArray(provider.rules) ? provider.rules : [];
@@ -157,8 +160,12 @@ export async function generateMedia(
     return runVideoTask(directory, request, provider.config,
       (saved, context) => generateMedia(directory, "video", saved, signal, context), provider.tool.errorMessage, signal);
   }
+  if (mediaType === "image" && model.taskRecovery === true && !imageTask) {
+    return runImageTask(directory, request, provider.config,
+      (saved, context) => generateMedia(directory, "image", saved, signal, undefined, context), provider.tool.errorMessage, signal);
+  }
   // 恢复使用首次保存的原始请求，不重新读取可能已修改或删除的参考素材。
-  const restoring = videoTask?.requestSaved === true;
+  const restoring = videoTask?.requestSaved === true || imageTask?.requestSaved === true;
   if (!restoring && providerInfo.id === "laoliVideo") {
     if ((request.images?.length ?? 0) > 30) invalid("特价 2.5 最多使用 30 张参考图片");
     let total = 0;
@@ -168,6 +175,16 @@ export async function generateMedia(
       if (!info.isFile() || !info.size || info.size > 50 * 1024 * 1024) invalid("参考图片为空或超过 50 MiB");
       total += info.size;
       if (total > 70 * 1024 * 1024) invalid("参考图片合计不能超过 70 MiB");
+    }
+  }
+  if (!restoring && providerInfo.id === "laoliImage") {
+    let total = 0;
+    for (const image of request.images ?? []) {
+      const { path } = await resolveWorkspacePath(directory, image.path);
+      const info = await stat(path);
+      if (!info.isFile() || !info.size || info.size > 25 * 1024 * 1024) invalid("参考图为空或超过当前 25 MiB 单图传输预算");
+      total += info.size;
+      if (total > 32 * 1024 * 1024) invalid("参考图合计超过当前 32 MiB 传输预算");
     }
   }
   const references = async (items: MediaReference[] | undefined, type: string) => items ? Promise.all(items.map(item => readReference(directory, item, type, signal))) : undefined;
@@ -190,6 +207,7 @@ export async function generateMedia(
     });
   if (!Array.isArray(assets) || !assets.length) invalid("供应商未返回生成结果");
   if (videoTask && assets.length !== 1) invalid("此任务应生成一条视频");
+  if (imageTask && assets.length !== 1) invalid("此任务应生成一张图片");
   if (videoTask?.downloaded) {
     if (assets[0] !== videoTask.downloaded) invalid("供应商返回的文件不是本任务下载结果");
     signal?.throwIfAborted();
@@ -207,16 +225,16 @@ export async function generateMedia(
       const release = lockWorkspaceFiles([output.path]);
       try {
         await mkdir(output.path, { recursive: true });
-        const file = join(outputDirectory, `${mediaType}${videoTask?.id ?? crypto.randomUUID()}.${mediaExtensions[mimeType]}`);
+        const file = join(outputDirectory, `${mediaType}${videoTask?.id ?? imageTask?.id ?? crypto.randomUUID()}.${mediaExtensions[mimeType]}`);
         const { path } = await resolveWorkspacePath(directory, file);
         signal?.throwIfAborted();
         try { await writeWorkspaceFile(path, bytes, true); written.push(path); }
         catch (error) {
-          if (!videoTask || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          if ((!videoTask && !imageTask) || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
           const existing = await stat(path);
-          if (!existing.isFile() || existing.size !== bytes.byteLength) throw new Error("原任务视频文件已发生变化，请保留文件并检查");
+          if (!existing.isFile() || existing.size !== bytes.byteLength) throw new Error("原任务媒体文件已发生变化，请保留文件并检查");
           const digest = (value: Uint8Array) => createHash("sha256").update(value).digest("hex");
-          if (digest(await readFile(path)) !== digest(bytes)) throw new Error("原任务视频文件内容不同，未覆盖已有文件");
+          if (digest(await readFile(path)) !== digest(bytes)) throw new Error("原任务媒体文件内容不同，未覆盖已有文件");
         }
         result.push({ path: relative(directory, path).replace(/\\/g, "/"), mimeType, mediaType });
       } finally { release(); }
@@ -225,7 +243,7 @@ export async function generateMedia(
     return result;
   } catch (err) {
     // ACT: 只回滚本次创建的文件，保留目录中已有的节点资源。
-    if (!videoTask) await Promise.all(written.map(path => unlink(path).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; })));
+    if (!videoTask && !imageTask) await Promise.all(written.map(path => unlink(path).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; })));
     throw err;
   }
 }

@@ -17,7 +17,7 @@ export function useImageInpaint() {
   const files = useNodeFiles();
   const ai = useNodeAi();
 
-  return async function generateInpaint(input: NodeImageRequest, inpaint: ImageInpaint, signal: AbortSignal): Promise<NodeImageResult[]> {
+  return async function generateInpaint(input: NodeImageRequest, inpaint: ImageInpaint, signal: AbortSignal, recovered?: NodeImageResult): Promise<NodeImageResult[]> {
     signal.throwIfAborted();
     if (!inpaint || ![inpaint.original, inpaint.guide, inpaint.mask].every(path => typeof path === "string" && path.trim())
       || !Array.isArray(inpaint.images) || inpaint.images.some(image => !image || typeof image.path !== "string" || !image.path.trim() || typeof image.mimeType !== "string" || !image.mimeType.startsWith("image/"))) {
@@ -58,12 +58,12 @@ export function useImageInpaint() {
       if (!context.getImageData(0, 0, canvas.width, canvas.height).data.some((value, index) => index % 4 === 3 && value)) throw new Error("局部重绘蒙版为空，请重新涂抹区域");
       const { directory } = await workspace.list();
       signal.throwIfAborted();
-      requested = true;
+      requested = !input.operationId;
       // ACT: 供应商尚未统一支持原生 mask；使用涂色参考引导，再按本地蒙版合成，严格保留区域外像素。
-      const [result] = await ai.generateImage({
+      const [result] = recovered ? [recovered] : await ai.generateImage({
         ...input,
         directory,
-        outputDirectory: `assets/${temporaryId}`,
+        outputDirectory: input.operationId ? input.outputDirectory : `assets/${temporaryId}`,
         images: [{ path: inpaint.original, mimeType: "image/png" }, { path: inpaint.guide, mimeType: "image/png" }, ...inpaint.images, ...(input.images ?? [])],
         prompt: buildInpaintPrompt(input.prompt),
       }, signal);
@@ -78,10 +78,19 @@ export function useImageInpaint() {
       context.drawImage(original, 0, 0);
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error("图片编码失败")), "image/png"));
       signal.throwIfAborted();
-      outputPath = await uploadNodeFile(workspace, id, new File([blob], "image.png", { type: "image/png" }));
+      if (input.operationId) {
+        outputPath = `assets/${id}/image${input.operationId}.png`;
+        try { await workspace.write(outputPath, blob, true); }
+        catch (error) {
+          if ((error as { response?: { data?: { data?: { code?: string } } } })?.response?.data?.data?.code !== "EEXIST") throw error;
+          const previous = new Uint8Array(await workspace.read(outputPath));
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          if (previous.length !== bytes.length || previous.some((value, index) => value !== bytes[index])) throw new Error("原任务重绘图片已变化，未覆盖已有文件");
+        }
+      } else outputPath = await uploadNodeFile(workspace, id, new File([blob], "image.png", { type: "image/png" }));
       signal.throwIfAborted();
       if (findNode(id) !== node) throw new Error("重绘节点已移除");
-      await workspace.remove(`assets/${temporaryId}`, true).catch(error => {
+      if (!input.operationId) await workspace.remove(`assets/${temporaryId}`, true).catch(error => {
         if (error?.response?.data?.data?.code !== "ENOENT") showNodeError(error, "重绘临时文件清理失败");
       });
       requested = false;
@@ -91,7 +100,7 @@ export function useImageInpaint() {
     } finally {
       urls.forEach(url => URL.revokeObjectURL(url));
       canvas.width = canvas.height = 0;
-      if (outputPath && !committed) await workspace.remove(outputPath).catch(error => showNodeError(error, "重绘临时文件清理失败"));
+      if (outputPath && !committed && !input.operationId) await workspace.remove(outputPath).catch(error => showNodeError(error, "重绘临时文件清理失败"));
       if (requested) await workspace.remove(`assets/${temporaryId}`, true).catch(error => {
         if (error?.response?.data?.data?.code !== "ENOENT") showNodeError(error, "重绘临时文件清理失败");
       });

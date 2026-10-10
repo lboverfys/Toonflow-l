@@ -22,7 +22,7 @@ interface ProviderModel {
   imageSizes?: string[];
   imageRatios?: string[];
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
-  /** 此视频模型必须使用宿主的持久化操作记录。 */
+  /** 此模型必须使用宿主的持久化操作记录。 */
   taskRecovery?: boolean;
   voices?: { title: string; voice: string }[];
 }
@@ -42,6 +42,28 @@ interface ProviderContext<TConfig = Record<string, unknown>> {
   /** 宿主直接注入工具，供应商无需 import；FFmpeg 为按需安装的插件能力。 */
   tool: ProviderTools;
   videoTask?: ProviderVideoTask;
+  imageTask?: ProviderImageTask;
+}
+
+interface ProviderImageTaskState {
+  phase: "prepared" | "submitting" | "accepted" | "queued" | "processing" | "reconciling" | "settling" | "downloading" | "failed" | "expired";
+  taskId?: string;
+  pollUrl?: string;
+  submissions?: number;
+  error?: string;
+  retryAt?: number;
+}
+
+type ImageTaskAsset = (Extract<MediaInput, { type: "base64" | "url" }>) & { mediaType: "image" };
+interface ProviderImageTask {
+  readonly id: string;
+  readonly state: ProviderImageTaskState;
+  readonly requestSaved: boolean;
+  readRequest(): Promise<{ endpoint: string; body: string }>;
+  saveRequest(request: { endpoint: string; body: string }): Promise<void>;
+  update(state: Partial<ProviderImageTaskState>): Promise<void>;
+  readResult(): Promise<ImageTaskAsset[] | undefined>;
+  saveResult(assets: ImageTaskAsset[]): Promise<void>;
 }
 
 interface ProviderVideoTaskState {

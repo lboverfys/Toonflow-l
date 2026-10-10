@@ -60,7 +60,7 @@
             class="modelSelect"
             filterable
             :loading="modelsLoading"
-            :disabled="generating || deleting"
+            :disabled="generating || deleting || pendingTask"
             placeholder="选择模型"
             aria-label="生成模型"
             noDataText="请先在设置中添加图片模型"
@@ -81,16 +81,24 @@
             v-model:ratio="data.ratio"
             :sizes="sizeOptions"
             :ratios="ratioOptions"
-            :disabled="generating || deleting || !selectedModel" />
+            :disabled="generating || deleting || pendingTask || !selectedModel" />
           <el-button v-if="editor?.mode === 'inpaint'" class="confirmButton" type="primary" :icon="IconCheck" :loading="editor.busy" :disabled="deleting || uploading || !generationPrompt" @click="confirmInpaint().catch(error => showNodeError(error, '重绘节点创建失败'))">确认</el-button>
           <el-button
             v-else
             class="sendButton"
             :icon="generating ? IconPlayerStop : IconArrowUp"
-            :disabled="deleting || uploading || (!generating && (editor?.busy || !generationPrompt || !selectedModel))"
-            :title="generating ? '停止生成' : '生成图片'"
-            :aria-label="generating ? '停止生成' : '生成图片'"
-            @click="generating ? generationController?.abort() : startGeneration().catch((error) => showNodeError(error, '图片生成失败'))" />
+            :disabled="deleting || uploading || taskChecking || (!generating && !pendingTask && (editor?.busy || !generationPrompt.trim() || !selectedModel))"
+            :title="generating ? '停止本地等待' : pendingTask ? '恢复原图片任务' : imageTask?.phase === 'expired' ? '重新生成图片（另行计费）' : '生成图片'"
+            :aria-label="generating ? '停止本地等待' : pendingTask ? '恢复原图片任务' : imageTask?.phase === 'expired' ? '重新生成图片（另行计费）' : '生成图片'"
+            @click="generating ? stopGeneration() : startGeneration().catch((error) => showNodeError(error, '图片生成失败'))" />
+        </div>
+        <div v-if="imageTask || taskStatusError" class="taskStatus" role="status" aria-live="polite">
+          <div v-if="imageTask">{{ taskPhaseLabel }}</div>
+          <div v-if="imageTask">操作编号：{{ imageTask.operationId }}</div>
+          <div v-if="imageTask?.taskId">任务编号：{{ imageTask.taskId }}</div>
+          <div v-if="pendingTask && !generating">点击箭头按原参数恢复；不会新建图片。渠道结果缓存为完成后 3 小时，请及时恢复。</div>
+          <div v-if="imageTask?.phase === 'expired'">过期不代表失败或退款；再次生成会创建新任务并另行计费。</div>
+          <div v-if="imageTask?.error || taskStatusError" class="taskError">{{ taskStatusError || imageTask?.error }}</div>
         </div>
       </el-card>
     </template>
@@ -111,7 +119,7 @@
 import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from "vue";
 import { ElButton, ElCard, ElSelect, ElOption, ElOptionGroup, ElLoading, ElImageViewer } from "element-plus";
 import { IconCheck, IconPhotoAi, IconSparkles, IconArrowUp, IconPlayerStop, IconTransfer, IconLayoutGrid, IconBrush, IconPencil, IconSun, IconCameraRotate, IconPanoramaHorizontal, IconChevronDown } from "@tabler/icons-vue";
-import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeHandle } from "@toonflow/nodes-scaffold/runtime";
+import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeHandle, type NodeImageRequest, type NodeImageResult, type ImageTaskStatus } from "@toonflow/nodes-scaffold/runtime";
 import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useNodeGeneration } from "@toonflow/node-shared/useNodeGeneration";
@@ -140,7 +148,7 @@ const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals 
   label: "图片生成",
 });
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
-const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; inpaintPrompt: string; inpaintPromptModel: PromptModel; model: string; size: string; ratio: string; inpaint?: ImageInpaint });
+const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; inpaintPrompt: string; inpaintPromptModel: PromptModel; model: string; size: string; ratio: string; inpaint?: ImageInpaint; appliedImageTaskId?: string });
 data.value.prompt ??= "";
 data.value.promptModel ??= [];
 data.value.inpaintPrompt ??= "";
@@ -170,10 +178,20 @@ const previewVisible = ref(false);
 const inpaintPreviewVisible = ref(false);
 const imageWidth = ref(0);
 let generationController: AbortController | undefined;
-const generationState = useNodeGeneration(outputs, () => generationController?.abort());
+const generationState = useNodeGeneration(outputs, stopGeneration, "已停止本地等待；已提交的图片任务及费用不会因此取消");
 const { generating } = generationState;
 let generation: Promise<void> | undefined;
 let modelsRequest: Promise<void> | undefined;
+const imageTask = ref<ImageTaskStatus | null>(null);
+const taskChecking = ref(true);
+const taskStatusError = ref("");
+const taskOutputDirectory = computed(() => `assets/${id}${data.value.inpaint ? "/inpaint" : ""}`);
+const pendingTask = computed(() => !!imageTask.value && !["failed", "expired"].includes(imageTask.value.phase)
+  && (imageTask.value.phase !== "completed" || imageTask.value.operationId !== data.value.appliedImageTaskId));
+const taskPhaseLabel = computed(() => imageTask.value ? ({ prepared: "准备提交", submitting: "确认提交回执", accepted: "已受理", queued: "排队中", processing: "生成中", reconciling: "渠道核对结果中", settling: "原图已生成，结算确认中", downloading: "保存原图中", completed: "原图已保存", failed: "原任务已确认失败", expired: "渠道结果缓存已过期" })[imageTask.value.phase] : "");
+let taskTimer: ReturnType<typeof setTimeout> | undefined;
+let taskWorkspaceDirectory = "";
+let resumeWhenReady = false;
 const selectedModel = computed(() => models.value.find((item) => JSON.stringify([item.providerId, item.modelId]) === data.value.model));
 const sizeOptions = computed(() => (selectedModel.value?.imageSizes?.length ? selectedModel.value.imageSizes : ["2K"]));
 const ratioOptions = computed(() => (selectedModel.value?.imageRatios?.length ? selectedModel.value.imageRatios : ["16:9"]));
@@ -192,7 +210,8 @@ watch(
 const modelGroups = computed(() => groupNodeModels(models.value));
 const generationPrompt = computed(() =>
   [
-    (editor.value?.mode === "inpaint" ? data.value.inpaintPrompt : data.value.prompt).trim(),
+    selectedModel.value?.taskRecovery ? (editor.value?.mode === "inpaint" ? data.value.inpaintPrompt : data.value.prompt)
+      : (editor.value?.mode === "inpaint" ? data.value.inpaintPrompt : data.value.prompt).trim(),
     ...refList.value.flatMap((item, index) => (item.dataType === "STRING" && item.value?.trim() ? [`参考 ${index + 1}：\n${item.value.trim()}`] : [])),
   ]
     .filter(Boolean)
@@ -208,10 +227,22 @@ const previewUrl = files.useFileUrl(
   (error) => showNodeError(error, "图片读取失败")
 );
 
-onMounted(() => loadModels().catch((error) => showNodeError(error, "模型读取失败")));
+onMounted(async () => {
+  try {
+    await loadModels();
+    await refreshImageTask();
+    if (pendingTask.value && imageTask.value?.taskId) {
+      resumeWhenReady = true;
+      if (imageTask.value.running || (imageTask.value.retryAt ?? 0) > Date.now()) pollImageTask();
+      else await resumeGeneration();
+    }
+  } catch (error) { showNodeError(error, "图片任务读取失败"); }
+  finally { taskChecking.value = false; }
+});
 onScopeDispose(() => {
   disposed = true;
   generationController?.abort();
+  clearTimeout(taskTimer);
 });
 
 async function replaceOutput(event: Event) {
@@ -270,6 +301,8 @@ async function confirmInpaint() {
 }
 
 async function startGeneration() {
+  await refreshImageTask();
+  if (pendingTask.value) return resumeGeneration();
   const choice = selectedModel.value;
   if (generating.value) throw new Error("图片正在生成，请等待完成");
   if (panorama.value?.visible) throw new Error("请先关闭全景图，再启动图片生成");
@@ -279,20 +312,21 @@ async function startGeneration() {
   if (multiAngleVisible.value) throw new Error("请先退出多角度，再启动图片生成");
   if (editor.value?.busy || editor.value?.mode === "mark") throw new Error("请先完成图片标记");
   if (editor.value?.mode === "inpaint") throw new Error("请先确认局部重绘，再到子节点生成");
-  if (!generationPrompt.value) throw new Error("请输入生成提示词");
+  if (!generationPrompt.value.trim()) throw new Error("请输入生成提示词");
   const references = refList.value.filter(item => !data.value.inpaint || item.dataType !== "IMAGE" || item.value?.url !== data.value.inpaint.source);
   if (references.some(item => item.value === undefined)) throw new Error("引用节点暂无内容，请先补充引用内容");
   if (!choice) throw new Error("请先选择图片模型");
   const workspace = files.getWorkspaceFiles();
   const controller = new AbortController();
   const inpaintData = data.value.inpaint;
-  const input = {
+  const input: Omit<NodeImageRequest, "directory"> = {
     providerId: choice.providerId,
+    ...(choice.taskRecovery ? { operationId: crypto.randomUUID() } : {}),
     modelId: choice.modelId,
     prompt: generationPrompt.value,
     size: data.value.size,
     ratio: data.value.ratio,
-    outputDirectory: `assets/${id}`,
+    outputDirectory: choice.taskRecovery ? taskOutputDirectory.value : `assets/${id}`,
     images: references.flatMap(item => item.dataType === "IMAGE" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []),
   };
   if (inpaintData) {
@@ -302,6 +336,7 @@ async function startGeneration() {
     if (mapping.length) input.prompt += `\n当前节点参考编号对应关系：${mapping.join("；")}。`;
   }
   generationController = controller;
+  if (choice.taskRecovery) pollImageTask();
   // ACT: 工具立即返回，任务由节点持有，停止或卸载时取消。
   generation = generationState.run(() => workspace.list()
     .then(({ directory }) => {
@@ -314,12 +349,74 @@ async function startGeneration() {
       controller.signal.throwIfAborted();
       if (!result) throw new Error("供应商未返回图片");
       outputs.value.image = { dataType: "IMAGE", value: { url: result.path, mimeType: result.mimeType } };
+      if (input.operationId) data.value.appliedImageTaskId = input.operationId;
     }))
     .catch((error) => showNodeError(error, "图片生成失败"))
     .finally(() => {
       generationController = undefined;
+      clearTimeout(taskTimer);
+      if (choice.taskRecovery && !disposed) refreshImageTask().catch(error => { taskStatusError.value = error.message; });
     });
   return { status: "generating" };
+}
+
+async function refreshImageTask() {
+  const directory = taskWorkspaceDirectory ||= (await files.getWorkspaceFiles().list()).directory;
+  const task = await ai.getImageTask({ directory, outputDirectory: taskOutputDirectory.value });
+  if (disposed) return;
+  imageTask.value = task;
+  taskStatusError.value = "";
+}
+
+function pollImageTask() {
+  clearTimeout(taskTimer);
+  taskTimer = setTimeout(async () => {
+    try { await refreshImageTask(); }
+    catch (error) { if (!disposed) taskStatusError.value = error instanceof Error ? error.message : "图片进度查询暂不可用"; }
+    if (disposed) return;
+    if (!pendingTask.value) resumeWhenReady = false;
+    if (resumeWhenReady && !generating.value && !imageTask.value?.running && (imageTask.value?.retryAt ?? 0) <= Date.now()) {
+      try { await resumeGeneration(); }
+      catch (error) { taskStatusError.value = error instanceof Error ? error.message : "请手动恢复原图片任务"; resumeWhenReady = false; }
+    } else if (generating.value || imageTask.value?.running || resumeWhenReady) pollImageTask();
+  }, 5000);
+}
+
+async function resumeGeneration() {
+  if (generating.value) throw new Error("图片任务仍在等待，请勿重复恢复");
+  if (deleting.value || uploading.value || editor.value?.busy) throw new Error("图片正在处理，请稍后恢复");
+  const task = imageTask.value;
+  if (!task) throw new Error("没有可恢复的图片任务");
+  if (task.running) { resumeWhenReady = true; pollImageTask(); return { status: "generating" }; }
+  resumeWhenReady = false;
+  const { directory } = await files.getWorkspaceFiles().list();
+  const controller = new AbortController();
+  const inpaintData = data.value.inpaint;
+  const outputDirectory = taskOutputDirectory.value;
+  generationController = controller;
+  pollImageTask();
+  generation = generationState.run(async () => {
+    const results = task.phase === "completed" && task.result ? task.result : await ai.resumeImageTask({ directory, outputDirectory, operationId: task.operationId }, controller.signal);
+    controller.signal.throwIfAborted();
+    let result = results[0] as NodeImageResult | undefined;
+    if (!result || result.mediaType !== "image") throw new Error("原任务未返回图片");
+    if (inpaintData) [result] = await generateInpaint({ directory, outputDirectory, operationId: task.operationId, providerId: task.providerId, modelId: task.modelId, prompt: "" }, inpaintData, controller.signal, result);
+    controller.signal.throwIfAborted();
+    if (!result) throw new Error("重绘未返回图片");
+    outputs.value.image = { dataType: "IMAGE", value: { url: result.path, mimeType: result.mimeType } };
+    data.value.appliedImageTaskId = task.operationId;
+  }).catch(error => showNodeError(error, "原图片任务恢复中断"))
+    .finally(() => {
+      generationController = undefined;
+      clearTimeout(taskTimer);
+      if (!disposed) refreshImageTask().catch(error => { taskStatusError.value = error.message; });
+    });
+  return { status: "generating" };
+}
+
+function stopGeneration() {
+  resumeWhenReady = false;
+  generationController?.abort();
 }
 
 nodeEvent.on("save", (reason) => {
@@ -407,10 +504,10 @@ nodeTools.register({
   }).refine((args) => (args.providerId === undefined) === (args.modelId === undefined), "providerId 与 modelId 必须同时提供"),
   async execute(args, { signal }) {
     signal?.throwIfAborted();
-    if (generating.value || deleting.value) throw new Error("节点正在生成或删除，请稍后修改配置");
+    if (generating.value || deleting.value || pendingTask.value) throw new Error("节点存在未完成任务，请先恢复原图片任务");
     await loadModels();
     signal?.throwIfAborted();
-    if (generating.value || deleting.value) throw new Error("节点正在生成或删除，请稍后修改配置");
+    if (generating.value || deleting.value || pendingTask.value) throw new Error("节点存在未完成任务，请先恢复原图片任务");
     const choice = args.modelId === undefined ? selectedModel.value
       : models.value.find((item) => item.providerId === args.providerId && item.modelId === args.modelId);
     if (!choice) throw new Error("请选择 getConfig 返回的有效图片模型");
@@ -478,6 +575,14 @@ nodeTools.register({
 }
 
 .promptCard {
+  .taskStatus {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+    overflow-wrap: anywhere;
+    .taskError { color: var(--el-color-warning); }
+  }
   .inpaintInfo { margin-bottom: 8px; }
   .promptFooter {
     display: flex;

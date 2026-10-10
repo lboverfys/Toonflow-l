@@ -2,8 +2,8 @@ import { onScopeDispose } from "vue";
 import { runAgentLoop, type AgentTool, type AgentToolResult } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, type AssistantMessage, type Context, type Message, type Model } from "@earendil-works/pi-ai";
 import { EventSourceParserStream } from "eventsource-parser/stream";
-import type { MediaGenerationRequest, MediaModel, VideoTaskStatus } from "@toonflow/tools-scaffold/runtime";
-export type { VideoTaskStatus } from "@toonflow/tools-scaffold/runtime";
+import type { MediaGenerationRequest, MediaModel, VideoTaskStatus, ImageTaskStatus } from "@toonflow/tools-scaffold/runtime";
+export type { VideoTaskStatus, ImageTaskStatus } from "@toonflow/tools-scaffold/runtime";
 import type { NodeOutput } from "./values";
 
 export type NodeAiModel = {
@@ -19,6 +19,7 @@ export type NodeMediaModel = Omit<MediaModel, "mode"> & {
   mode?: (string | string[])[];
 };
 export type NodeImageRequest = {
+  operationId?: string;
   directory: string;
   providerId: string;
   modelId: string;
@@ -172,6 +173,19 @@ export function useNodeAi() {
     return generateMedia("image", input, signal);
   }
 
+  async function getImageTask(input: { directory: string; outputDirectory: string }, signal?: AbortSignal) {
+    return readResult<ImageTaskStatus | null>(await fetch(`/api/ai/media/imageTask/get?${new URLSearchParams(input)}`, {
+      headers: { "x-toonflow-workspace": "1" }, cache: "no-store", signal: requestSignal(signal),
+    }));
+  }
+
+  async function resumeImageTask(input: { directory: string; outputDirectory: string; operationId: string }, signal?: AbortSignal) {
+    return readResult<NodeImageResult[]>(await fetch("/api/ai/media/imageTask/resume", {
+      method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-workspace": "1" },
+      body: JSON.stringify(input), signal: requestSignal(signal),
+    }));
+  }
+
   function generateVideo(input: NodeVideoRequest, signal?: AbortSignal) {
     return generateMedia("video", input, signal);
   }
@@ -243,5 +257,5 @@ export function useNodeAi() {
     return { text, ...(reasoning ? { reasoning } : {}) };
   }
 
-  return { getModels, getMediaModels, generateImage, generateVideo, getVideoTask, resumeVideoTask, generateAudio, generate };
+  return { getModels, getMediaModels, generateImage, getImageTask, resumeImageTask, generateVideo, getVideoTask, resumeVideoTask, generateAudio, generate };
 }

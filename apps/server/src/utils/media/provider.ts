@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, unlink } from "@toonflow/file";
 import { dirname, join } from "node:path";
 import { createContext, SourceTextModule } from "node:vm";
-import type { AudioConvertOptions, Provider, ProviderTools, VideoTaskContext } from "@toonflow/providers";
+import type { AudioConvertOptions, Provider, ProviderTools, VideoTaskContext, ImageTaskContext } from "@toonflow/providers";
 import tfRouter from "@toonflow/providers/media/tfRouter";
 import { parse, parseExpression } from "@babel/parser";
 import { z } from "zod";
@@ -96,8 +96,11 @@ function createMediaTools(fetcher: typeof fetch = fetch): ProviderTools["media"]
   };
 }
 async function responseErrorMessage(response: Response, config: Record<string, unknown>) {
-  if (!response.body || !/json|text|^$/i.test(response.headers.get("content-type") ?? "")) return "";
-  const reader = response.clone().body!.getReader();
+  if (!/json|text|^$/i.test(response.headers.get("content-type") ?? "")) return "";
+  // Bun 1.3 的 body getter 在 clone 前缓存旧流；先复制，避免供应商随后读到空正文。
+  const body = response.clone().body;
+  if (!body) return "";
+  const reader = body.getReader();
   const timer = setTimeout(() => { void reader.cancel().catch(() => {}); }, 3000);
   const decoder = new TextDecoder();
   let text = "";
@@ -379,7 +382,7 @@ export async function deleteMediaProvider(fileName: string, revision: string) {
   } finally { release(); }
 }
 
-export async function loadMediaProviderSource(source: string, config: Record<string, unknown> = {}, signal?: AbortSignal, fetchRequest = fetch, cwd?: string, videoTask?: VideoTaskContext) {
+export async function loadMediaProviderSource(source: string, config: Record<string, unknown> = {}, signal?: AbortSignal, fetchRequest = fetch, cwd?: string, videoTask?: VideoTaskContext, imageTask?: ImageTaskContext) {
   signal?.throwIfAborted();
   const { id } = parseProvider(source);
   // ACT: VM 只隔离可信供应商的全局上下文；不可信代码需要独立进程等更强隔离。
@@ -404,6 +407,7 @@ export async function loadMediaProviderSource(source: string, config: Record<str
     config: providerConfig,
     signal,
     videoTask,
+    imageTask,
     tool: {
       fetch: signal ? Object.assign((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
         signal.throwIfAborted();

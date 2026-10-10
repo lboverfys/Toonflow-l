@@ -23,6 +23,8 @@ const referenceMode = z.templateLiteral([z.enum(["image", "video", "audio"]), "R
 export const listMediaModelsSchema = z.strictObject({});
 export const imageGenerationSchema = z.strictObject({
   ...sharedFields,
+  prompt: z.string().min(1).max(100000).refine(value => !!value.trim(), "请输入生成提示词"),
+  operationId: z.uuid().optional(),
   size: z.string().trim().min(1).max(64).optional(),
 });
 export const videoGenerationSchema = z.strictObject({
