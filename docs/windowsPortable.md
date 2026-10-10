@@ -32,6 +32,25 @@ bun apps/desktop/scripts/packagePortableWindows.ts D:\rubbish\zhongjian\artifact
 
 第二步只使用第一步生成的本地归档，拒绝覆盖已有产物目录。编译器使用 Windows 现有 .NET Framework C# 编译器，解压缩使用 Windows 自带 tar；不调用 NSIS，不安装工具。
 
+## Anthropic 对话修复版
+
+本版本修复 `@earendil-works/pi-ai@0.85.1` 转换 Anthropic 工具参数时丢弃根定义的问题。补丁由 `patches/piAiAnthropicSchema.patch` 和 Bun 的 `patchedDependencies` 管理，保留 `definitions`、`$defs`、引用及原有约束，依赖版本不变。重装依赖时应使用锁文件，不能单独删除此补丁。
+
+DeepSeek 使用 `https://api.deepseek.com/anthropic`、`anthropic-messages` 和 `deepseek-flash`；密钥仅在应用设置中填写。切换协议时须同时匹配地址：Chat Completions 使用根地址或 `/v1`，不保留 `/anthropic`。
+
+更新已经使用的便携目录：
+
+1. 关闭旧版 Toonflow，等待应用退出。
+2. 将旧目录中的 `runtime` 改名为 `runtimeBackup`，保留回退副本；已有同名备份时使用新的备份名称。
+3. 从新包复制 `runtime` 文件夹和 `toonflow.exe` 到旧目录。保留原来的 `data`、`profile` 和项目目录，不用新建空目录覆盖它们。
+4. 双击旧目录中的 `toonflow.exe`，将文本供应商恢复为上面的 Anthropic 地址与协议，并保存。
+
+只替换顶层 EXE 不会更新对话逻辑，必须同时更新 `runtime`。直接使用新包目录也可以，但该目录初始没有旧配置。
+
+针对性模拟验证命令：`bun test apps/server/verification/anthropicSchema.test.ts --timeout 10000`。使用 SDK 的内存模拟响应，不读取真实密钥、不发网络请求、不写项目数据。覆盖三种协议的完整画布工具定义、默认与高推理参数、流式回复、工具结果回传、多轮对话、异常断流，以及 Anthropic 根约束与严格模式；14 项、303 条断言在 Bun 1.3.14 和包内同版 Bun 1.4.0 下通过。真实 DeepSeek 调用须另行确认。
+
+修复版已从新 ZIP 解压启动，确认原生窗口响应正常，并通过 Chrome DevTools 操作同一桌面服务的界面。独立的本机 Anthropic 模拟接口接收 5 次请求，完成问候、高推理等级下的 `getNodeTools → nodeTools → 回复` 和下一轮对话；实际读取分镜的 16 秒设置，工具结果与对话记录正常保存，缺失定义错误为 0。验证使用单独的模拟配置，没有复制真实密钥，也没有调用生图、生视频。测试应用、模拟接口、监听端口和验证标签页均已关闭。
+
 ## 本次验证（2026-10-10）
 
 - Windows x64、WebView2 154；包内 Bun 1.4.0。

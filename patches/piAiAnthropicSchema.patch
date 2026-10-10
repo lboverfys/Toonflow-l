@@ -1,0 +1,27 @@
+diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
+index e1538a5dfcf2225da9dc3ec622576564ee7c8530..98527181d3a0ed68d0e2a720905356b689005b28 100644
+--- a/dist/api/anthropic-messages.js
++++ b/dist/api/anthropic-messages.js
+@@ -1111,18 +1111,12 @@ function convertTools(tools, isOAuthToken, supportsEagerToolInputStreaming, supp
+     return tools.map((tool, index) => {
+         const strict = resolveJsonSchemaStrictSampling(tool, supportsStrictTools);
+         const parameters = getJsonSchemaToolParameters(tool, strict);
+-        const schema = parameters;
+-        const legacyInputSchema = {
++        const inputSchema = {
++            ...parameters,
+             type: "object",
+-            properties: schema.properties ?? {},
+-            required: schema.required ?? [],
++            properties: parameters.properties ?? {},
++            required: parameters.required ?? [],
+         };
+-        const inputSchema = strict === true
+-            ? {
+-                ...parameters,
+-                ...legacyInputSchema,
+-            }
+-            : legacyInputSchema;
+         return {
+             name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
+             description: tool.description,
