@@ -17,13 +17,13 @@ const stateSchema = z.object({
 const recordSchema = z.object({
   version: z.literal(1), id: taskIdSchema, identity: z.string(), request: imageGenerationSchema,
   state: stateSchema, createdAt: z.number(), updatedAt: z.number(), lastError: z.string().optional(),
-  result: z.array(z.object({ path: z.string(), mimeType: z.string(), mediaType: z.literal("image") })).length(1).optional(),
+  result: z.array(z.object({ path: z.string(), mimeType: z.string(), mediaType: z.literal("image") })).min(1).max(4).optional(),
 });
-const requestSchema = z.object({ endpoint: z.enum(["/v1/images/generations/async", "/v1/images/edits/async"]), body: z.string(), digest: z.string() });
+const requestSchema = z.object({ endpoint: z.enum(["/v1/images/generations/async", "/v1/images/edits/async", "/v1/task"]), body: z.string(), digest: z.string() });
 const assetsSchema = z.array(z.discriminatedUnion("type", [
   z.object({ type: z.literal("base64"), data: z.string(), mimeType: z.string(), mediaType: z.literal("image") }),
   z.object({ type: z.literal("url"), url: z.string(), mimeType: z.string().optional(), mediaType: z.literal("image") }),
-])).length(1);
+])).min(1).max(4);
 
 function invalid(message: string): never { throw Object.assign(new Error(message), { status: 409 }); }
 function hash(value: string) { return createHash("sha256").update(value).digest("hex"); }

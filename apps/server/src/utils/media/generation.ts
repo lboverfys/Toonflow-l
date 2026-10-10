@@ -41,6 +41,7 @@ export async function listMediaModels(): Promise<MediaModel[]> {
     return [{
       providerId: provider.id, providerLabel: provider.label, modelId: model.id, label: model.label, type: model.type,
       mode: model.mode, durationResolutionMap: model.durationResolutionMap, audio: model.audio,
+      ...(model.type === "video" ? { videoRatios: imageOptions(model.videoRatios, /^[1-9]\d{0,3}:[1-9]\d{0,3}$/) } : {}),
       taskRecovery: model.taskRecovery === true,
       ...(model.type === "audio" ? { voices: model.voices } : {}),
       ...(model.type === "image" ? {
@@ -158,7 +159,8 @@ export async function generateMedia(
   if (rules.some(rule => rule.field === "apiKey") && (typeof provider.config.apiKey !== "string" || !provider.config.apiKey.trim())) invalid("请先在媒体模型设置中配置供应商 API Key");
   if (mediaType === "video" && model.taskRecovery === true && !videoTask) {
     return runVideoTask(directory, request, provider.config,
-      (saved, context) => generateMedia(directory, "video", saved, signal, context), provider.tool.errorMessage, signal);
+      (saved, context) => generateMedia(directory, "video", saved, signal, context),
+      () => Promise.all((request.images ?? []).map(image => readReference(directory, image, "image", signal))), provider.tool.errorMessage, signal);
   }
   if (mediaType === "image" && model.taskRecovery === true && !imageTask) {
     return runImageTask(directory, request, provider.config,
@@ -166,6 +168,15 @@ export async function generateMedia(
   }
   // 恢复使用首次保存的原始请求，不重新读取可能已修改或删除的参考素材。
   const restoring = videoTask?.requestSaved === true || imageTask?.requestSaved === true;
+  if (!restoring && providerInfo.id === "dola") {
+    if (mediaType === "image" && request.images?.length) invalid("Dola 图片模型仅支持文生图，不能使用参考图或局部重绘");
+    if ((request.images?.length ?? 0) > 9) invalid("Dola 视频最多使用 9 张参考图片");
+    for (const image of request.images ?? []) {
+      const { path } = await resolveWorkspacePath(directory, image.path);
+      const info = await stat(path);
+      if (!info.isFile() || !info.size || info.size > 20 * 1024 * 1024) invalid("Dola 参考图片为空或超过 20 MiB");
+    }
+  }
   if (!restoring && providerInfo.id === "laoliVideo") {
     if ((request.images?.length ?? 0) > 30) invalid("特价 2.5 最多使用 30 张参考图片");
     let total = 0;
@@ -207,7 +218,7 @@ export async function generateMedia(
     });
   if (!Array.isArray(assets) || !assets.length) invalid("供应商未返回生成结果");
   if (videoTask && assets.length !== 1) invalid("此任务应生成一条视频");
-  if (imageTask && assets.length !== 1) invalid("此任务应生成一张图片");
+  if (imageTask && assets.length !== (providerInfo.id === "dola" ? 4 : 1)) invalid("图片任务返回的数量与渠道约定不符，已保留原任务");
   if (videoTask?.downloaded) {
     if (assets[0] !== videoTask.downloaded) invalid("供应商返回的文件不是本任务下载结果");
     signal?.throwIfAborted();
@@ -217,7 +228,7 @@ export async function generateMedia(
   const written: string[] = [];
   const result: GeneratedMedia[] = [];
   try {
-    for (const asset of assets) {
+    for (const [index, asset] of assets.entries()) {
       signal?.throwIfAborted();
       const { bytes, mimeType } = await assetBytes(asset, mediaType, signal);
       signal?.throwIfAborted();
@@ -225,7 +236,8 @@ export async function generateMedia(
       const release = lockWorkspaceFiles([output.path]);
       try {
         await mkdir(output.path, { recursive: true });
-        const file = join(outputDirectory, `${mediaType}${videoTask?.id ?? imageTask?.id ?? crypto.randomUUID()}.${mediaExtensions[mimeType]}`);
+        const suffix = imageTask && assets.length > 1 ? `_${index + 1}` : "";
+        const file = join(outputDirectory, `${mediaType}${videoTask?.id ?? imageTask?.id ?? crypto.randomUUID()}${suffix}.${mediaExtensions[mimeType]}`);
         const { path } = await resolveWorkspacePath(directory, file);
         signal?.throwIfAborted();
         try { await writeWorkspaceFile(path, bytes, true); written.push(path); }

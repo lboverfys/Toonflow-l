@@ -80,6 +80,7 @@ export interface MediaModel {
   mode?: unknown;
   imageSizes?: string[];
   imageRatios?: string[];
+  videoRatios?: string[];
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
   taskRecovery?: boolean;
   audio?: boolean | "optional";
