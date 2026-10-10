@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -66,6 +67,12 @@ internal static class portableLauncher
                     setDirectory(start, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", Path.Combine(root, "cache", "bun", "transpiler"));
                     start.EnvironmentVariables["TOONFLOW_PORTABLE"] = "1";
                     start.EnvironmentVariables["TOONFLOW_PORTABLE_LAUNCHER_PID"] = Process.GetCurrentProcess().Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    // GitHub 更新沿用系统代理；不改变模型请求和系统环境变量。
+                    var github = new Uri("https://github.com");
+                    var updateProxy = WebRequest.GetSystemWebProxy().GetProxy(github);
+                    if (updateProxy != null && updateProxy != github && (updateProxy.Scheme == "http" || updateProxy.Scheme == "https"))
+                        start.EnvironmentVariables["TOONFLOW_GITHUB_UPDATE_PROXY"] = updateProxy.AbsoluteUri;
+                    else start.EnvironmentVariables.Remove("TOONFLOW_GITHUB_UPDATE_PROXY");
                     using (var process = Process.Start(start))
                     {
                         while (!process.WaitForExit(250)) startPendingUpdate(root);

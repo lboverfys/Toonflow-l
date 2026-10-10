@@ -165,6 +165,12 @@ export default function createWindowsUpdater(resourcesDirectory: string, lifecyc
     return url;
   }
 
+  function fetchArtifact(fileName: string, signal: AbortSignal) {
+    const url = artifactUrl(fileName);
+    const proxy = portable && url.protocol === "https:" && url.hostname === "github.com" ? process.env.TOONFLOW_GITHUB_UPDATE_PROXY : undefined;
+    return fetch(url, { signal, ...(proxy ? { proxy } : {}) });
+  }
+
   async function checkForUpdate() {
     if (busy) throw new Error(t`正在准备更新，请稍候`);
     busy = true;
@@ -174,7 +180,7 @@ export default function createWindowsUpdater(resourcesDirectory: string, lifecyc
       const info = await getLocalInfo();
       state.error = "";
       if (info.channel === "dev") return state;
-      const response = await fetch(artifactUrl(`${info.channel}-win-x64-${portable ? "portable-" : ""}update.json`), { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]) });
+      const response = await fetchArtifact(`${info.channel}-win-x64-${portable ? "portable-" : ""}update.json`, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]));
       if (!response.ok) throw new Error(portable && response.status === 404 ? "更新源尚未发布便携版更新文件，当前程序仍可正常使用。" : t`检查更新失败：HTTP ${response.status}`);
       const chunks: Uint8Array[] = [];
       let size = 0;
@@ -220,7 +226,7 @@ export default function createWindowsUpdater(resourcesDirectory: string, lifecyc
     const signal = AbortSignal.timeout(15 * 60_000);
     const progress: NonNullable<updateSnapshot["updateProgress"]> = { phase: "downloading", received: 0 };
     updateProgress = progress;
-    const response = await fetch(artifactUrl(fileName), { signal });
+    const response = await fetchArtifact(fileName, signal);
     if (!response.ok) throw new Error(t`下载更新失败：HTTP ${response.status}`);
     if (!response.body) throw new Error(t`下载更新失败：响应为空`);
     const contentLength = response.headers.get("content-length");
