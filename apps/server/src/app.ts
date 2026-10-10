@@ -49,13 +49,13 @@ export async function createApp({
     const { default: initializeExt } = await import("@/utils/plugins/initializeExt");
     await initializeExt(resolve(dataDirectory, "ext"), extRoot, pluginRevision);
   }
-  // ACT: 内置媒体供应商随构建同步，其他供应商文件和独立保存的配置保留。
+  // ACT: 同步供应商代码时保留用户编辑的模型列表和独立配置。
   if (dataDirectory && providersRoot) {
     const sourceDirectory = resolve(providersRoot, "media");
     let providerRevision = pluginRevision;
     if (providerRevision === undefined) {
       const hash = createHash("sha256");
-      for (const name of autoInstallProviders) {
+      for (const name of [...autoInstallProviders, "sub2apiImage.ts"]) {
         const source = await readFile(resolve(sourceDirectory, name)).catch((error: NodeJS.ErrnoException) => {
           if (error.code === "ENOENT") return Buffer.alloc(0);
           throw error;
@@ -64,7 +64,8 @@ export async function createApp({
       }
       providerRevision = hash.digest("hex");
     }
-    await initializePlugins(resolve(dataDirectory, "providers"), sourceDirectory, autoInstallProviders, providerRevision);
+    const { initializeMediaProviders } = await import("@/utils/media/provider");
+    await initializeMediaProviders(sourceDirectory, autoInstallProviders, providerRevision);
   }
   // ACT: 技能和团队只补首次安装，保留用户修改。
   if (dataDirectory && skillsRoot) await initializePlugins(resolve(dataDirectory, "skills"), skillsRoot);

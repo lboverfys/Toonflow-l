@@ -1,7 +1,7 @@
 import { t, translateMessage, validationOptions } from "@/lib/i18n";
 
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, unlink } from "@toonflow/file";
+import { lstat, mkdir, readFile, readdir, unlink, writeAtomic } from "@toonflow/file";
 import { dirname, join } from "node:path";
 import { createContext, SourceTextModule } from "node:vm";
 import type { AudioConvertOptions, Provider, ProviderTools, VideoTaskContext, ImageTaskContext } from "@toonflow/providers";
@@ -228,6 +228,34 @@ export function validateMediaProviderSource(source: string) {
   return metadata(`${id}.ts`, source);
 }
 
+function replaceModels(source: string, models: z.infer<typeof mediaModelsSchema>) {
+  const { object, modelProperty } = parseProvider(source);
+  const newline = source.includes("\r\n") ? "\r\n" : "\n";
+  const formatted = JSON.stringify(models, null, 2).replace(/\n/g, `${newline}  `);
+  const start = modelProperty?.type === "ObjectProperty" ? modelProperty.value.start! : object.start! + 1;
+  const end = modelProperty?.type === "ObjectProperty" ? modelProperty.value.end! : start;
+  return source.slice(0, start) + (modelProperty ? formatted : `${newline}  models: ${formatted},`) + source.slice(end);
+}
+
+export async function initializeMediaProviders(sourceDirectory: string, bundled: readonly string[], revision: string) {
+  const targetDirectory = (await directory(true))!;
+  const marker = join(targetDirectory, "initialized");
+  const previous = await readFile(marker, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+  if (previous === revision) return;
+  // ACT: Sub2API 仍由用户首次导入；仅在已经安装时随便携版本更新适配代码。
+  for (const name of [...bundled, "sub2apiImage.ts"]) {
+    const target = join(targetDirectory, name);
+    const current = await readProvider(targetDirectory, name).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+    if (!current && !bundled.includes(name)) continue;
+    const source = await readFile(join(sourceDirectory, name), "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+    if (source === null) continue;
+    const next = current ? replaceModels(source, parseProvider(current.source).models) : source;
+    metadata(name, next);
+    await writeAtomic(target, next);
+  }
+  await writeAtomic(marker, revision);
+}
+
 async function directory(create = false) {
   const path = join(dirname(conf.path), "providers");
   if (create) {
@@ -302,14 +330,8 @@ export async function saveMediaProvider(fileName: string, models: z.infer<typeof
   try {
     const current = await readProvider(path, fileName);
     if (current.revision !== revision) invalid("供应商文件已被修改，请刷新页面后再编辑", 409);
-    const { object, modelProperty } = parseProvider(current.source);
-    const newline = current.source.includes("\r\n") ? "\r\n" : "\n";
-    const formatted = JSON.stringify(checked.data, null, 2).replace(/\n/g, `${newline}  `);
-    const start = modelProperty?.type === "ObjectProperty" ? modelProperty.value.start! : object.start! + 1;
-    const end = modelProperty?.type === "ObjectProperty" ? modelProperty.value.end! : start;
-    const replacement = modelProperty ? formatted : `${newline}  models: ${formatted},`;
     // ACT: 只替换 models 源码区间，保留供应商函数及其余用户编辑。
-    const source = current.source.slice(0, start) + replacement + current.source.slice(end);
+    const source = replaceModels(current.source, checked.data);
     const result = metadata(fileName, source);
     if (expectedApiKey !== undefined && getMediaProviderApiKey(result.id) !== expectedApiKey) invalid("供应商配置已变更，请重试", 409);
     await writeWorkspaceFile(join(path, fileName), source);

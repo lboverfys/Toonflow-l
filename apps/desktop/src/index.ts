@@ -33,6 +33,7 @@ Electrobun.events.on("open-url", event => {
 });
 
 async function restoreInstallRegistration(installDirectory: string) {
+  if (process.env.TOONFLOW_PORTABLE === "1") return;
   const uninstaller = resolve(installDirectory, "UninstallNSIS.exe");
   if (process.platform === "win32" && existsSync(uninstaller)) {
     try {

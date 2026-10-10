@@ -17,6 +17,10 @@ internal static class updateHelper
 {
     private static readonly JavaScriptSerializer serializer = new JavaScriptSerializer();
     private static readonly UTF8Encoding utf8 = new UTF8Encoding(false, true);
+    private static bool portable;
+
+    private static string programDirectory(string root) { return Path.Combine(root, portable ? "runtime" : "app"); }
+    private static string updateDirectory(string root) { return portable ? Path.Combine(root, "cache", "updates") : Path.Combine(root, "self-extraction"); }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern uint GetPrivateProfileString(string section, string key, string fallback, StringBuilder value, uint size, string path);
@@ -45,17 +49,23 @@ internal static class updateHelper
             }
             if (args[0] == "--apply-scheduled-update") scheduledTaskFolder().DeleteTask(scheduledTaskName(planPath), 0);
             var plan = readJson(planPath);
-            if (plan.Count != 9 || number(plan, "schemaVersion") != 1)
+            object portableValue;
+            if (plan.TryGetValue("portable", out portableValue))
+            {
+                if (!(portableValue is bool) || !(bool)portableValue) throw new InvalidOperationException("便携更新标识无效。");
+                portable = true;
+            }
+            if (plan.Count != (portable ? 10 : 9) || number(plan, "schemaVersion") != 1)
                 throw new InvalidOperationException("更新计划格式不受支持。");
             transaction = matching(plan, "transactionId", "^[a-fA-F0-9]{32}$");
             string candidate = fullPath(text(plan, "installDirectory"));
-            string cache = Path.Combine(candidate, "self-extraction");
+            string cache = updateDirectory(candidate);
             if (!samePath(planPath, Path.Combine(cache, "update-" + transaction + ".json")))
                 throw new InvalidOperationException("更新计划不属于此安装目录。");
             ensurePlainPath(candidate);
-            ensurePlainPath(Path.Combine(candidate, "app"));
+            ensurePlainPath(programDirectory(candidate));
             ensurePlainPath(cache);
-            if (!Directory.Exists(cache) || !Directory.Exists(Path.Combine(candidate, "app")))
+            if (!Directory.Exists(cache) || !Directory.Exists(programDirectory(candidate)))
                 throw new InvalidOperationException("安装目录不完整。");
             string identifier = text(plan, "identifier");
             string channel = text(plan, "channel");
@@ -66,7 +76,7 @@ internal static class updateHelper
             if (Regex.IsMatch(hash, "^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", RegexOptions.IgnoreCase))
                 throw new InvalidOperationException("更新 hash 不能是 Windows 设备名称。");
             string expectedDigest = matching(plan, "archiveSha256", "^[a-fA-F0-9]{64}$");
-            var oldInfo = verifyApp(Path.Combine(candidate, "app"), identifier, channel, null, null);
+            var oldInfo = verifyApp(programDirectory(candidate), identifier, channel, null, null);
             string mutexName;
             using (var sha = SHA256.Create()) mutexName = BitConverter.ToString(sha.ComputeHash(utf8.GetBytes(candidate.ToUpperInvariant()))).Replace("-", "");
             mutex = new Mutex(false, "Local\\ToonflowUpdate-" + mutexName);
@@ -88,7 +98,7 @@ internal static class updateHelper
             {
                 // 保持句柄，避免 PID 复用；仅等待当前安装的宿主，不终止其他进程。
                 IntPtr parentHandle = parent.Handle;
-                if (parent.HasExited || !inside(parent.MainModule.FileName, Path.Combine(root, "app", "bin")))
+                if (parent.HasExited || (portable ? !samePath(parent.MainModule.FileName, Path.Combine(root, "toonflow.exe")) : !inside(parent.MainModule.FileName, Path.Combine(root, "app", "bin"))))
                     throw new InvalidOperationException("父进程不属于当前 Toonflow 安装。");
                 using (var sha = SHA256.Create())
                     if (!String.Equals(BitConverter.ToString(sha.ComputeHash(archiveStream)).Replace("-", ""), expectedDigest, StringComparison.OrdinalIgnoreCase))
@@ -113,7 +123,7 @@ internal static class updateHelper
                 }
                 if (!File.Exists(planPath)) throw new InvalidOperationException("更新已取消。");
                 ensurePlainPath(root);
-                ensurePlainPath(Path.Combine(root, "app"));
+                ensurePlainPath(programDirectory(root));
                 ensurePlainPath(cache);
                 apply(root, stage, backup, oldInfo, identifier, channel, version, transaction, hash);
             }
@@ -125,7 +135,7 @@ internal static class updateHelper
             if (root != null)
             {
                 // 只有归属校验完成且持有安装锁的事务能撤销交接；结果写入失败也不能留下可退出的旧标记。
-                foreach (string path in new[] { Path.Combine(root, "self-extraction", "update-" + transaction + ".ready"), planPath })
+                foreach (string path in new[] { Path.Combine(updateDirectory(root), "update-" + transaction + ".ready"), planPath })
                 {
                     try { File.Delete(path); }
                     catch (Exception cleanupError) { error = new Exception(error.Message + "\n取消更新交接文件失败：" + path + "：" + cleanupError.Message, error); }
@@ -219,8 +229,11 @@ internal static class updateHelper
 
     private static void apply(string root, string stage, string backup, Dictionary<string, object> oldInfo, string identifier, string channel, string version, string transaction, string hash)
     {
-        string app = Path.Combine(root, "app");
+        string app = programDirectory(root);
+        string portableLauncher = Path.Combine(root, "toonflow.exe");
+        string launcherBackup = Path.Combine(updateDirectory(root), "launcherPrevious-" + transaction + ".exe");
         bool originalMoved = false, moved = false;
+        bool launcherMoved = false;
         Process launched = null;
         try
         {
@@ -228,7 +241,15 @@ internal static class updateHelper
             originalMoved = true;
             moveDirectory(stage, app);
             moved = true;
-            restoreRegistration(root, identifier, channel, version);
+            if (portable)
+            {
+                ensurePlainPath(portableLauncher);
+                ensurePlainPath(launcherBackup);
+                File.Move(portableLauncher, launcherBackup);
+                launcherMoved = true;
+                File.Copy(Path.Combine(app, "Resources", "app", "portableLauncher.exe"), portableLauncher, false);
+            }
+            else restoreRegistration(root, identifier, channel, version);
             startApp(root, transaction, version, hash, out launched);
         }
         catch (Exception error)
@@ -237,13 +258,19 @@ internal static class updateHelper
             try
             {
                 if (launched != null) stopApp(launched);
+                if (launcherMoved)
+                {
+                    ensurePlainPath(portableLauncher);
+                    if (File.Exists(portableLauncher)) File.Delete(portableLauncher);
+                    File.Move(launcherBackup, portableLauncher);
+                }
                 if (originalMoved)
                 {
                     if (moved) moveDirectory(app, stage);
                     moveDirectory(backup, app);
                 }
                 // 已恢复的旧程序应照常启动，安装登记写入失败单独保留诊断。
-                try { restoreRegistration(root, identifier, channel, text(oldInfo, "version")); }
+                try { if (!portable) restoreRegistration(root, identifier, channel, text(oldInfo, "version")); }
                 catch (Exception restoreError) { registrationError = "\n安装登记恢复未完成：" + restoreError.Message; }
                 Process previous = null;
                 try { startApp(root, null, null, null, out previous); }
@@ -262,8 +289,8 @@ internal static class updateHelper
     private static void startApp(string root, string transaction, string version, string hash, out Process process)
     {
         process = null;
-        string launcher = Path.Combine(root, "app", "bin", "launcher.exe");
-        string startedPath = transaction == null ? null : Path.Combine(root, "self-extraction", "update-" + transaction + ".started.json");
+        string launcher = portable ? Path.Combine(root, "toonflow.exe") : Path.Combine(root, "app", "bin", "launcher.exe");
+        string startedPath = transaction == null ? null : Path.Combine(updateDirectory(root), "update-" + transaction + ".started.json");
         if (startedPath != null)
         {
             ensurePlainPath(startedPath);
@@ -361,6 +388,15 @@ internal static class updateHelper
         if (text(info, "identifier") != identifier || text(info, "channel") != channel
             || (version != null && text(info, "version") != version) || (hash != null && text(info, "hash") != hash))
             throw new InvalidOperationException("应用包的标识、通道或版本与更新计划不一致。");
+        if (portable)
+        {
+            if (text(info, "distribution") != "portable") throw new InvalidOperationException("更新包不是便携版。");
+            foreach (string file in new[] { Path.Combine(app, "Resources", "app", "portableLauncher.exe"), Path.Combine(app, "bin", "checkWebView2.exe"), Path.Combine(app, "bin", "WebView2Loader.dll") })
+            {
+                ensurePlainPath(file);
+                if (!File.Exists(file)) throw new FileNotFoundException("便携更新包缺少运行文件：" + Path.GetFileName(file));
+            }
+        }
         return info;
     }
 
@@ -606,6 +642,6 @@ internal static class updateHelper
 
     private static void writeResult(string root, string transaction, bool success, string error, string version, string hash)
     {
-        writeFile(Path.Combine(root, "self-extraction", "updateResult.json"), serializer.Serialize(new { transactionId = transaction, success = success, error = error, version = version, hash = hash }));
+        writeFile(Path.Combine(updateDirectory(root), "updateResult.json"), serializer.Serialize(new { transactionId = transaction, success = success, error = error, version = version, hash = hash }));
     }
 }

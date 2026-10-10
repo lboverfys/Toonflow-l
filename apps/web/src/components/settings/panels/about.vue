@@ -24,13 +24,13 @@
             前往 GitHub 更新
           </el-button>
           <template v-else>
-            <el-select :modelValue="updateSource" aria-label="更新源" size="small" :disabled="working || sourceSaving" @change="saveUpdateSource">
+            <el-select :modelValue="snapshot?.portable && updateSource !== 'custom' ? 'github' : updateSource" aria-label="更新源" size="small" :disabled="working || sourceSaving" @change="saveUpdateSource">
               <template #prefix>
-                <icon-brand-github v-if="updateSource === 'github'" :size="14" aria-hidden="true" />
+                <icon-brand-github v-if="updateSource === 'github' || (snapshot?.portable && updateSource !== 'custom')" :size="14" aria-hidden="true" />
                 <icon-world v-else :size="14" aria-hidden="true" />
               </template>
-              <el-option label="官方源" value="official" />
-              <el-option label="GitHub" value="github" />
+              <el-option v-if="!snapshot?.portable" label="官方源" value="official" />
+              <el-option :label="snapshot?.portable ? 'GitHub（Toonflow-l）' : 'GitHub'" value="github" />
               <el-option v-if="customUpdateUrl" label="自定义源" value="custom" />
             </el-select>
             <el-badge isDot :hidden="!hasDesktopUpdate">
@@ -48,7 +48,8 @@
       <div v-if="!isMobile && snapshot?.installFailure" class="installFailureNotice" role="alert">
         <strong>上次更新未成功</strong>
         <p>{{ snapshot.installFailure.message }}</p>
-        <p>请前往 GitHub 最新发布页，选择适合当前系统的完整安装包，关闭客户端后重新安装。</p>
+        <p v-if="snapshot.portable">请从定制版 GitHub 发布页下载完整便携包，保留 data、profile 和项目目录后替换程序文件。</p>
+        <p v-else>请前往 GitHub 最新发布页，选择适合当前系统的完整安装包，关闭客户端后重新安装。</p>
         <el-button tag="a" type="primary" size="small" :href="snapshot.installFailure.downloadUrl" target="_blank" rel="noopener noreferrer">前往下载页</el-button>
       </div>
     </el-card>

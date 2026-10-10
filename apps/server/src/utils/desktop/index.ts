@@ -46,8 +46,8 @@ function getInstallFailure(local: Awaited<ReturnType<DesktopRuntime["updater"]["
     catch (error) { console.error("清理已完成更新核验记录失败：", error); }
     return;
   }
-  const message = attempt.failure || applyError || "更新重启后的版本或构建号与目标不一致，请下载完整安装包重新安装。";
-  if (!attempt.failure) {
+  const message = applyError || attempt.failure || "更新重启后的版本或构建号与目标不一致，请下载完整安装包重新安装。";
+  if (attempt.failure !== message) {
     // ACT: 磁盘满或权限异常时，已有目标仍足以显示完整安装指引，补记失败不能阻断状态查询。
     try { conf.set("desktopUpdateAttempt", { ...attempt, failure: message }); }
     catch (error) { console.error("保存更新核验失败信息失败：", error); }
@@ -59,7 +59,7 @@ function getInstallFailure(local: Awaited<ReturnType<DesktopRuntime["updater"]["
     currentVersion: local.version,
     currentHash: local.hash,
     message,
-    downloadUrl: "https://github.com/HBAI-Ltd/Toonflow-app/releases/latest",
+    downloadUrl: process.env.TOONFLOW_PORTABLE === "1" ? "https://github.com/lboverfys/Toonflow-l/releases/latest" : "https://github.com/HBAI-Ltd/Toonflow-app/releases/latest",
   };
 }
 
@@ -83,8 +83,9 @@ export function isValidUpdateUrl(value: unknown): value is string {
 
 function getUpdateBaseUrl(): string {
   const settings = conf.get("settings", {});
-  if (settings.desktopUpdateSource === "github") return updateBaseUrls.github;
   if (settings.desktopUpdateSource === "custom" && isValidUpdateUrl(settings.desktopUpdateCustomUrl)) return settings.desktopUpdateCustomUrl;
+  if (process.env.TOONFLOW_PORTABLE === "1") return "https://github.com/lboverfys/Toonflow-l/releases/latest/download";
+  if (settings.desktopUpdateSource === "github") return updateBaseUrls.github;
   return updateBaseUrls.official;
 }
 
@@ -145,12 +146,13 @@ export async function getDesktopUpdate(req: Request): Promise<updateSnapshot> {
   const updateBaseUrl = getUpdateBaseUrl();
   const validUpdate = state.checkedBaseUrl === updateBaseUrl;
   const applyError = state.applyingUpdate && state.updateHandoffComplete ? update?.error : undefined;
-  const installFailure = getInstallFailure(local, applyError);
+  const installFailure = getInstallFailure(local, applyError || update?.installError);
   if (applyError) state.applyingUpdate = false;
   // ACT: 安装失败跨重启保留，不被切换更新源或普通联网错误覆盖。
   const error = installFailure?.message || (state.lastBaseUrl === updateBaseUrl ? state.updateError || (validUpdate ? update?.error || "" : "") : "") || update?.installError || "";
   return {
     version, channel, hash,
+    portable: process.env.TOONFLOW_PORTABLE === "1",
     latestVersion: validUpdate ? update?.version || "" : "",
     latestHash: validUpdate ? update?.hash || "" : "",
     error,
@@ -178,6 +180,12 @@ export async function checkDesktopUpdate(req: Request): Promise<void> {
     if (!state.updateError) {
       await assertUpdateVersion(updater, state);
       state.checkedBaseUrl = updateBaseUrl;
+      // ACT: 失败包保持拦截；便携版发布不同构建后可继续更新，不被旧失败记录永久锁住。
+      const attempt = conf.get("desktopUpdateAttempt");
+      const update = updater.updateInfo();
+      if (process.env.TOONFLOW_PORTABLE === "1" && attempt && update?.updateAvailable && update.hash !== attempt.targetHash) {
+        conf.delete("desktopUpdateAttempt");
+      }
     }
   } catch (error) {
     state.updateError = String(error);

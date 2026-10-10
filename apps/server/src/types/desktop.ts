@@ -11,6 +11,7 @@ export type desktopUpdateAttempt = {
 };
 
 export type updateSnapshot = {
+  portable?: boolean;
   version: string;
   channel: string;
   hash: string;
