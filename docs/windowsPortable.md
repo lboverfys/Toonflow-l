@@ -45,6 +45,21 @@ bun apps/desktop/scripts/packagePortableWindows.ts D:\rubbish\zhongjian\artifact
 
 除了可直接运行的 `toonflowPortable` 目录和 `toonflowPortable.zip`，还生成独立的 `stable-win-x64-portable-update.json` 和 `stable-win-x64-toonflowPortable.tar.zst`。发布更新时，两个文件须来自同一次打包，并上传到同一个 GitHub Release；版本号须递增。清单包含便携版标识、压缩包长度与 SHA-256，启动器也计入构建号，客户端不接收安装版更新包。仅推送源码不会发布应用更新。本地验证可使用设置中现有的「自定义更新源」，无需服务器部署。
 
+## 在 GitHub 自动发布便携版
+
+工作流文件为 `.github/workflows/releasePortable.yml`，推送到仓库默认分支后可使用。日常 push 不触发发布。
+
+1. 先将准备发布的修改推送到 GitHub 默认分支。
+2. 打开仓库「Actions → 发布 Windows 便携版 → Run workflow」。
+3. 选择默认分支，填写高于当前正式版的版本号，例如 `2.0.3`，点击「Run workflow」。版本号不带 `v`。
+4. 等待流程成功，新的 `portable-vX.Y.Z` Release 会自动设为最新版，软件用户自行点击检查更新。
+
+流程只构建 Windows x64，复用锁文件和现有便携打包脚本。GitHub 临时 Windows 运行器的源码、项目依赖、Bun/Hutch 环境、缓存、中间文件和发布产物使用 D 盘；无需在个人电脑安装工具、购买服务器或上传模型密钥。只有发布步骤获得 GitHub 自动提供的仓库写权限，不需要另配个人访问令牌。构建结果在 Actions 中保留 7 天，正式附件存放在 Releases。
+
+类型检查、构建、包版本、归档长度和 SHA-256 校验通过后，先上传三个指定附件到草稿；远程附件校验通过才正式发布。仅发布便携包，不调用 NSIS 安装包脚本或上传到原版托管服务。自动流程不启动个人电脑上的程序，不替换本地 EXE，不调用模型，也不代替桌面交互验证。
+
+相同版本、已有标签或草稿会阻止再次发布。上传失败会保留草稿，当前正式版本不变；检查失败原因后，可在 Releases 删除该未发布草稿再重新运行，不要删除或覆盖正式版本。请使用「发布 Windows 便携版」工作流；仓库继承的「Release Toonflow」仍是原版多平台发布流程。
+
 ## Anthropic 对话修复版
 
 本版本修复 `@earendil-works/pi-ai@0.85.1` 转换 Anthropic 工具参数时丢弃根定义的问题。补丁由 `patches/piAiAnthropicSchema.patch` 和 Bun 的 `patchedDependencies` 管理，保留 `definitions`、`$defs`、引用及原有约束，依赖版本不变。重装依赖时应使用锁文件，不能单独删除此补丁。
