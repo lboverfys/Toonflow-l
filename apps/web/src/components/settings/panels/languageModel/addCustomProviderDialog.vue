@@ -25,6 +25,10 @@
         <el-form-item label="API 密钥" prop="apiKey">
           <el-input v-model="form.apiKey" type="password" dir="ltr" showPassword autocomplete="off" placeholder="本地无鉴权服务可留空" />
         </el-form-item>
+        <el-form-item label="单次请求上限（MiB）" prop="requestBodyLimitMiB">
+          <el-input-number v-model="form.requestBodyLimitMiB" :min="1" :max="128" :precision="0" controlsPosition="right" placeholder="自动" aria-label="单次请求上限（MiB）" />
+          <el-text class="requestLimitHint" type="info" size="small">留空时：DeepSeek 官方 48 MiB，其他渠道按 24 MiB 保护；可按渠道限制调整。接近上限时整理历史，原图和完整会话保留。</el-text>
+        </el-form-item>
         <div class="modelHeader">
           <el-text tag="strong">模型列表</el-text>
           <el-button :icon="IconDownload" :loading="fetching" @click="fetchModels()">获取模型列表</el-button>
@@ -126,7 +130,7 @@ import { isTfRouterProvider } from "@/lib/tf";
 const props = defineProps<{ provider?: CustomProvider }>();
 const visible = defineModel<boolean>({ default: false });
 const providerForm = ref<FormInstance>();
-const form = reactive({ id: "", label: "", apiUrl: "", protocol: "openai-completions", apiKey: "" });
+const form = reactive({ id: "", label: "", apiUrl: "", protocol: "openai-completions", apiKey: "", requestBodyLimitMiB: undefined as number | undefined });
 const models = ref<(CustomProviderModel & { key: string })[]>([]);
 const expandedModels = ref(new Set<string>());
 const fetchedModels = shallowRef<CustomProviderModel[]>([]);
@@ -162,6 +166,9 @@ const fetching = ref(false);
 const formError = ref("");
 let request: AbortController | undefined;
 const rules: FormRules = {
+  requestBodyLimitMiB: [{ validator: (_rule, value, callback) => {
+    callback(value == null || (Number.isInteger(value) && value >= 1 && value <= 128) ? undefined : new Error("请求上限须为 1～128 的整数或留空"));
+  }, trigger: "change" }],
   id: [
     { required: true, message: "请输入 Provider ID", trigger: "blur" },
     { pattern: /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/, message: "仅支持字母、数字、点、下划线和短横线", trigger: "blur" },
@@ -187,8 +194,8 @@ watch(visible, (value) => {
   if (value) {
     resetForm();
     if (props.provider) {
-      const { models: providerModels, id, label, apiUrl, protocol, apiKey } = props.provider;
-      Object.assign(form, { id, label, apiUrl, protocol, apiKey });
+      const { models: providerModels, id, label, apiUrl, protocol, apiKey, requestBodyLimitMiB } = props.provider;
+      Object.assign(form, { id, label, apiUrl, protocol, apiKey, requestBodyLimitMiB });
       models.value = providerModels.map((item) => ({ ...item, key: crypto.randomUUID() }));
     }
   } else {
@@ -200,7 +207,7 @@ onBeforeUnmount(() => request?.abort());
 watch([() => form.id, () => form.apiUrl, () => form.protocol, () => form.apiKey], () => request?.abort());
 
 function resetForm() {
-  Object.assign(form, { id: "", label: "", apiUrl: "", protocol: "openai-completions", apiKey: "" });
+  Object.assign(form, { id: "", label: "", apiUrl: "", protocol: "openai-completions", apiKey: "", requestBodyLimitMiB: undefined });
   models.value = [];
   expandedModels.value = new Set();
   fetchedModels.value = [];
@@ -286,6 +293,7 @@ async function addProvider() {
       label: form.label.trim(),
       apiUrl: form.apiUrl.trim(),
       apiKey: form.apiKey.trim(),
+      requestBodyLimitMiB: form.requestBodyLimitMiB ?? undefined,
       models: models.value.map(({ key, ...item }) => ({
         ...item,
         id: item.id.trim(),
@@ -318,6 +326,12 @@ async function addProvider() {
 <style lang="scss" scoped>
 .customProviderForm {
   padding-right: 12px;
+
+  .requestLimitHint {
+    width: 100%;
+    margin-top: 6px;
+    line-height: 1.5;
+  }
 
   .formGrid {
     display: grid;

@@ -86,7 +86,7 @@ export const privacySettings = computed(() => {
 });
 
 export type CustomProviderModel = { id: string; label: string; contextWindow?: number; maxOutputTokens?: number };
-export type CustomProvider = { id: string; label: string; icon?: string; version?: string; apiUrl: string; apiKey: string; protocol: string; models: CustomProviderModel[] };
+export type CustomProvider = { id: string; label: string; icon?: string; version?: string; apiUrl: string; apiKey: string; protocol: string; requestBodyLimitMiB?: number; models: CustomProviderModel[] };
 export const customProviders = computed<CustomProvider[]>(() => Array.isArray(settings.value.customProviders)
   ? settings.value.customProviders.filter((item): item is CustomProvider => !!item && typeof item.id === "string" && typeof item.label === "string" && Array.isArray(item.models)
     && item.models.every((model: CustomProviderModel) => !!model && typeof model.id === "string" && typeof model.label === "string"))

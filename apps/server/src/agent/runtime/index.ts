@@ -9,6 +9,7 @@ import type { CanvasContext, QuestionContext } from "@toonflow/tools-scaffold/ru
 import type { AgentEvent, AgentMention, AgentToolCall } from "@/agent/runtime/types";
 import { agentMentionsSchema, mentionPrompt, snapshotMentions, validateMentionTokens } from "@/agent/runtime/mentions";
 import { readAiReferences, referenceContent } from "@/utils/ai";
+import { installRequestBudget } from "@/utils/ai/requestBudget";
 import { createAgentTools } from "@/agent/tools";
 import { createAgentResources } from "@/agent/runtime/resources";
 import { createAgentModel } from "@/agent/runtime/model";
@@ -178,6 +179,7 @@ export async function run(
       customTools: tools,
     });
     active.session = session;
+    installRequestBudget(session, provider);
 
     const streamFunction = session.agent.streamFunction;
     session.agent.streamFunction = async (...args) => {
