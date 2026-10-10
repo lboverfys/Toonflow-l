@@ -99,7 +99,7 @@ const server = createServer(async (incoming, outgoing) => {
     receipts.push(new Headers(incoming.headers as Record<string, string>));
     outgoing.writeHead(200, { "Content-Type": "application/json", "Content-Length": "200" });
     outgoing.write('{"receipt":');
-    setTimeout(() => outgoing.destroy(), 30);
+    setTimeout(() => incoming.socket.destroy(), 30);
     return;
   }
   if (incoming.url?.endsWith("/download") && mode === "largeVideo") {
@@ -123,7 +123,8 @@ const server = createServer(async (incoming, outgoing) => {
     downloads.push(new Headers(incoming.headers as Record<string, string>));
     outgoing.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": String(video.length), "X-Video-Quality": "original", ETag: '"sample"' });
     outgoing.write(video.subarray(0, 32768));
-    setTimeout(() => outgoing.destroy(), 30);
+    // Bun 1.3.14 的 ServerResponse.destroy() 可能把连接头追加到正文；断网须直接断开 socket。
+    setTimeout(() => incoming.socket.destroy(), 30);
     return;
   }
   const chunks: Buffer[] = [];
@@ -136,7 +137,7 @@ const server = createServer(async (incoming, outgoing) => {
   if (incoming.method === "POST" && mode === "brokenReceipt") {
     outgoing.writeHead(202, { "Content-Type": "application/json", "Content-Length": "200" });
     outgoing.write('{"id":');
-    setTimeout(() => outgoing.destroy(), 30);
+    setTimeout(() => incoming.socket.destroy(), 30);
     return;
   }
   const responseBytes = Buffer.from(new Uint8Array(await response.arrayBuffer()));
@@ -197,6 +198,31 @@ afterAll(async () => {
   for (const child of processes) { if (child.exitCode === null) child.kill(); await child.exited; }
   await new Promise<void>((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); server.closeAllConnections(); });
   console.log(`模拟接口已关闭，端口 ${port}；测试数据：${root}`);
+});
+
+test("模拟断网只发送原片前缀，不把连接头写入媒体正文", async () => {
+  mode = "partialDownload";
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/videos/probe/download`, { signal: AbortSignal.timeout(5000) });
+    expect(response.status).toBe(200);
+    expect(Number(response.headers.get("content-length"))).toBe(video.length);
+    const reader = response.body!.getReader();
+    const chunks: Buffer[] = [];
+    let interrupted = false;
+    try {
+      while (true) {
+        let chunk;
+        try { chunk = await reader.read(); }
+        catch { interrupted = true; break; }
+        if (chunk.done) break;
+        chunks.push(Buffer.from(chunk.value));
+      }
+    } finally { await reader.cancel().catch(() => {}); }
+    const received = Buffer.concat(chunks);
+    expect(interrupted).toBe(true);
+    expect(received.length).toBe(32768);
+    expect(digest(received)).toBe(digest(video.subarray(0, 32768)));
+  }
 });
 
 test("完整型号、原始参考图顺序、认证下载和节点结果保存", async () => {
@@ -439,8 +465,8 @@ for (const behavior of ["success", "ignoreRange"]) test(`下载断点恢复且�
   const checkpoint = JSON.parse(await readFile(partial.replace(/\.part$/, ".json"), "utf8"));
   expect(checkpoint.download?.validator).toBe('"sample"');
   expect(checkpoint.download?.total).toBe(video.length);
-  expect(partialSize).toBeGreaterThan(0);
-  expect(partialSize).toBeLessThan(video.length);
+  expect(partialSize).toBe(32768);
+  expect(digest(await readFile(partial))).toBe(digest(video.subarray(0, partialSize)));
   mode = behavior;
   const result = await generateMedia(cwd, "video", input);
   expect(downloads).toHaveLength(4);

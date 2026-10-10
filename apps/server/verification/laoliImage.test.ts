@@ -91,7 +91,7 @@ const server = createServer(async (incoming, outgoing) => {
   if (incoming.method === "POST" && mode === "brokenReceipt") {
     outgoing.writeHead(202, { "content-type": "application/json", "content-length": "200" });
     outgoing.write('{"request_id":');
-    setTimeout(() => outgoing.destroy(), 30);
+    setTimeout(() => incoming.socket.destroy(), 30);
     return;
   }
   const bytes = Buffer.from(new Uint8Array(await response.arrayBuffer()));
