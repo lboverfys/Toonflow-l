@@ -49,17 +49,20 @@ interface ProviderVideoTaskState {
   taskId?: string;
   progress?: number;
   error?: string;
+  retryAt?: number;
 }
 
 interface ProviderVideoTask {
   readonly id: string;
+  readonly idHash: string;
   readonly state: ProviderVideoTaskState;
   readonly requestSaved: boolean;
+  readonly downloaded?: DownloadedVideoAsset;
   readRequest(): Promise<string>;
   saveRequest(body: string): Promise<void>;
   update(state: Partial<ProviderVideoTaskState>): Promise<void>;
   /** 下载原始 MP4，保存断点并校验完整性；凭据只用于当前请求，不持久化。 */
-  download(url: string, headers: Record<string, string>): Promise<Uint8Array>;
+  download(url: string, headers: Record<string, string>): Promise<DownloadedVideoAsset>;
 }
 
 interface MediaRequest {
@@ -74,7 +77,9 @@ type MediaInput =
   | { type: "base64"; data: string; mimeType: string; name?: string }
   | { type: "binary"; data: Uint8Array; mimeType: string; name?: string };
 
-type MediaAsset = MediaInput & { mediaType: "image" | "video" | "audio" };
+/** 仅由宿主持久化下载签发，生成流程核对对象身份后接收，不接受供应商自行指定文件。 */
+type DownloadedVideoAsset = { type: "file"; path: string; mimeType: "video/mp4"; mediaType: "video" };
+type MediaAsset = (MediaInput & { mediaType: "image" | "video" | "audio" }) | DownloadedVideoAsset;
 
 type MediaImageInfo = { width: number; height: number; format: string };
 type MediaImageResizeOptions = { width?: number; height?: number; format?: "jpeg" | "png" | "webp"; quality?: number };

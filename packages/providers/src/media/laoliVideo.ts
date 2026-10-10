@@ -19,7 +19,7 @@ function wait(milliseconds: number, signal?: AbortSignal) {
 function retryDelay(response: Response, attempt: number) {
   const header = response.headers.get("retry-after");
   const seconds = header && /^\d+$/.test(header) ? Number(header) : header ? (Date.parse(header) - Date.now()) / 1000 : 0;
-  return Math.min(60000, Math.max(5000 * (attempt + 1), Number.isFinite(seconds) ? seconds * 1000 : 0));
+  return Math.max(5000 * (attempt + 1), Number.isFinite(seconds) ? seconds * 1000 : 0);
 }
 
 async function readJson(response: Response): Promise<Record<string, any>> {
@@ -37,6 +37,47 @@ function errorDetails(value: Record<string, any>) {
     try { const parsed = JSON.parse(value.message); if (parsed?.error) return parsed.error; } catch { /* 保留外层错误。 */ }
   }
   return value.error && typeof value.error === "object" ? value.error : value;
+}
+
+function responseMessage(context: ProviderContext, response: Response, value: Record<string, any>) {
+  const details = errorDetails(value);
+  const code = details.code ?? details.type;
+  const trace = ["x-request-id", "x-trace-id", "request-id"].flatMap(name => {
+    const value = response.headers.get(name);
+    return value ? [`${name}: ${value}`] : [];
+  });
+  return context.tool.errorMessage([`HTTP ${response.status}${code ? ` / ${String(code)}` : ""}`, context.tool.errorMessage(details), ...trace].filter(Boolean).join("；"));
+}
+
+async function confirmReceipt(context: ProviderContext, apiUrl: string, headers: Record<string, string>) {
+  const task = context.videoTask!;
+  let response: Response;
+  try {
+    response = await context.tool.fetch(`${apiUrl}/v1/video-submissions/current`, {
+      headers: { ...headers, "Idempotency-Key": task.id }, signal: AbortSignal.timeout(30000), redirect: "error",
+    });
+  } catch (error) {
+    context.signal?.throwIfAborted();
+    throw new Error(`原提交回执查询中断，已保留原操作，不会补发生成：${context.tool.errorMessage(error)}`);
+  }
+  const value = await readJson(response);
+  if (response.status === 200 && ["accepted", "rejected"].includes(value.receipt)) {
+    if (value.idempotency_key_hash !== task.idHash) throw new Error("回执的幂等键校验不匹配，已保留原操作，请联系渠道核查");
+    if (value.receipt === "accepted") {
+      const id = [value.task?.id, value.task?.task_id].find(id => typeof id === "string" && id.trim());
+      if (!id) throw new Error("已受理回执缺少任务编号，已保留原操作，不会补发生成");
+      await task.update({ taskId: id, phase: "queued", retryAt: undefined, error: undefined });
+      return;
+    }
+    const rejection = value.response && typeof value.response === "object" ? value.response : value;
+    const details = errorDetails(rejection);
+    const message = context.tool.errorMessage(`原提交已拒绝（HTTP ${value.http_status ?? response.status}）：${responseMessage(context, response, rejection)}`);
+    if ((details.code ?? details.type) !== "idempotency_conflict") await task.update({ phase: "failed", retryAt: undefined, error: message });
+    throw new Error(message);
+  }
+  const delay = response.status === 202 || value.receipt === "pending" ? Math.max(900000, retryDelay(response, 0)) : retryDelay(response, 0);
+  await task.update({ retryAt: Date.now() + delay });
+  throw new Error(`原提交尚未核实，${Math.ceil(delay / 1000)} 秒后可恢复只读查询；不会补发生成。${responseMessage(context, response, value)}`);
 }
 
 async function imageBytes(context: ProviderContext, input: MediaInput) {
@@ -81,7 +122,7 @@ export default {
   id: "laoliVideo",
   label: "老李视频",
   icon: "",
-  version: "1.0.0",
+  version: "1.1.0",
   apiUrl: "https://video.laoliimage2.win",
   readme: "特价 2.5：16～30 秒整数时长、720p，最多 30 张 PNG/JPEG/WebP 图片，不支持视频和音频参考。基础价 2 元/条，再乘账户或分组倍率。每次点击新生成都会产生独立任务；中断后请恢复原任务。此型号没有人脸开关。密钥仅在配置中填写。",
   rules,
@@ -103,6 +144,7 @@ export default {
     const apiUrl = base.origin;
     const headers = { Authorization: `Bearer ${apiKey}` };
     if (task.state.phase === "failed") throw new Error(task.state.error || "原任务已失败，请确认后发起新生成");
+    if (task.state.retryAt && task.state.retryAt > Date.now()) throw new Error(`接口要求等待，请在 ${Math.ceil((task.state.retryAt - Date.now()) / 1000)} 秒后恢复原任务；不会新建视频`);
     let body: string;
     if (task.requestSaved) body = await task.readRequest();
     else {
@@ -126,37 +168,41 @@ export default {
       await task.saveRequest(body);
     }
     if (!task.state.taskId) {
-      await task.update({ phase: "submitting", error: undefined });
-      for (let attempt = 0; attempt < 3; attempt++) {
-        let response: Response;
+      if (task.state.phase !== "prepared") await confirmReceipt(this, apiUrl, headers);
+      else {
+        await task.update({ phase: "submitting", error: undefined });
+        let response: Response | undefined;
+        let value: Record<string, any> | undefined;
         try {
           response = await this.tool.fetch(`${apiUrl}/v1/videos`, {
             method: "POST", headers: { ...headers, "Content-Type": "application/json", "Idempotency-Key": task.id },
             body, signal: AbortSignal.timeout(120000), redirect: "error",
           });
+          value = await readJson(response);
         } catch (error) {
           this.signal?.throwIfAborted();
-          if (attempt === 2) throw new Error("提交回执尚未确认，已保留原请求；请稍后恢复，不能重新生成");
-          await wait(5000 * (attempt + 1), this.signal);
-          continue;
+          response = undefined;
         }
-        const value = await readJson(response);
-        const id = [value.id, value.task_id].find(value => typeof value === "string" && value.trim());
-        if (response.ok && typeof id === "string" && id.trim()) {
-          await task.update({ taskId: id, phase: "queued" });
-          break;
+        if (response && value) {
+          const id = [value.id, value.task_id].find(value => typeof value === "string" && value.trim());
+          if (response.ok && id) await task.update({ taskId: id, phase: "queued" });
+          else {
+            const details = errorDetails(value);
+            const code = details.code ?? details.type;
+            const message = responseMessage(this, response, value);
+            const uncertain = details.submitted !== false && (code === "idempotency_in_progress" || response.ok || [408, 429].includes(response.status) || response.status >= 500);
+            if (!uncertain) {
+              if (code !== "idempotency_conflict") await task.update({ phase: "failed", error: message });
+              throw new Error(message);
+            }
+            if (response.headers.has("retry-after")) {
+              const delay = retryDelay(response, 0);
+              await task.update({ retryAt: Date.now() + delay });
+              throw new Error(`提交回执待核实，${Math.ceil(delay / 1000)} 秒后恢复只读查询；不会补发生成。${message}`);
+            }
+          }
         }
-        const details = errorDetails(value);
-        const code = details.code ?? details.type;
-        const message = this.tool.errorMessage(details) || `提交失败（HTTP ${response.status}）`;
-        const uncertain = details.submitted !== false && (code === "idempotency_in_progress" || response.ok || [408, 429].includes(response.status) || response.status >= 500);
-        if (!uncertain) {
-          // 同键冲突不能当作明确未提交；仍保留原操作供核查。
-          if (code !== "idempotency_conflict") await task.update({ phase: "failed", error: message });
-          throw new Error(message);
-        }
-        if (attempt === 2) throw new Error(`提交回执尚未确认，已保留原操作：${message}`);
-        await wait(retryDelay(response, attempt), this.signal);
+        if (!task.state.taskId) await confirmReceipt(this, apiUrl, headers);
       }
     }
     const taskUrl = `${apiUrl}/v1/videos/${encodeURIComponent(task.state.taskId!)}`;
@@ -172,12 +218,17 @@ export default {
       }
       const value = await readJson(response);
       if (!response.ok) {
-        if ((response.status === 429 || response.status >= 500) && ++failures < 3) { await wait(retryDelay(response, failures - 1), this.signal); continue; }
-        throw new Error(this.tool.errorMessage(errorDetails(value)) || `查询失败（HTTP ${response.status}）`);
+        if (response.status === 429 || response.status >= 500) {
+          const delay = retryDelay(response, failures++);
+          await task.update({ retryAt: Date.now() + delay });
+          if (failures < 3 && delay <= 60000) { await wait(delay, this.signal); continue; }
+        }
+        throw new Error(`查询中断，请稍后恢复原任务。${responseMessage(this, response, value)}`);
       }
       failures = 0;
+      if (task.state.retryAt) await task.update({ retryAt: undefined });
       if (value.status === "failed") {
-        const message = this.tool.errorMessage(value.error) || "视频生成失败，请核对原任务及账单";
+        const message = responseMessage(this, response, value);
         await task.update({ phase: "failed", error: message });
         throw new Error(message);
       }
@@ -186,7 +237,6 @@ export default {
       await task.update({ phase: value.status === "in_progress" ? "in_progress" : "queued", progress });
       await wait(5000, this.signal);
     }
-    const bytes = await task.download(`${taskUrl}/download`, headers);
-    return [{ mediaType: "video", type: "binary", data: bytes, mimeType: "video/mp4" }];
+    return [await task.download(`${taskUrl}/download`, headers)];
   },
 } satisfies ProviderDefinition<typeof rules>;

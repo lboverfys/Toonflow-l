@@ -190,6 +190,12 @@ export async function generateMedia(
     });
   if (!Array.isArray(assets) || !assets.length) invalid("供应商未返回生成结果");
   if (videoTask && assets.length !== 1) invalid("此任务应生成一条视频");
+  if (videoTask?.downloaded) {
+    if (assets[0] !== videoTask.downloaded) invalid("供应商返回的文件不是本任务下载结果");
+    signal?.throwIfAborted();
+    const { path, mimeType, mediaType: resultType } = videoTask.downloaded;
+    return [{ path, mimeType, mediaType: resultType }];
+  }
   const written: string[] = [];
   const result: GeneratedMedia[] = [];
   try {

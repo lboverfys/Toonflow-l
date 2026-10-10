@@ -1,6 +1,6 @@
 # 老李视频特价 2.5 接入与验收
 
-本次接入基于 Toonflow 上游 `2c7fb257affb65777110fe4c6e60cd3c09187d9b`。接口依据为 2026-10-09 发布的 v1.39.7 [说明](https://video.laoliimage2.win/docs/video-api/)、[请求 Schema](https://video.laoliimage2.win/docs/video-api/request.schema.json)和[特价型号示例](https://video.laoliimage2.win/docs/video-api/examples/request-classic35.json)。
+本次接入基于 Toonflow 上游 `2c7fb257affb65777110fe4c6e60cd3c09187d9b`。接口依据为 2026-10-09 发布的 v1.39.7 [说明](https://video.laoliimage2.win/docs/video-api/)、[请求 Schema](https://video.laoliimage2.win/docs/video-api/request.schema.json)、[OpenAPI](https://video.laoliimage2.win/docs/video-api/openapi.json)和[特价型号示例](https://video.laoliimage2.win/docs/video-api/examples/request-classic35.json)，2026-10-10 再次核对。
 
 已完成代码接入和本地模拟验证。真实账户权限、账户倍率、真实成片效果尚未验证；没有调用付费生成接口。Windows 安装包及安装后的验证仍是下一阶段。
 
@@ -31,20 +31,26 @@
 
 ## 生成、恢复和交付
 
-每次新生成使用独立 UUID 作为 `Idempotency-Key`。先保存操作记录和首次序列化的请求字节，再向 `POST /v1/videos` 提交；收到 `id` 或 `task_id` 后保存任务编号。相同操作的重试复用同一密钥身份、幂等键和原始请求字节。
+每次新生成使用独立 UUID 作为 `Idempotency-Key`。先保存操作记录和首次序列化的请求字节，再向 `POST /v1/videos` 提交；收到 `id` 或 `task_id` 后保存任务编号。恢复始终绑定原密钥身份、幂等键和原始请求，不自动重放创建请求。
 
 - 有任务编号后，只执行原任务的查询和下载，不再创建任务。
-- 创建回执不明确时，单次恢复最多确认三次；仍不能确认则保留记录，停止自动确认，不换键补发。
+- 创建回执不明确或进程在提交期间退出时，使用 `GET /v1/video-submissions/current`，带原 Bearer 和 `Idempotency-Key` 只读核对回执。
+- 只有 HTTP 200、回执为 `accepted/rejected`，且 `idempotency_key_hash` 等于原幂等键的 SHA-256，才接受确定回执。已受理还必须带有效任务编号；拒绝回执保留原因。幂等冲突不被当作可以新建的终态。
+- 202/pending 按文档至少等待 900 秒再查询。404、接口未部署、网络失败、缺少编号或哈希不匹配都不证明未提交，不自动回退 POST，也不换键补发。等待期限保存在项目记录中，重启或连续点击不会绕过。
 - 相同节点的未完成操作会阻止新操作；不同节点的主动生成仍分别创建任务。
 - 查询失败、断网、关闭页面或应用，不会被当作中转站任务失败。
 - 「停止本地等待」中断本地请求，不承诺撤销中转站任务或费用。
-- 重新打开节点后，会继续跟踪或恢复已有编号的任务；没有取得编号的操作可点击箭头确认原提交。
+- 重新打开节点后，会继续跟踪或恢复已有编号的任务；没有取得编号的操作可点击箭头只读确认原提交。若渠道不能核实回执，应保留记录并联系渠道，不能用新操作替代。
 - 恢复使用首次保存的参数和图片，不重新读取后来修改或删除的参考图。恢复期间不要更换渠道地址或密钥。
 - 明确失败后保留失败原因；重新点击生成才会创建新操作。幂等冲突需要核查原记录，不能自动换键重发。
 
 下载使用带 Bearer 认证的 `/v1/videos/{id}/download`，拒绝自动重定向。只有原片标记、媒体类型、已声明的长度和 MP4 容器完整性检查通过，文件实际保存后，才显示「原片已保存」。中转站返回的其他下载域名不会用于转发密钥。
 
-下载保留 `.part` 文件。有 ETag 或 Last-Modified 时使用 Range / If-Range 恢复；返回 206 时核对偏移和完整长度，返回 200 时从头写入，不追加重复内容。416 会重置失效断点，下次恢复从头下载原任务。下载错误不触发新生成。沿用 Toonflow 单个生成文件最多 **100 MiB** 的限制。
+下载保留 `.part` 文件。有 ETag 或 Last-Modified 时使用 Range / If-Range 恢复；返回 206 时核对偏移和完整长度，返回 200 时从头写入，不追加重复内容。416 会重置失效断点，下次恢复从头下载原任务。下载错误不触发新生成。
+
+连接/传输中断及 HTTP 408、429、5xx 每次恢复最多尝试三次，间隔至少 5 秒、10 秒，并遵守服务端更长的 `Retry-After`。单次等待超过 60 秒时保存期限并停止自动等待，由用户稍后恢复；不把较长的服务端期限截短。权限、格式、原片标记和续传校验错误直接提示。错误保留 HTTP 状态、渠道错误码、中文原因和常见请求追踪头，写入前沿用现有密钥脱敏。
+
+本渠道原片在服务端从网络流式落盘、按文件读取 MP4 容器头校验，完整后原子发布到节点目录，不再受原有 **100 MiB** 内存媒体上限阻挡。下载、校验和保存不把整段原片读入服务端内存，也不覆盖同名但内容已改变的文件。参考素材仍遵守上表的渠道限制。画布预览仍沿用 Toonflow 的 Blob 读取，预览资源占用随成片大小增加；Windows 安装后的实际播放留待打包阶段验证。
 
 节点结果保存在项目的 `assets/<节点 ID>/`，继续使用现有视频播放、历史记录和素材库。恢复记录保存在同一项目的 `.toonflow/videoTasks/<节点目录摘要>/`，包含操作记录、首次请求和下载断点，不包含 API Key。备份或迁移未完成项目时应一并保留这个目录。
 
@@ -54,9 +60,11 @@
 
 由于上游的供应商接口仅返回最终媒体，不提供持久化任务上下文，单独导入这个 TS 文件到未修改的旧版 Toonflow，无法获得完整恢复能力；适配器会在提交前明确拒绝无持久化上下文的调用。请使用本次修改后的宿主。
 
+公开正文称没有按幂等键查回执的接口，但同版本 OpenAPI 已列出 `/v1/video-submissions/current`。本实现按 OpenAPI 优先只读核实，不据此宣称线上部署已验证；接口缺失时也不会自动补发生成。人脸旧示例与页首修正冲突时，按特价 2.5 Schema 的弃用说明处理。
+
 ## 本地验证
 
-按任务明确要求添加了模拟测试，使用 Bun 自带测试能力，没有新增测试框架或依赖。模拟接口仅监听本机随机端口，使用测试密钥，结束后关闭。测试覆盖真实子进程退出、同键重放、参数/图片限制、认证下载、断点续传、失败恢复和重复提交保护。
+按任务明确要求维护模拟测试，使用 Bun 自带测试能力，没有新增测试框架或依赖。模拟接口仅监听本机随机端口，使用测试密钥，结束后关闭。测试覆盖真实子进程退出、只读回执恢复及哈希校验、参数/图片限制、认证下载、有限退避、长等待期限、断点续传、失败恢复和重复提交保护；另用 101 MiB MP4 容器验证大文件落盘。长等待测试先核对保存的真实期限和到期前的阻止行为，再将测试记录设为已到期模拟重开恢复，不缩短生产等待时间，也不向线上发送请求。
 
 测试需要预先准备一份可正常播放的 MP4，测试命令本身不下载素材。例如本次使用 MDN 的公开 CC0 花朵视频；它只是模拟接口的返回数据，不代表模型生成的内容或时长。
 
@@ -64,17 +72,19 @@
 
 ```powershell
 $taskBun = 'D:\rubbish\zhongjian\envs\toonflow\bun1.3.14\bun-windows-x64\bun.exe'
-$env:TEMP = 'D:\rubbish\zhongjian\temp\toonflow\laoliIntegration'
+$env:TEMP = 'D:\rubbish\zhongjian\temp\toonflow\receiptDownloadFix'
 $env:TMP = $env:TEMP
 $env:BUN_RUNTIME_TRANSPILER_CACHE_PATH = 'D:\rubbish\zhongjian\caches\node\bun\transpiler'
 $env:TOONFLOW_TEST_DIR = Join-Path $env:TEMP 'testRuns'
-$env:TOONFLOW_TEST_VIDEO = Join-Path $env:TEMP 'sample.mp4'
-& $taskBun test apps/server/verification/laoliVideo.test.ts --timeout 15000
+$env:TOONFLOW_TEST_VIDEO = 'D:\rubbish\zhongjian\temp\toonflow\laoliIntegration\sample.mp4'
+& $taskBun test apps/server/verification/laoliVideo.test.ts --timeout 30000
 ```
 
-本次还在构建后的 Web 与 Server 中，通过 Chrome DevTools 验证了供应商配置保存、时长列表、真实进度显示、停止等待、页面刷新后跟踪原任务、视频回填及播放。两次主动生成对应两个独立操作，恢复和刷新没有增加生成数。
+首次接入时还在构建后的 Web 与 Server 中，通过 Chrome DevTools 验证了供应商配置保存、时长列表、真实进度显示、停止等待、页面刷新后跟踪原任务、视频回填及播放。两次主动生成对应两个独立操作，恢复和刷新没有增加生成数。
 
-最终模拟检查为 **40 项通过、0 项失败**。服务端、Web、供应商和视频节点类型检查通过；插件、Web 和 Server 构建通过。Web 构建存在上游已有的大文件块提示。浏览器中的 `/api/connection/connection` 404 是独立 Web 模式的设备连接探测，现有前端会识别并停用该探测，不是视频接口失败。
+2026-10-10 修复后的完整模拟检查为 **61 项通过、0 项失败、281 个断言**；断点续传额外重复四轮、共 **8 项通过**，校验完整文件哈希。服务端、Web、供应商和视频节点类型检查通过，Server 构建通过；构建中的渠道文件与源码 SHA-256 一致。本轮没有重复浏览器界面测试，101 MiB 验证针对下载、保存和后端回填结果；真实账户、线上只读回执接口和 Windows 安装后播放尚未验收。
+
+首次接入的插件、Web 和 Server 构建已通过。Web 构建存在上游已有的大文件块提示。浏览器中的 `/api/connection/connection` 404 是独立 Web 模式的设备连接探测，现有前端会识别并停用该探测，不是视频接口失败。
 
 构建使用项目现有命令，产物位于仓库的 `build/`，运行数据位于 `data/` 或显式传入的任务临时数据目录。桌面 SDK 准备完成后可运行服务端和视频节点的类型检查。开发模式前后端可分别运行 `bun run dev:server` 和 `bun run dev:web`；本机验证结束后应关闭对应进程。
 

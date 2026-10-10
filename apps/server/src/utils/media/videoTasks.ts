@@ -1,24 +1,25 @@
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
-import { mkdir, open, readFile, stat, writeAtomic } from "@toonflow/file";
+import { constants, copyFile, createReadStream, link, mkdir, open, readFile, stat, unlink, writeAtomic } from "@toonflow/file";
+import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import type { VideoTaskContext } from "@toonflow/providers";
 import type { GeneratedMedia, MediaGenerationRequest, VideoTaskStatus } from "@toonflow/tools-scaffold/runtime";
 import { videoGenerationSchema } from "@toonflow/tool-media-generation/runtime";
-import { resolveWorkspacePath } from "@/utils/workspace/files";
+import { lockWorkspaceFiles, resolveWorkspacePath } from "@/utils/workspace/files";
 
-const maxVideoSize = 100 * 1024 * 1024;
 const active = new Set<string>();
 const taskIdSchema = z.uuid();
 const stateSchema = z.object({
   phase: z.enum(["prepared", "submitting", "queued", "in_progress", "downloading", "failed"]),
   taskId: z.string().min(1).optional(), progress: z.number().min(0).max(100).optional(), error: z.string().optional(),
+  retryAt: z.number().finite().positive().optional(),
 });
 const recordSchema = z.object({
   version: z.literal(1), id: taskIdSchema, identity: z.string(), request: videoGenerationSchema,
   state: stateSchema, createdAt: z.number(), updatedAt: z.number(), lastError: z.string().optional(),
   result: z.array(z.object({ path: z.string(), mimeType: z.string(), mediaType: z.literal("video") })).optional(),
-  download: z.object({ validator: z.string().optional(), total: z.number().int().positive().max(maxVideoSize).optional() }).optional(),
+  download: z.object({ validator: z.string().optional(), total: z.number().int().positive().optional() }).optional(),
 });
 type TaskRecord = z.infer<typeof recordSchema>;
 
@@ -78,57 +79,106 @@ export async function getVideoTaskRequest(cwd: string, outputDirectory: string, 
   return task.request;
 }
 
-function validateMp4(bytes: Buffer) {
-  let offset = 0;
-  const boxes = new Set<string>();
-  while (offset < bytes.length) {
-    if (bytes.length - offset < 8) invalid("原片不完整，请恢复下载", 502);
-    let size = bytes.readUInt32BE(offset);
-    const type = bytes.toString("ascii", offset + 4, offset + 8);
-    let headerSize = 8;
-    if (size === 1) {
-      if (bytes.length - offset < 16) invalid("原片不完整，请恢复下载", 502);
-      const largeSize = bytes.readBigUInt64BE(offset + 8);
-      if (largeSize > BigInt(bytes.length)) invalid("原片不完整，请恢复下载", 502);
-      size = Number(largeSize); headerSize = 16;
-    } else if (size === 0) size = bytes.length - offset;
-    if (size < headerSize || offset + size > bytes.length) invalid("原片不完整，请恢复下载", 502);
-    boxes.add(type);
-    offset += size;
-  }
-  if (!["ftyp", "moov", "mdat"].every(type => boxes.has(type))) invalid("下载内容不是完整的 MP4 原片", 502);
+async function validateMp4(path: string, signal?: AbortSignal) {
+  const file = await open(path, "r");
+  try {
+    const length = (await file.stat()).size;
+    const header = Buffer.alloc(16);
+    let offset = 0;
+    const boxes = new Set<string>();
+    while (offset < length) {
+      signal?.throwIfAborted();
+      const { bytesRead } = await file.read(header, 0, Math.min(16, length - offset), offset);
+      if (bytesRead < 8) invalid("原片不完整，请恢复下载", 502);
+      let size = header.readUInt32BE(0);
+      const type = header.toString("ascii", 4, 8);
+      let headerSize = 8;
+      if (size === 1) {
+        if (bytesRead < 16) invalid("原片不完整，请恢复下载", 502);
+        const largeSize = header.readBigUInt64BE(8);
+        if (largeSize > BigInt(length)) invalid("原片不完整，请恢复下载", 502);
+        size = Number(largeSize); headerSize = 16;
+      } else if (size === 0) size = length - offset;
+      if (size < headerSize || offset + size > length) invalid("原片不完整，请恢复下载", 502);
+      boxes.add(type);
+      offset += size;
+    }
+    if (!["ftyp", "moov", "mdat"].every(type => boxes.has(type))) invalid("下载内容不是完整的 MP4 原片", 502);
+  } finally { await file.close(); }
 }
 
-async function downloadVideo(
+function retryAfter(response: Response) {
+  const value = response.headers.get("retry-after");
+  if (!value) return undefined;
+  const milliseconds = /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(milliseconds) ? Math.max(0, milliseconds) : undefined;
+}
+
+async function downloadError(response: Response, sanitize: (error: unknown) => string) {
+  const reader = response.body?.getReader();
+  const timer = globalThis.setTimeout(() => { void reader?.cancel().catch(() => {}); }, 3000);
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (reader && size < 16000) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = value.subarray(0, 16000 - size);
+      chunks.push(chunk); size += chunk.byteLength;
+    }
+  } catch { /* 错误正文也可能中断，仍保留 HTTP 状态和追踪编号。 */ }
+  finally { clearTimeout(timer); await reader?.cancel().catch(() => {}); }
+  const text = Buffer.concat(chunks, size).toString("utf8");
+  let value: any = text;
+  try { value = JSON.parse(text); } catch { /* 非 JSON 正文交给现有脱敏工具处理。 */ }
+  const code = value?.error?.code ?? value?.error?.type ?? value?.code;
+  const trace = ["x-request-id", "x-trace-id", "request-id"].flatMap(name => {
+    const value = response.headers.get(name);
+    return value ? [`${name}: ${value}`] : [];
+  });
+  return sanitize([`原片下载失败（HTTP ${response.status}${code ? ` / ${String(code)}` : ""}）`, sanitize(value), ...trace].filter(Boolean).join("；"));
+}
+
+async function downloadAttempt(
   cwd: string, path: string, url: string, headers: Record<string, string>, record: TaskRecord,
-  save: () => Promise<void>, signal?: AbortSignal,
+  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal,
 ) {
   await resolveWorkspacePath(cwd, relative(cwd, path));
   const local = await stat(path).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
-  if (local && (!local.isFile() || local.size > maxVideoSize)) invalid("原片临时文件无效");
+  if (local && !local.isFile()) invalid("原片临时文件无效");
   if (local?.size && local.size === record.download?.total) {
-    const bytes = await readFile(path);
-    try { validateMp4(bytes); return bytes; }
-    catch { record.download = undefined; await save(); }
+    try { await validateMp4(path, signal); return; }
+    catch (error) {
+      signal?.throwIfAborted();
+      if ((error as { status?: number }).status !== 502) throw error;
+      record.download = undefined; await save();
+    }
   }
   let offset = record.download?.validator ? local?.size ?? 0 : 0;
-  const response = await fetch(url, {
+  let response: Response;
+  try { response = await fetch(url, {
     headers: { ...headers, ...(offset ? { Range: `bytes=${offset}-`, "If-Range": record.download!.validator! } : {}) },
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300000)]) : AbortSignal.timeout(300000), redirect: "error",
-  });
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300000)]) : AbortSignal.timeout(300000), redirect: "manual",
+  }); } catch (error) {
+    signal?.throwIfAborted();
+    throw Object.assign(new Error(`原片下载连接中断：${sanitize(error)}`), { retryable: true });
+  }
   const reject = async (message: string): Promise<never> => { await response.body?.cancel(); return invalid(message, 502); };
   if (response.status === 416) {
     record.download = undefined;
     await save();
     return reject("原片续传长度已变化；断点已重置，恢复时将从头下载原任务，不会重新生成");
   }
-  if (!response.ok) return reject(`原片下载暂未完成（HTTP ${response.status}），请恢复原任务，不要重新生成`);
+  if (!response.ok) throw Object.assign(new Error(await downloadError(response, sanitize)), {
+    retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+    retryAfter: retryAfter(response),
+  });
   if (response.headers.get("x-video-quality")?.toLowerCase() !== "original") return reject("接口未返回原片标记，已保留任务，请稍后恢复下载");
   const mime = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
   if (mime !== "video/mp4" && mime !== "application/octet-stream") return reject("原片内容类型不正确，已保留任务");
   const lengthHeader = response.headers.get("content-length");
   const length = lengthHeader === null ? undefined : Number(lengthHeader);
-  if (length !== undefined && (!Number.isSafeInteger(length) || length <= 0 || length > maxVideoSize)) return reject("原片长度无效或超过 Toonflow 的 100 MiB 限制");
+  if (length !== undefined && (!Number.isSafeInteger(length) || length <= 0)) return reject("原片声明长度无效");
   const etag = response.headers.get("etag");
   const validator = etag && !etag.startsWith("W/") ? etag : response.headers.get("last-modified") ?? undefined;
   let total = length;
@@ -139,29 +189,92 @@ async function downloadVideo(
     if (offset && (validator !== record.download?.validator || (record.download?.total !== undefined && total !== record.download.total))) return reject("原片在续传期间发生变化，已停止追加");
   } else if (response.status === 200) offset = 0;
   else return reject("原片下载返回了不支持的状态码");
-  if (total !== undefined && (!Number.isSafeInteger(total) || total <= 0 || total > maxVideoSize)) return reject("原片超过 Toonflow 的 100 MiB 限制或长度无效");
+  if (total !== undefined && (!Number.isSafeInteger(total) || total <= 0)) return reject("原片完整长度无效");
   record.download = { validator, total };
-  await save();
   const reader = response.body?.getReader();
   if (!reader) invalid("原片响应为空", 502);
-  const file = await open(path, offset ? "a" : "w");
+  let file: Awaited<ReturnType<typeof open>> | undefined;
   let received = 0;
   try {
+    await save();
+    file = await open(path, offset ? "a" : "w");
     while (true) {
       signal?.throwIfAborted();
-      const { value, done } = await reader.read();
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
+      try { chunk = await reader.read(); }
+      catch (error) {
+        signal?.throwIfAborted();
+        throw Object.assign(new Error(`原片传输中断，已保留断点：${sanitize(error)}`), { retryable: true });
+      }
+      const { value, done } = chunk;
       if (done) break;
       received += value.byteLength;
-      if (received + offset > maxVideoSize || (total !== undefined && received + offset > total)) invalid("原片实际长度超过声明值或 100 MiB 限制", 502);
+      if (!Number.isSafeInteger(received + offset) || (total !== undefined && received + offset > total)) invalid("原片实际长度超过声明值", 502);
       await file.writeFile(value);
     }
     await file.sync();
-  } finally { await file.close(); await reader.cancel(); }
-  if (!received || (length !== undefined && received !== length) || (total !== undefined && received + offset !== total)) invalid("原片下载中断，已保存断点，请恢复原任务", 502);
-  const bytes = await readFile(path);
-  try { validateMp4(bytes); }
+  } finally { try { await file?.close(); } finally { await reader.cancel().catch(() => {}); } }
+  if (!received || (length !== undefined && received !== length) || (total !== undefined && received + offset !== total)) throw Object.assign(new Error("原片下载中断，已保存断点，请恢复原任务"), { retryable: true });
+  try { await validateMp4(path, signal); }
   catch (error) { record.download = undefined; await save(); throw error; }
-  return bytes;
+  record.download.total = received + offset;
+  await save();
+}
+
+async function downloadVideo(
+  cwd: string, path: string, url: string, headers: Record<string, string>, record: TaskRecord,
+  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal,
+) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    signal?.throwIfAborted();
+    try {
+      await downloadAttempt(cwd, path, url, headers, record, save, sanitize, signal);
+      record.state.retryAt = undefined;
+      await save();
+      return;
+    } catch (error) {
+      signal?.throwIfAborted();
+      const failure = error as Error & { retryable?: boolean; retryAfter?: number };
+      if (!failure.retryable) throw error;
+      const delay = Math.max(5000 * (attempt + 1), failure.retryAfter ?? 0);
+      record.lastError = sanitize(error);
+      record.state.retryAt = attempt < 2 || failure.retryAfter !== undefined ? Date.now() + delay : undefined;
+      await save();
+      if (attempt === 2 || delay > 60000) throw new Error(`${sanitize(error)}；自动下载已停止，请稍后恢复原任务，不会重新生成`);
+      await wait(delay, undefined, { signal });
+    }
+  }
+}
+
+async function fileDigest(path: string, signal?: AbortSignal) {
+  const digest = createHash("sha256");
+  for await (const chunk of createReadStream(path, { signal })) digest.update(chunk);
+  return digest.digest("hex");
+}
+
+async function publishDownload(cwd: string, path: string, record: TaskRecord, signal?: AbortSignal): Promise<DownloadedVideoAsset> {
+  const outputDirectory = record.request.outputDirectory ?? "assets/generated";
+  const output = await resolveWorkspacePath(cwd, outputDirectory, true);
+  const release = lockWorkspaceFiles([output.path]);
+  const staging = `${path}.${crypto.randomUUID()}.ready`;
+  let copied = false;
+  try {
+    await mkdir(output.path, { recursive: true });
+    const target = await resolveWorkspacePath(cwd, join(outputDirectory, `video${record.id}.mp4`));
+    signal?.throwIfAborted();
+    await copyFile(path, staging, constants.COPYFILE_EXCL);
+    copied = true;
+    signal?.throwIfAborted();
+    try { await link(staging, target.path); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existing = await stat(target.path);
+      if (!existing.isFile() || existing.size !== (await stat(path)).size || await fileDigest(target.path, signal) !== await fileDigest(path, signal)) throw new Error("原任务视频文件已发生变化，未覆盖已有文件");
+    }
+    return { type: "file", mediaType: "video", path: relative(cwd, target.path).replace(/\\/g, "/"), mimeType: "video/mp4" };
+  } finally {
+    try { if (copied) await unlink(staging); } finally { release(); }
+  }
 }
 
 export async function runVideoTask(
@@ -196,10 +309,13 @@ export async function runVideoTask(
     const save = async () => { task.updatedAt = Date.now(); await writeAtomic(recordPath, JSON.stringify(task)); };
     const requestPath = (await resolveWorkspacePath(cwd, relative(cwd, join(directory, `${operationId}.request.json`)))).path;
     let requestSaved = !!(await stat(requestPath).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; }));
+    let downloaded: DownloadedVideoAsset | undefined;
     const context: VideoTaskContext = {
       id: operationId,
+      idHash: hash(operationId),
       get state() { return task.state; },
       get requestSaved() { return requestSaved; },
+      get downloaded() { return downloaded; },
       async readRequest() {
         const info = await stat(requestPath);
         if (!info.isFile() || info.size > 128 * 1024 * 1024) invalid("原始请求记录无效");
@@ -211,7 +327,12 @@ export async function runVideoTask(
         requestSaved = true;
       },
       async update(state) { task.state = stateSchema.parse({ ...task.state, ...state }); task.lastError = undefined; await save(); },
-      download: (url, headers) => downloadVideo(cwd, join(directory, `${operationId}.part`), url, headers, task, save, signal),
+      async download(url, headers) {
+        const path = join(directory, `${operationId}.part`);
+        await downloadVideo(cwd, path, url, headers, task, save, sanitize, signal);
+        downloaded = Object.freeze(await publishDownload(cwd, path, task, signal));
+        return downloaded;
+      },
     };
     try {
       const result = await generate(request, context);
