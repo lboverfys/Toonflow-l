@@ -19,7 +19,7 @@ const recordSchema = z.object({
   version: z.literal(1), id: taskIdSchema, identity: z.string(), request: videoGenerationSchema,
   state: stateSchema, createdAt: z.number(), updatedAt: z.number(), lastError: z.string().optional(),
   result: z.array(z.object({ path: z.string(), mimeType: z.string(), mediaType: z.literal("video") })).optional(),
-  download: z.object({ validator: z.string().optional(), total: z.number().int().positive().optional() }).optional(),
+  download: z.object({ validator: z.string().optional(), total: z.number().int().positive().optional(), source: z.string().optional() }).optional(),
 });
 type TaskRecord = z.infer<typeof recordSchema>;
 
@@ -132,7 +132,7 @@ async function downloadError(response: Response, sanitize: (error: unknown) => s
   let value: any = text;
   try { value = JSON.parse(text); } catch { /* 非 JSON 正文交给现有脱敏工具处理。 */ }
   const code = value?.error?.code ?? value?.error?.type ?? value?.code;
-  const trace = ["x-request-id", "x-trace-id", "request-id"].flatMap(name => {
+  const trace = ["x-request-id", "x-trace-id", "request-id", "x-oneapi-request-id"].flatMap(name => {
     const value = response.headers.get(name);
     return value ? [`${name}: ${value}`] : [];
   });
@@ -141,7 +141,7 @@ async function downloadError(response: Response, sanitize: (error: unknown) => s
 
 async function downloadAttempt(
   cwd: string, path: string, url: string, headers: Record<string, string>, record: TaskRecord,
-  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal, source: "original" | "publicCdn" = "original",
+  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal, source: VideoDownloadSource = "original",
 ) {
   await resolveWorkspacePath(cwd, relative(cwd, path));
   const local = await stat(path).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
@@ -154,21 +154,23 @@ async function downloadAttempt(
       record.download = undefined; await save();
     }
   }
-  let offset = record.download?.validator ? local?.size ?? 0 : 0;
+  const sourceHash = hash(url);
+  let offset = record.download?.validator && (!record.download.source || record.download.source === sourceHash) ? local?.size ?? 0 : 0;
+  const publicSource = source === "publicCdn" || source === "publicHttpCdn";
   let response: Response;
   try {
-    if (source === "publicCdn" && Object.keys(headers).length) invalid("公开 CDN 下载不能附带接口凭据");
+    if (publicSource && Object.keys(headers).length) invalid("公开 CDN 下载不能附带接口凭据");
     const downloadSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(300000)]) : AbortSignal.timeout(300000);
     for (let redirects = 0; ; redirects++) {
-      if (source === "publicCdn") {
+      if (publicSource) {
         const target = new URL(url);
-        if (target.protocol !== "https:" || target.username || target.password) invalid("成品链接须为不含账号密码的 HTTPS 地址");
+        if (!(target.protocol === "https:" || (source === "publicHttpCdn" && target.protocol === "http:")) || target.username || target.password) invalid("成品链接的协议或账号密码不符合此渠道下载要求");
       }
       response = await fetch(url, {
         headers: { ...headers, ...(offset ? { Range: `bytes=${offset}-`, "If-Range": record.download!.validator! } : {}) },
         signal: downloadSignal, redirect: "manual",
       });
-      if (source !== "publicCdn" || ![301, 302, 303, 307, 308].includes(response.status)) break;
+      if (!publicSource || ![301, 302, 303, 307, 308].includes(response.status)) break;
       const location = response.headers.get("location");
       await response.body?.cancel();
       if (!location || redirects >= 5) invalid("成品下载重定向无效，请恢复原任务重新获取链接");
@@ -186,6 +188,7 @@ async function downloadAttempt(
     return reject("原片续传长度已变化；断点已重置，恢复时将从头下载原任务，不会重新生成");
   }
   if (!response.ok) throw Object.assign(new Error(await downloadError(response, sanitize)), {
+    httpStatus: response.status,
     retryable: response.status === 408 || response.status === 429 || response.status >= 500,
     retryAfter: retryAfter(response),
   });
@@ -206,7 +209,7 @@ async function downloadAttempt(
   } else if (response.status === 200) offset = 0;
   else return reject("原片下载返回了不支持的状态码");
   if (total !== undefined && (!Number.isSafeInteger(total) || total <= 0)) return reject("原片完整长度无效");
-  record.download = { validator, total };
+  record.download = { validator, total, source: sourceHash };
   const reader = response.body?.getReader();
   if (!reader) invalid("原片响应为空", 502);
   let file: Awaited<ReturnType<typeof open>> | undefined;
@@ -239,7 +242,7 @@ async function downloadAttempt(
 
 async function downloadVideo(
   cwd: string, path: string, url: string, headers: Record<string, string>, record: TaskRecord,
-  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal, source: "original" | "publicCdn" = "original",
+  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal, source: VideoDownloadSource = "original",
 ) {
   for (let attempt = 0; attempt < 3; attempt++) {
     signal?.throwIfAborted();
@@ -256,7 +259,7 @@ async function downloadVideo(
       record.lastError = sanitize(error);
       record.state.retryAt = attempt < 2 || failure.retryAfter !== undefined ? Date.now() + delay : undefined;
       await save();
-      if (attempt === 2 || delay > 60000) throw new Error(`${sanitize(error)}；自动下载已停止，请稍后恢复原任务，不会重新生成`);
+      if (attempt === 2 || delay > 60000) throw Object.assign(new Error(`${sanitize(error)}；自动下载已停止，请稍后恢复原任务，不会重新生成`), { httpStatus: (error as { httpStatus?: number }).httpStatus });
       await wait(delay, undefined, { signal });
     }
   }

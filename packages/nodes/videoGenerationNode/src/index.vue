@@ -51,6 +51,10 @@
           {{ selectedMode === "startFrameOptional" ? "仅一张图片时作为尾帧；两张图片按顺序作为首帧、尾帧" : "图片引用按顺序作为首帧、尾帧" }}
         </div>
         <promptInput v-model="data.promptModel" v-model:text="data.prompt" :references="referenceMentions" expandable />
+        <template v-if="selectedModel?.referenceImageInput === 'url'">
+          <div class="referenceHint">参考图使用公开可访问的 HTTPS 直链，每行一张，最多 9 张；按顺序对应 @Image1、@Image2。留空为文生视频。</div>
+          <el-input v-model="data.referenceImageUrlsText" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :disabled="generating || deleting || pendingTask" placeholder="https://example.com/reference.png" aria-label="参考图片 HTTPS 直链" />
+        </template>
         <div class="promptFooter">
           <el-select
             v-model="data.model"
@@ -92,7 +96,12 @@
         <div v-if="videoTask || taskStatusError" class="taskStatus" role="status" aria-live="polite">
           <div v-if="videoTask">{{ taskPhaseLabel }}<span v-if="videoTask.phase === 'in_progress' && videoTask.progress !== undefined"> · {{ videoTask.progress }}%</span></div>
           <div v-if="videoTask?.taskId">任务编号：{{ videoTask.taskId }}</div>
-          <div v-if="pendingTask && !generating">原任务已保存，点击箭头按原参数恢复；不会新建视频。</div>
+          <div v-if="videoTask && !videoTask.taskId">本地操作编号：{{ videoTask.operationId }}</div>
+          <div v-if="pendingTask && !generating">
+            {{ videoTask?.providerId === 'vidGate' && videoTask.phase === 'submitting' && !videoTask.taskId
+              ? '提交结果尚未确认，请到 VidGate 核查任务记录；此操作不会补发生成。'
+              : '原任务已保存，点击箭头按原参数恢复；不会新建视频。' }}
+          </div>
           <div v-if="videoTask?.error || taskStatusError" class="taskError">{{ taskStatusError || videoTask?.error }}</div>
         </div>
       </el-card>
@@ -103,7 +112,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from "vue";
-import { ElButton, ElCard, ElSelect, ElOption, ElOptionGroup, ElLoading, ElDropdown, ElDropdownMenu, ElDropdownItem } from "element-plus";
+import { ElButton, ElCard, ElSelect, ElOption, ElOptionGroup, ElLoading, ElDropdown, ElDropdownMenu, ElDropdownItem, ElInput } from "element-plus";
 import { IconCameraAi, IconSparkles, IconArrowUp, IconPlayerStop, IconTransfer, IconMusic, IconLayersSubtract, IconScissors, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
 import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeVideoRequest, type NodeHandle, type VideoTaskStatus } from "@toonflow/nodes-scaffold/runtime";
 import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
@@ -130,7 +139,7 @@ const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals 
   label: "视频生成",
 });
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
-const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean; appliedVideoTaskId?: string });
+const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean; appliedVideoTaskId?: string; referenceImageUrlsText: string });
 data.value.prompt ??= "";
 data.value.promptModel ??= [];
 data.value.model ??= "";
@@ -138,6 +147,7 @@ data.value.resolution ??= "";
 data.value.mode ??= "";
 data.value.generateAudio ??= true;
 data.value.ratio ??= "9:16";
+data.value.referenceImageUrlsText ??= "";
 const { refList, referenceMentions, setReferencePreview, removeReference } = useNodeReferences();
 const models = ref<NodeMediaModel[]>([]);
 const modelsLoading = ref(false);
@@ -173,10 +183,25 @@ const mediaCounts = computed(() => ({
 }));
 const matchingModes = computed(() => getMatchingModes(selectedModel.value));
 
-function getMatchingModes(choice?: NodeMediaModel) {
+function referenceUrls(choice?: NodeMediaModel) {
+  return choice?.referenceImageInput === "url" ? data.value.referenceImageUrlsText.split(/\r?\n/).map(value => value.trim()).filter(Boolean) : [];
+}
+
+function validateReferenceUrls(urls: string[]) {
+  if (urls.length > 9) throw new Error("最多使用 9 张参考图片");
+  for (const value of urls) {
+    let url: URL;
+    try { url = new URL(value); } catch { throw new Error("每行须填写一个有效的 HTTPS 图片直链"); }
+    if (value.length > 8192 || url.protocol !== "https:" || url.username || url.password || url.hash) throw new Error("参考图须为不含账号密码或片段的公网 HTTPS 图片直链");
+  }
+}
+
+function getMatchingModes(choice?: NodeMediaModel, urls = referenceUrls(choice)) {
+  if (choice?.referenceImageInput === "url" && mediaCounts.value.image) return [];
+  const counts = { ...mediaCounts.value, image: mediaCounts.value.image + urls.length };
   return (choice?.mode ?? []).filter((mode) => {
-    const { image, video, audio } = mediaCounts.value;
-    if (Array.isArray(mode)) return image + video + audio > 0 && Object.entries(mediaCounts.value).every(([type, count]) =>
+    const { image, video, audio } = counts;
+    if (Array.isArray(mode)) return image + video + audio > 0 && Object.entries(counts).every(([type, count]) =>
       count <= Number(mode.find((item) => item.startsWith(`${type}Reference:`))?.split(":")[1] ?? 0)
     );
     if (mode === "text") return image + video + audio === 0;
@@ -301,6 +326,9 @@ async function startGeneration() {
   if (!generationPrompt.value) throw new Error("请输入生成提示词");
   if (refList.value.some(item => item.value === undefined)) throw new Error("引用节点暂无内容，请先补充引用内容");
   const images = refList.value.flatMap((item) => item.dataType === "IMAGE" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []);
+  const referenceImageUrls = referenceUrls(choice);
+  validateReferenceUrls(referenceImageUrls);
+  if (choice.referenceImageInput === "url" && images.length) throw new Error("此渠道只接受公网 HTTPS 图片直链，请移除本地图片连线并填写参考图链接");
   if (choice.mode?.length && !matchingModes.value.length) throw new Error("当前模型没有适合这些参考素材的生成模式，请更换模型或调整引用");
   const workspace = files.getWorkspaceFiles();
   const controller = new AbortController();
@@ -316,6 +344,7 @@ async function startGeneration() {
     generateAudio: choice.audio === "optional" ? data.value.generateAudio : choice.audio,
     outputDirectory: `assets/${id}`,
     images: frameMode.value ? undefined : images,
+    ...(choice.referenceImageInput === "url" ? { referenceImageUrls } : {}),
     firstFrame: frameMode.value && (selectedMode.value !== "startFrameOptional" || images.length > 1) ? images[0] : undefined,
     lastFrame: frameMode.value ? images[selectedMode.value === "startFrameOptional" && images.length === 1 ? 0 : 1] : undefined,
     videos: refList.value.flatMap((item) => item.dataType === "VIDEO" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []),
@@ -437,6 +466,7 @@ function getConfig() {
       ratio: data.value.ratio,
       mode: selectedMode.value,
       generateAudio: data.value.generateAudio,
+      referenceImageUrls: referenceUrls(selectedModel.value),
     },
     models: models.value,
     ratios: ratioOptions.value,
@@ -458,7 +488,7 @@ nodeTools.register({
 
 nodeTools.register({
   name: "setConfig",
-  description: "修改此视频生成节点的模型、时长、分辨率、比例、模式或声音；先用 getConfig 查询能力，providerId 与 modelId 必须同时提供；mode 使用返回的原始字符串或数组，须匹配当前引用；不修改提示词、不启动生成",
+  description: "修改此视频生成节点的模型、时长、分辨率、比例、模式或声音；referenceImageInput 为 url 的模型可配置 referenceImageUrls（公网 HTTPS 图片直链）；先用 getConfig 查询能力，providerId 与 modelId 必须同时提供；mode 使用返回的原始字符串或数组，须匹配当前引用；不修改提示词、不启动生成",
   parameters: z.strictObject({
     providerId: z.string().min(1).optional(),
     modelId: z.string().min(1).optional(),
@@ -467,6 +497,7 @@ nodeTools.register({
     ratio: z.string().regex(/^[1-9]\d{0,3}:[1-9]\d{0,3}$/).optional(),
     mode: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
     generateAudio: z.boolean().optional(),
+    referenceImageUrls: z.array(z.string().min(1).max(8192)).max(9).optional(),
   }).refine((args) => (args.providerId === undefined) === (args.modelId === undefined), "providerId 与 modelId 必须同时提供"),
   async execute(args, { signal }) {
     signal?.throwIfAborted();
@@ -477,6 +508,9 @@ nodeTools.register({
     const choice = args.modelId === undefined ? selectedModel.value
       : models.value.find((item) => item.providerId === args.providerId && item.modelId === args.modelId);
     if (!choice) throw new Error("请选择 getConfig 返回的有效视频模型");
+    if (args.referenceImageUrls?.length && choice.referenceImageInput !== "url") throw new Error("当前模型没有参考图链接输入，请使用画布素材连线");
+    const urls = args.referenceImageUrls ?? referenceUrls(choice);
+    validateReferenceUrls(urls);
     const ratios = choice.videoRatios?.length ? choice.videoRatios : defaultRatios;
     if (args.ratio !== undefined && !ratios.includes(args.ratio)) throw new Error(`当前模型不支持比例 ${args.ratio}，可选：${ratios.join("、")}`);
     const durations = getDurations(choice);
@@ -485,9 +519,10 @@ nodeTools.register({
     const resolutions = getResolutions(choice, duration);
     if (args.resolution !== undefined && !resolutions.includes(args.resolution)) throw new Error(`当前时长不支持分辨率 ${args.resolution}，可选：${resolutions.join("、")}`);
     const resolution = args.resolution ?? (resolutions.includes(data.value.resolution) ? data.value.resolution : resolutions[0] ?? "");
-    if (args.mode !== undefined && !getMatchingModes(choice).some((item) => JSON.stringify(item) === JSON.stringify(args.mode))) throw new Error("所选模式不受当前模型支持或不适用于当前引用，请根据模型能力及已连接素材选择");
+    if (args.mode !== undefined && !getMatchingModes(choice, urls).some((item) => JSON.stringify(item) === JSON.stringify(args.mode))) throw new Error("所选模式不受当前模型支持或不适用于当前引用，请根据模型能力及已连接素材选择");
     if (args.generateAudio !== undefined && choice.audio !== "optional" && args.generateAudio !== (choice.audio === true)) throw new Error("当前模型不支持切换声音，请查看 getConfig 返回的 audio 能力");
     data.value.model = JSON.stringify([choice.providerId, choice.modelId]);
+    if (args.referenceImageUrls !== undefined) data.value.referenceImageUrlsText = args.referenceImageUrls.join("\n");
     data.value.duration = duration;
     data.value.resolution = resolution;
     if (args.ratio !== undefined) data.value.ratio = args.ratio;

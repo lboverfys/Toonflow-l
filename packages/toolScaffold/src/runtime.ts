@@ -81,6 +81,7 @@ export interface MediaModel {
   imageSizes?: string[];
   imageRatios?: string[];
   videoRatios?: string[];
+  referenceImageInput?: "url";
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
   taskRecovery?: boolean;
   audio?: boolean | "optional";
@@ -99,6 +100,7 @@ export interface MediaGenerationRequest {
   prompt: string;
   outputDirectory?: string;
   images?: MediaReference[];
+  referenceImageUrls?: string[];
   videos?: MediaReference[];
   audios?: MediaReference[];
   firstFrame?: MediaReference;
