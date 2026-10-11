@@ -1,4 +1,6 @@
 import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+import { readFileSync } from "@toonflow/file";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import components from "unplugin-vue-components/vite";
@@ -7,10 +9,21 @@ import desktopConfig from "../../electrobun.config.ts";
 import postcssConfig from "../../postcss.config.ts";
 import { i18nPlugin } from "@toonflow/i18n/vite";
 
+const releaseNotes = process.env.releaseNotesFile
+  ? JSON.parse(readFileSync(resolve(fileURLToPath(new URL("../../", import.meta.url)), process.env.releaseNotesFile), "utf8")) as { version: string; commit: string; markdown: string } | null
+  : null;
+if (process.env.releaseNotesFile && (!releaseNotes || releaseNotes.version !== desktopConfig.app.version
+  || (process.env.GITHUB_SHA && releaseNotes.commit !== process.env.GITHUB_SHA)
+  || typeof releaseNotes.markdown !== "string" || !releaseNotes.markdown.trim())) {
+  throw new Error("更新说明与当前版本或源码提交不一致，停止构建。");
+}
+
 export default defineConfig({
   css: { postcss: postcssConfig },
   define: {
     "import.meta.env.appVersion": JSON.stringify(desktopConfig.app.version),
+    "import.meta.env.releaseNotesVersion": JSON.stringify(releaseNotes?.version ?? ""),
+    "import.meta.env.releaseNotesMarkdown": JSON.stringify(releaseNotes?.markdown ?? ""),
   },
   server: {
     proxy: {

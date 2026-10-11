@@ -40,7 +40,7 @@
       <section class="releaseSection" aria-label="更新内容">
         <h3 class="releaseTitle">更新内容</h3>
         <div class="releaseContent" tabindex="0" role="region" aria-label="Markdown 更新说明">
-          <messageMarkdown v-if="markdown.trim()" :content="markdown" />
+          <messageMarkdown v-if="releaseMarkdown.trim()" :content="releaseMarkdown" />
         </div>
       </section>
     </div>
@@ -53,11 +53,13 @@
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent } from "vue";
-import updateNotes from "./updateBox.md?raw";
 
 const visible = defineModel<boolean>({ default: false });
 const emit = defineEmits<{ opened: []; close: [] }>();
-const { version, buildCode, markdown = updateNotes } = defineProps<{ version: string; buildCode: string; markdown?: string }>();
+const { version, buildCode, markdown } = defineProps<{ version: string; buildCode: string; markdown?: string }>();
+const bundledNotes = import.meta.env.releaseNotesMarkdown ?? "";
+const releaseMarkdown = computed(() => markdown ?? (import.meta.env.releaseNotesVersion === version && bundledNotes.trim()
+  ? bundledNotes : "当前构建未提供与该版本对应的更新说明。"));
 const messageMarkdown = defineAsyncComponent(() => import("./messageMarkdown.vue"));
 
 const buildTiles = computed(() => {

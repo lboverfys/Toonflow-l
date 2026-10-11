@@ -21,6 +21,7 @@ interface ProviderModel {
   audio?: "optional" | boolean;
   imageSizes?: string[];
   imageRatios?: string[];
+  videoRatios?: string[];
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
   /** 此模型必须使用宿主的持久化操作记录。 */
   taskRecovery?: boolean;
@@ -82,9 +83,11 @@ interface ProviderVideoTask {
   readonly downloaded?: DownloadedVideoAsset;
   readRequest(): Promise<string>;
   saveRequest(body: string): Promise<void>;
+  /** 仅在未受理请求的素材引用失效时，重新读取原任务的参考图片。 */
+  readReferenceImages(): Promise<MediaInput[]>;
   update(state: Partial<ProviderVideoTaskState>): Promise<void>;
   /** 下载原始 MP4，保存断点并校验完整性；凭据只用于当前请求，不持久化。 */
-  download(url: string, headers: Record<string, string>): Promise<DownloadedVideoAsset>;
+  download(url: string, headers: Record<string, string>, source?: "original" | "publicCdn"): Promise<DownloadedVideoAsset>;
 }
 
 interface MediaRequest {
@@ -130,6 +133,9 @@ interface ProviderTools {
   /** 提取供应商错误正文中的可读原因，并隐藏配置中的密钥和 URL 查询参数。 */
   errorMessage(value: unknown): string;
   hash: typeof Bun.hash;
+  sha256(value: string | Uint8Array): string;
+  /** 按供应商、地址和密钥隔离并串行处理素材缓存，防止多个节点重复上传。 */
+  withReferenceCache<T>(action: (cache: ProviderReferenceCache) => Promise<T>): Promise<T>;
   image: typeof Bun.Image;
   /** 公共图片基础处理工具；供应商可在 processMedia 中按自身模型能力使用。 */
   media: {
@@ -153,6 +159,19 @@ interface ProviderTools {
    * @example const ffmpeg = await this.tool.ffmpeg(); const command = ffmpeg("assets/input.mp4").videoCodec("libx264");
    */
   ffmpeg(): Promise<import("@toonflow/ffmpeg/types").FfmpegFactory>;
+}
+
+interface ProviderReferenceCacheEntry {
+  ref?: string;
+  expiresAt: number;
+  source?: string;
+  fallbackReason?: string;
+}
+
+interface ProviderReferenceCache {
+  get(sha256: string): Promise<ProviderReferenceCacheEntry | undefined>;
+  set(sha256: string, entry: ProviderReferenceCacheEntry): Promise<void>;
+  remove(sha256: string): Promise<void>;
 }
 
 interface ImageRequest extends MediaRequest {

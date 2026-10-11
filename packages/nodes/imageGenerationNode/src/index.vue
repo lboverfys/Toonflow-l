@@ -96,7 +96,8 @@
           <div v-if="imageTask">{{ taskPhaseLabel }}</div>
           <div v-if="imageTask">操作编号：{{ imageTask.operationId }}</div>
           <div v-if="imageTask?.taskId">任务编号：{{ imageTask.taskId }}</div>
-          <div v-if="pendingTask && !generating">点击箭头按原参数恢复；不会新建图片。渠道结果缓存为完成后 3 小时，请及时恢复。</div>
+          <div v-if="pendingTask && !generating">点击箭头按原参数恢复；不会新建图片。{{ imageTask?.providerId === 'laoliImage' ? '渠道结果缓存为完成后 3 小时，请及时恢复。' : '结果链接有时效，请及时恢复并保存。' }}</div>
+          <div v-if="imageTask?.result && imageTask.result.length > 1">本次 {{ imageTask.result.length }} 张图片已全部保存，可在「历史记录」中选择当前结果。</div>
           <div v-if="imageTask?.phase === 'expired'">过期不代表失败或退款；再次生成会创建新任务并另行计费。</div>
           <div v-if="imageTask?.error || taskStatusError" class="taskError">{{ taskStatusError || imageTask?.error }}</div>
         </div>

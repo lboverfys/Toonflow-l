@@ -63,6 +63,7 @@ try {
   }));
   const zipFile = join(outputDirectory, "toonflowPortable.zip");
   await $`${tar} -a -cf ${zipFile} -C ${outputDirectory} toonflowPortable`;
+  if (process.env.releaseNotesFile) copyFileSync(resolve(projectDir, process.env.releaseNotesFile), join(outputDirectory, "releaseNotes.json"));
   console.log(`便携目录：${portableDirectory}\n便携压缩包：${zipFile}\n更新包：${join(outputDirectory, updateFile)}`);
 } finally {
   if (dirname(realpathSync(stagingDirectory)) !== realpathSync(tmpdir())) throw new Error("拒绝清理临时目录以外的路径。");

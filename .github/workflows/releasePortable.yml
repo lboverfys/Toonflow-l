@@ -34,6 +34,7 @@ jobs:
     outputs:
       version: ${{ steps.parameters.outputs.version }}
       needed: ${{ steps.parameters.outputs.needed }}
+      previousTag: ${{ steps.parameters.outputs.previousTag }}
     steps:
       - name: 校验版本与发布来源
         id: parameters
@@ -82,6 +83,7 @@ jobs:
             if ($existing.StatusCode -ne 404) { throw "无法确认版本是否存在：HTTP $($existing.StatusCode)" }
           }
           "version=$version" >> $env:GITHUB_OUTPUT
+          "previousTag=$($latest.tag_name)" >> $env:GITHUB_OUTPUT
           'needed=true' >> $env:GITHUB_OUTPUT
           "本次发布版本：$version" >> $env:GITHUB_STEP_SUMMARY
 
@@ -93,6 +95,7 @@ jobs:
     timeout-minutes: 45
     env:
       appVersion: ${{ needs.prepare.outputs.version }}
+      releaseNotesFile: ${{ github.workspace }}/build/desktop/releaseNotes.json
     outputs:
       version: ${{ needs.prepare.outputs.version }}
     steps:
@@ -150,6 +153,13 @@ jobs:
         run: |
           bun run --filter '@toonflow/web' --filter '@toonflow/server' --filter '@toonflow/desktop' typecheck
           if ($LASTEXITCODE -ne 0) { throw '类型检查失败' }
+      - name: 生成应用和 Release 共用的更新说明
+        env:
+          GH_TOKEN: ${{ github.token }}
+          previousReleaseTag: ${{ needs.prepare.outputs.previousTag }}
+        run: |
+          bun apps/desktop/scripts/prepareReleaseNotes.ts
+          if ($LASTEXITCODE -ne 0) { throw '更新说明生成失败' }
       - name: 构建桌面程序
         env:
           generateUpdatePatch: "0"
@@ -160,7 +170,7 @@ jobs:
         run: |
           bun apps/desktop/scripts/packagePortableWindows.ts "$env:portableOutput"
           if ($LASTEXITCODE -ne 0) { throw '便携版打包失败' }
-      - name: 保存三个发布文件
+      - name: 保存发布文件及统一更新说明
         uses: actions/upload-artifact@v7
         with:
           name: toonflowPortable-${{ needs.prepare.outputs.version }}
@@ -168,6 +178,7 @@ jobs:
             ${{ env.portableOutput }}/toonflowPortable.zip
             ${{ env.portableOutput }}/stable-win-x64-toonflowPortable.tar.zst
             ${{ env.portableOutput }}/stable-win-x64-portable-update.json
+            ${{ env.portableOutput }}/releaseNotes.json
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -189,9 +200,11 @@ jobs:
           path: ${{ env.artifactDirectory }}
       - name: 校验发布包
         run: |
-          $names = @('toonflowPortable.zip', 'stable-win-x64-toonflowPortable.tar.zst', 'stable-win-x64-portable-update.json')
+          $names = @('toonflowPortable.zip', 'stable-win-x64-toonflowPortable.tar.zst', 'stable-win-x64-portable-update.json', 'releaseNotes.json')
           $files = @(Get-ChildItem -LiteralPath $env:artifactDirectory -File)
           if ($files.Count -ne $names.Count -or (Compare-Object ($files.Name | Sort-Object) ($names | Sort-Object))) { throw '发布文件清单不一致' }
+          $notes = Get-Content -LiteralPath (Join-Path $env:artifactDirectory 'releaseNotes.json') -Raw | ConvertFrom-Json
+          if ($notes.version -ne $env:releaseVersion -or $notes.commit -ne $env:GITHUB_SHA -or $notes.previousTag -notmatch '^portable-v\d+\.\d+\.\d+$' -or !($notes.markdown -is [string]) -or !$notes.markdown.Trim()) { throw '更新说明与发布版本或源码提交不一致' }
           $manifest = Get-Content -LiteralPath (Join-Path $env:artifactDirectory $names[2]) -Raw | ConvertFrom-Json
           if ($manifest.schemaVersion -ne 1 -or $manifest.version -ne $env:releaseVersion -or $manifest.distribution -ne 'portable' -or $manifest.identifier -ne 'local.toonflow.desktop' -or $manifest.channel -ne 'stable' -or $manifest.platform -ne 'win' -or $manifest.arch -ne 'x64' -or $manifest.hash -notmatch '^[a-f0-9]{64}$' -or $manifest.artifact.file -ne $names[1]) { throw '便携更新清单不符合当前版本' }
           $archive = Get-Item -LiteralPath (Join-Path $env:artifactDirectory $names[1])
@@ -222,13 +235,13 @@ jobs:
           $tag = "portable-v$env:releaseVersion"
           $latest = Invoke-RestMethod "$api/releases/latest" -Headers $headers -TimeoutSec 30
           if ($latest.tag_name -notmatch '^portable-v(\d+\.\d+\.\d+)$' -or [version]$env:releaseVersion -le [version]$Matches[1]) { throw '正式版本已变化，停止发布旧版本或相同版本' }
+          $notes = Get-Content -LiteralPath (Join-Path $env:artifactDirectory 'releaseNotes.json') -Raw | ConvertFrom-Json
+          if ($notes.previousTag -ne $latest.tag_name) { throw '上一发布版本已变化，停止发布过期的更新说明' }
           foreach ($endpoint in @("git/ref/tags/$tag", "releases/tags/$tag")) {
             $existing = Invoke-WebRequest "$api/$endpoint" -Headers $headers -SkipHttpErrorCheck -TimeoutSec 30
             if ($existing.StatusCode -eq 200) { throw '同名版本已存在；不覆盖正式版本或失败草稿，请先检查 Releases' }
             if ($existing.StatusCode -ne 404) { throw "无法确认版本是否存在：HTTP $($existing.StatusCode)" }
           }
-          $notesRequest = @{ tag_name = $tag; target_commitish = $env:GITHUB_SHA; previous_tag_name = $latest.tag_name } | ConvertTo-Json
-          $notes = Invoke-RestMethod "$api/releases/generate-notes" -Method Post -Headers $headers -ContentType 'application/json' -Body $notesRequest -TimeoutSec 30
           $body = @"
           Windows x64 便携版 $env:releaseVersion。
 
@@ -238,7 +251,7 @@ jobs:
 
           构建来自仓库提交 $env:GITHUB_SHA，不包含本机配置或 API 密钥。已完成类型检查、构建与发布包校验；自动发布流程不调用模型生成接口，不进行桌面交互验证。
 
-          $($notes.body)
+          $($notes.markdown)
           "@
           $payload = @{ tag_name = $tag; target_commitish = $env:GITHUB_SHA; name = "Toonflow-l $env:releaseVersion（Windows 便携版）"; body = $body; draft = $true; prerelease = $false; make_latest = 'false' } | ConvertTo-Json
           $release = Invoke-RestMethod "$api/releases" -Method Post -Headers $headers -ContentType 'application/json' -Body $payload -TimeoutSec 30

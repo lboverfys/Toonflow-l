@@ -141,7 +141,7 @@ async function downloadError(response: Response, sanitize: (error: unknown) => s
 
 async function downloadAttempt(
   cwd: string, path: string, url: string, headers: Record<string, string>, record: TaskRecord,
-  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal,
+  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal, source: "original" | "publicCdn" = "original",
 ) {
   await resolveWorkspacePath(cwd, relative(cwd, path));
   const local = await stat(path).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
@@ -156,11 +156,27 @@ async function downloadAttempt(
   }
   let offset = record.download?.validator ? local?.size ?? 0 : 0;
   let response: Response;
-  try { response = await fetch(url, {
-    headers: { ...headers, ...(offset ? { Range: `bytes=${offset}-`, "If-Range": record.download!.validator! } : {}) },
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300000)]) : AbortSignal.timeout(300000), redirect: "manual",
-  }); } catch (error) {
+  try {
+    if (source === "publicCdn" && Object.keys(headers).length) invalid("公开 CDN 下载不能附带接口凭据");
+    const downloadSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(300000)]) : AbortSignal.timeout(300000);
+    for (let redirects = 0; ; redirects++) {
+      if (source === "publicCdn") {
+        const target = new URL(url);
+        if (target.protocol !== "https:" || target.username || target.password) invalid("成品链接须为不含账号密码的 HTTPS 地址");
+      }
+      response = await fetch(url, {
+        headers: { ...headers, ...(offset ? { Range: `bytes=${offset}-`, "If-Range": record.download!.validator! } : {}) },
+        signal: downloadSignal, redirect: "manual",
+      });
+      if (source !== "publicCdn" || ![301, 302, 303, 307, 308].includes(response.status)) break;
+      const location = response.headers.get("location");
+      await response.body?.cancel();
+      if (!location || redirects >= 5) invalid("成品下载重定向无效，请恢复原任务重新获取链接");
+      url = new URL(location, url).href;
+    }
+  } catch (error) {
     signal?.throwIfAborted();
+    if ((error as { status?: number }).status) throw error;
     throw Object.assign(new Error(`原片下载连接中断：${sanitize(error)}`), { retryable: true });
   }
   const reject = async (message: string): Promise<never> => { await response.body?.cancel(); return invalid(message, 502); };
@@ -173,7 +189,7 @@ async function downloadAttempt(
     retryable: response.status === 408 || response.status === 429 || response.status >= 500,
     retryAfter: retryAfter(response),
   });
-  if (response.headers.get("x-video-quality")?.toLowerCase() !== "original") return reject("接口未返回原片标记，已保留任务，请稍后恢复下载");
+  if (source === "original" && response.headers.get("x-video-quality")?.toLowerCase() !== "original") return reject("接口未返回原片标记，已保留任务，请稍后恢复下载");
   const mime = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
   if (mime !== "video/mp4" && mime !== "application/octet-stream") return reject("原片内容类型不正确，已保留任务");
   const lengthHeader = response.headers.get("content-length");
@@ -223,12 +239,12 @@ async function downloadAttempt(
 
 async function downloadVideo(
   cwd: string, path: string, url: string, headers: Record<string, string>, record: TaskRecord,
-  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal,
+  save: () => Promise<void>, sanitize: (error: unknown) => string, signal?: AbortSignal, source: "original" | "publicCdn" = "original",
 ) {
   for (let attempt = 0; attempt < 3; attempt++) {
     signal?.throwIfAborted();
     try {
-      await downloadAttempt(cwd, path, url, headers, record, save, sanitize, signal);
+      await downloadAttempt(cwd, path, url, headers, record, save, sanitize, signal, source);
       record.state.retryAt = undefined;
       await save();
       return;
@@ -280,6 +296,7 @@ async function publishDownload(cwd: string, path: string, record: TaskRecord, si
 export async function runVideoTask(
   cwd: string, input: MediaGenerationRequest, config: Record<string, unknown>,
   generate: (request: MediaGenerationRequest, context: VideoTaskContext) => Promise<GeneratedMedia[]>,
+  readReferenceImages: () => Promise<MediaInput[]>,
   sanitize: (error: unknown) => string, signal?: AbortSignal,
 ) {
   const outputDirectory = input.outputDirectory ?? "assets/generated";
@@ -313,6 +330,7 @@ export async function runVideoTask(
     const context: VideoTaskContext = {
       id: operationId,
       idHash: hash(operationId),
+      readReferenceImages,
       get state() { return task.state; },
       get requestSaved() { return requestSaved; },
       get downloaded() { return downloaded; },
@@ -327,9 +345,9 @@ export async function runVideoTask(
         requestSaved = true;
       },
       async update(state) { task.state = stateSchema.parse({ ...task.state, ...state }); task.lastError = undefined; await save(); },
-      async download(url, headers) {
+      async download(url, headers, source) {
         const path = join(directory, `${operationId}.part`);
-        await downloadVideo(cwd, path, url, headers, task, save, sanitize, signal);
+        await downloadVideo(cwd, path, url, headers, task, save, sanitize, signal, source);
         downloaded = Object.freeze(await publishDownload(cwd, path, task, signal));
         return downloaded;
       },
