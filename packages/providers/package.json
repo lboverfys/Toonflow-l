@@ -18,6 +18,7 @@
     "./media/laoliImage": "./src/media/laoliImage.ts",
     "./media/laoliVideo": "./src/media/laoliVideo.ts",
     "./media/sub2apiImage": "./src/media/sub2apiImage.ts",
-    "./media/dola": "./src/media/dola.ts"
+    "./media/dola": "./src/media/dola.ts",
+    "./media/vidGate": "./src/media/vidGate.ts"
   }
 }

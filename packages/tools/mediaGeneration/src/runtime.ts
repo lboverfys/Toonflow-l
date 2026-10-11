@@ -29,6 +29,12 @@ export const imageGenerationSchema = z.strictObject({
 });
 export const videoGenerationSchema = z.strictObject({
   ...sharedFields,
+  referenceImageUrls: z.array(z.url({ protocol: /^https$/ }).max(8192).refine(value => {
+    try {
+      const url = new URL(value);
+      return !url.username && !url.password && !url.hash;
+    } catch { return false; }
+  }, "参考图须为不含账号密码或片段的公网 HTTPS 直链")).max(9).optional(),
   prompt: z.string().min(1).max(100000).refine(value => !!value.trim(), "请输入生成提示词"),
   operationId: z.uuid().optional(),
   videos: z.array(videoReference).max(64).optional(),

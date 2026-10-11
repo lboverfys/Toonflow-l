@@ -22,6 +22,8 @@ interface ProviderModel {
   imageSizes?: string[];
   imageRatios?: string[];
   videoRatios?: string[];
+  /** 仅接受公网图片链接的渠道，使用节点的链接输入。 */
+  referenceImageInput?: "url";
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
   /** 此模型必须使用宿主的持久化操作记录。 */
   taskRecovery?: boolean;
@@ -75,6 +77,8 @@ interface ProviderVideoTaskState {
   retryAt?: number;
 }
 
+type VideoDownloadSource = "original" | "publicCdn" | "gateway" | "publicHttpCdn";
+
 interface ProviderVideoTask {
   readonly id: string;
   readonly idHash: string;
@@ -87,7 +91,7 @@ interface ProviderVideoTask {
   readReferenceImages(): Promise<MediaInput[]>;
   update(state: Partial<ProviderVideoTaskState>): Promise<void>;
   /** 下载原始 MP4，保存断点并校验完整性；凭据只用于当前请求，不持久化。 */
-  download(url: string, headers: Record<string, string>, source?: "original" | "publicCdn"): Promise<DownloadedVideoAsset>;
+  download(url: string, headers: Record<string, string>, source?: VideoDownloadSource): Promise<DownloadedVideoAsset>;
 }
 
 interface MediaRequest {

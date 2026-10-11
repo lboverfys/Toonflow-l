@@ -41,7 +41,7 @@ export async function listMediaModels(): Promise<MediaModel[]> {
     return [{
       providerId: provider.id, providerLabel: provider.label, modelId: model.id, label: model.label, type: model.type,
       mode: model.mode, durationResolutionMap: model.durationResolutionMap, audio: model.audio,
-      ...(model.type === "video" ? { videoRatios: imageOptions(model.videoRatios, /^[1-9]\d{0,3}:[1-9]\d{0,3}$/) } : {}),
+      ...(model.type === "video" ? { videoRatios: imageOptions(model.videoRatios, /^[1-9]\d{0,3}:[1-9]\d{0,3}$/), referenceImageInput: model.referenceImageInput === "url" ? "url" : undefined } : {}),
       taskRecovery: model.taskRecovery === true,
       ...(model.type === "audio" ? { voices: model.voices } : {}),
       ...(model.type === "image" ? {
@@ -157,6 +157,10 @@ export async function generateMedia(
   if (typeof generate !== "function") invalid(t`此供应商不支持${translateMessage({ image: "图片", video: "视频", audio: "音频" }[mediaType])}生成`);
   const rules = Array.isArray(provider.rules) ? provider.rules : [];
   if (rules.some(rule => rule.field === "apiKey") && (typeof provider.config.apiKey !== "string" || !provider.config.apiKey.trim())) invalid("请先在媒体模型设置中配置供应商 API Key");
+  if (!videoTask?.requestSaved) {
+    if (request.referenceImageUrls?.length && (mediaType !== "video" || model.referenceImageInput !== "url")) invalid("当前模型不支持参考图链接输入");
+    if (mediaType === "video" && model.referenceImageInput === "url" && request.images?.length) invalid("此渠道只接受公网 HTTPS 图片直链，请使用参考图链接输入；未上传或公开本地素材");
+  }
   if (mediaType === "video" && model.taskRecovery === true && !videoTask) {
     return runVideoTask(directory, request, provider.config,
       (saved, context) => generateMedia(directory, "video", saved, signal, context),
@@ -199,7 +203,8 @@ export async function generateMedia(
     }
   }
   const references = async (items: MediaReference[] | undefined, type: string) => items ? Promise.all(items.map(item => readReference(directory, item, type, signal))) : undefined;
-  const images = restoring ? undefined : await references(request.images, "image");
+  let images: MediaInput[] | undefined = restoring ? undefined : await references(request.images, "image");
+  if (!restoring && request.referenceImageUrls?.length) images = [...(images ?? []), ...request.referenceImageUrls.map((url): MediaInput => ({ type: "url", url }))];
   signal?.throwIfAborted();
   const assets = mediaType === "audio"
     ? await provider.generateAudio!({
