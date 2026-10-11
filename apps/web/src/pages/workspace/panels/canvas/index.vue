@@ -45,7 +45,7 @@
       :selectionMode="SelectionMode.Partial"
       :multi-selection-key-code="null"
       :zoomActivationKeyCode="zoomKeyPressed ? true : null"
-      :pan-activation-key-code="null"
+      :panActivationKeyCode="panKeyPressed ? true : null"
       v-model="flowData"
       @connect="addEdges"
       @edgeClick="showEdgeDisconnect"
@@ -940,7 +940,10 @@ function updateCanvasKeys(event: KeyboardEvent) {
   const navigationAction = target instanceof Element && target.closest("button") && target.closest(".canvasControlStack")
     ? (["search", "fitView", "focusSelection", "returnView", "toggleMap"] as const).find(action => shortcutMatches(event, shortcuts[action]))
     : undefined;
-  panKeyPressed.value = !!inCanvas && !editing && !event.isComposing && shortcutPressed(event, shortcuts.pan, pressedCodes);
+  const controlPanPressed = shortcutPressed(event, "Ctrl", pressedCodes)
+    && [...pressedCodes].every(code => code === "ControlLeft" || code === "ControlRight");
+  panKeyPressed.value = !!inCanvas && !editing && !event.isComposing
+    && (controlPanPressed || shortcutPressed(event, shortcuts.pan, pressedCodes));
   if (target instanceof Element && target.closest(".mapViewport") && !event.ctrlKey && !event.metaKey && !event.altKey
     && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(event.key)) return;
   if (event.type === "keyup" || event.defaultPrevented || event.isComposing || !inCanvas || (editing && !navigationAction)) return;
