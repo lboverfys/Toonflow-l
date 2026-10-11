@@ -65,7 +65,7 @@
       </canvasMenu>
       <canvasControls
         ref="canvasControlsRef"
-        :active="active"
+        :active="active && !settingsVisible"
         v-model:assetsVisible="assetsVisible"
         v-model:snapEnabled="snapEnabled"
         v-model:showEdges="showEdges"
@@ -73,6 +73,8 @@
         :directory="project?.directory"
         :projectName="project?.name ?? ''"
         :batchHistory="canvasHistory.batch"
+        :navigation="navigation"
+        @search="nodeSearchRef?.open()"
         @update:showEdges="edgeDisconnect = undefined" />
       <nodeMenu
         :key="JSON.stringify(['nodeMenu', project?.directory, canvasId])"
@@ -94,7 +96,7 @@
         :batchHistory="canvasHistory.batch"
         :getSignal="() => canvasController.signal"
         :disabled="!canvasId || !project?.directory" />
-      <nodeSearch ref="nodeSearchRef" :disabled="!active || settingsVisible || !canvasId || !project?.directory" />
+      <nodeSearch ref="nodeSearchRef" :disabled="!active || settingsVisible || !canvasId || !project?.directory" :nodeTypes="availableNodes" :focusNodes="navigation.focusNodes" />
     </vue-flow>
     <teleport to="body">
       <el-button
@@ -151,6 +153,7 @@ import { useCanvasTools } from "./useCanvasTools";
 import type { CanvasContext } from "@toonflow/tool-canvas/runtime";
 import { loadNodeComponent } from "./loadNodeComponent";
 import { useCanvasHistory } from "./useCanvasHistory";
+import { useCanvasNavigation } from "./useCanvasNavigation";
 import { copyNodeToClipboard, copyNodesToClipboard, nodeClipboardCommand, readClipboardNodes } from "./nodeClipboard";
 import { readClipboardFiles, readClipboardText, writeClipboardImage } from "@/lib/clipboard";
 import nodeMenu from "./components/nodeMenu.vue";
@@ -223,6 +226,10 @@ const assetsVisible = ref(false);
 const assetLibraryRef = ref<InstanceType<typeof assetLibrary>>();
 const edgeDisconnect = ref<{ id: string; x: number; y: number }>();
 const flow = useVueFlow(props.runtimeKey);
+const navigation = useCanvasNavigation(flow, () =>
+  project.value?.directory && canvasId.value ? JSON.stringify([project.value.directory, canvasId.value]) : "",
+  () => props.active && !props.settingsVisible,
+);
 const nodeDocument: NodeDocumentContext = { targets: shallowReactive(new Map()), mounts: new Map(), states: shallowReactive(new Map()) };
 const canvasDirty = ref(false);
 const canvasSaveError = ref("");
@@ -930,11 +937,16 @@ function updateCanvasKeys(event: KeyboardEvent) {
   const editing =
     !(target instanceof Element) ||
     !!target.closest("input, textarea, select, button, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='slider']");
+  const navigationAction = target instanceof Element && target.closest("button") && target.closest(".canvasControlStack")
+    ? (["search", "fitView", "focusSelection", "returnView", "toggleMap"] as const).find(action => shortcutMatches(event, shortcuts[action]))
+    : undefined;
   panKeyPressed.value = !!inCanvas && !editing && !event.isComposing && shortcutPressed(event, shortcuts.pan, pressedCodes);
-  if (event.type === "keyup" || event.defaultPrevented || event.isComposing || !inCanvas || editing) return;
-  const action = ([
+  if (target instanceof Element && target.closest(".mapViewport") && !event.ctrlKey && !event.metaKey && !event.altKey
+    && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(event.key)) return;
+  if (event.type === "keyup" || event.defaultPrevented || event.isComposing || !inCanvas || (editing && !navigationAction)) return;
+  const action = navigationAction ?? ([
     "group", "mergeGroup", "ungroup", "addNode", "moveTool", "handTool", "arrange", "search",
-    "delete", "copy", "paste", "undo", "redo", "zoomIn", "zoomOut", "fitView",
+    "delete", "copy", "paste", "undo", "redo", "zoomIn", "zoomOut", "fitView", "focusSelection", "returnView", "toggleMap",
   ] as const).find((action) =>
     shortcutMatches(event, shortcuts[action])
   );
@@ -970,6 +982,10 @@ function updateCanvasKeys(event: KeyboardEvent) {
   else if (action === "moveTool" || action === "handTool") selectedTool.value = action === "handTool" ? "hand" : "move";
   else if (action === "arrange") void canvasControlsRef.value?.arrangeNodes();
   else if (action === "search") nodeSearchRef.value?.open();
+  else if (action === "fitView") void navigation.showAll();
+  else if (action === "focusSelection") void navigation.focusNodes(flow.getSelectedNodes.value.map(node => node.id));
+  else if (action === "returnView") void navigation.goBack();
+  else if (action === "toggleMap") canvasControlsRef.value?.toggleMap();
   else void flow[action]();
 }
 
