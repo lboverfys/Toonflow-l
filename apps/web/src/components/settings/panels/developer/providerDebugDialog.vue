@@ -65,7 +65,7 @@
                 </el-select>
               </el-form-item>
             </div>
-            <el-collapse>
+            <el-collapse v-model="expandedSections">
               <el-collapse-item title="更多请求参数" name="request">
                 <el-input v-model="extraParameters" type="textarea" dir="ltr" :rows="4" aria-label="更多请求参数 JSON" placeholder="JSON 对象，可填写 mode、quality、other 等字段" />
               </el-collapse-item>
@@ -123,6 +123,9 @@ import { ElMessage } from "element-plus";
 import { IconFolderOpen, IconRefresh, IconPlus, IconX, IconVolume, IconDownload, IconPlayerPlay, IconPlayerStop } from "@tabler/icons-vue";
 import type { Provider } from "@toonflow/providers";
 import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
+import { useExpandedKeys } from "@/lib/useTreeExpansion";
+
+const expandedSections = useExpandedKeys("toonflow:providerDebugSections");
 
 type DebugProvider = { id: string; label: string; rules: Rule[]; models: Provider["models"] };
 type DebugLog = { id: number; method: string; url: string; state: string; status?: number; duration?: number; request?: string; response?: string; error?: string };

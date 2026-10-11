@@ -10,6 +10,7 @@
     "./showNodeError": "./src/showNodeError.ts",
     "./useNodeReferences": "./src/useNodeReferences.ts",
     "./useNodeGeneration": "./src/useNodeGeneration.ts",
+    "./useGenerationPreferences": "./src/useGenerationPreferences.ts",
     "./groupNodeModels": "./src/groupNodeModels.ts"
   },
   "scripts": {

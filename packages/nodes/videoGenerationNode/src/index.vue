@@ -65,6 +65,7 @@
             placeholder="选择模型"
             aria-label="生成模型"
             noDataText="请先在设置中添加视频模型"
+            @change="rememberPreferences"
             placement="top-start"
             @visible-change="(visible) => visible && loadModels().catch((error) => showNodeError(error, '模型读取失败'))">
             <template #prefix><icon-sparkles :size="17" /></template>
@@ -82,6 +83,11 @@
             v-model:ratio="data.ratio"
             v-model:mode="data.mode"
             v-model:generateAudio="data.generateAudio"
+            @update:duration="rememberPreferences"
+            @update:resolution="rememberPreferences"
+            @update:ratio="rememberPreferences"
+            @update:mode="rememberPreferences"
+            @update:generateAudio="rememberPreferences"
             :ratios="ratioOptions"
             :model="selectedModel"
             :disabled="generating || deleting || pendingTask || !selectedModel" />
@@ -118,6 +124,7 @@ import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeVide
 import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useNodeGeneration } from "@toonflow/node-shared/useNodeGeneration";
+import { useGenerationPreferences } from "@toonflow/node-shared/useGenerationPreferences";
 import { useNodeReferences } from "@toonflow/node-shared/useNodeReferences";
 import promptInput from "@toonflow/node-shared/promptInput";
 import videoPlayer from "@toonflow/node-video/videoPlayer";
@@ -140,6 +147,7 @@ const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals 
 });
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
 const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean; appliedVideoTaskId?: string; referenceImageUrlsText: string });
+const rememberPreferences = useGenerationPreferences("video", () => data.value);
 data.value.prompt ??= "";
 data.value.promptModel ??= [];
 data.value.model ??= "";

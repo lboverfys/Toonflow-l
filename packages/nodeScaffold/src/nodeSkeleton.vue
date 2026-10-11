@@ -602,7 +602,8 @@ watch(
     opacity: 1;
   }
 
-  &:hover .titleBar .nodeActions {
+  &:hover .titleBar .nodeActions,
+  &:focus-within .titleBar .nodeActions {
     visibility: visible;
   }
 
@@ -632,8 +633,9 @@ watch(
   }
 
   .titleBar {
+    position: relative;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 6px;
     padding: 0 4px 8px;
     font-size: 14px;
@@ -641,14 +643,14 @@ watch(
 
     .titleIcon {
       flex-shrink: 0;
+      margin-top: 2px;
     }
 
     .labelText {
       flex: 1;
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
+      white-space: normal;
       cursor: grab;
       user-select: none;
 
@@ -672,6 +674,9 @@ watch(
     }
 
     .nodeActions {
+      position: absolute;
+      left: 100%;
+      top: 0;
       visibility: hidden;
       display: flex;
       flex-shrink: 0;

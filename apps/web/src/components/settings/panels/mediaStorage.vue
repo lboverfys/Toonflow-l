@@ -39,7 +39,7 @@
         <span class="fieldHint">保存只校验配置格式；首次生成时才访问 OSS。</span>
       </div>
     </el-form>
-    <el-collapse class="help">
+    <el-collapse v-model="expandedSections" class="help">
       <el-collapse-item title="首次开通与权限说明" name="setup">
         <ol>
           <li>在阿里云 OSS 创建专用 Bucket，选择标准存储，访问权限设为私有。</li>
@@ -58,6 +58,9 @@ import { computed, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { defaultOssStorageSettings, ossStorageSchema, type OssStorageSettings } from "@toonflow/server/mediaStorage";
 import { saveSettings, settings } from "@/stores/settings";
+import { useExpandedKeys } from "@/lib/useTreeExpansion";
+
+const expandedSections = useExpandedKeys("toonflow:mediaStorageSections");
 
 const props = defineProps<{ visible: boolean }>();
 const form = reactive<OssStorageSettings>({ ...defaultOssStorageSettings });

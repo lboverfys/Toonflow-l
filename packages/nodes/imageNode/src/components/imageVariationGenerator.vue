@@ -1,6 +1,6 @@
 <template>
   <footer class="variationFooter">
-    <el-select v-model="settings.model" class="modelSelect" filterable :loading="modelsLoading" :disabled="busy" placeholder="选择图片模型" :aria-label="`${label}模型`" noDataText="请先在设置中添加图片模型" placement="top-start" @visible-change="visible => visible && refreshModels()">
+    <el-select v-model="settings.model" class="modelSelect" filterable :loading="modelsLoading" :disabled="busy" placeholder="选择图片模型" :aria-label="`${label}模型`" noDataText="请先在设置中添加图片模型" placement="top-start" @change="rememberPreferences" @visible-change="visible => visible && refreshModels()">
       <el-option-group v-for="provider in modelGroups" :key="provider.id" :label="provider.label">
         <el-option v-for="model in provider.models" :key="model.modelId" :label="model.label" :value="JSON.stringify([model.providerId, model.modelId])" />
       </el-option-group>
@@ -8,8 +8,8 @@
     <el-popover trigger="click" placement="top" :width="220" :disabled="busy || !selectedModel" :showArrow="false">
       <template #reference><el-button class="sizeButton" text :disabled="busy || !selectedModel" :aria-label="`${label}输出设置`">{{ settings.ratio || '比例' }} · {{ settings.size || '分辨率' }}</el-button></template>
       <div class="variationSettings nodrag nopan nowheel" @pointerdown.stop @mousedown.stop @wheel.stop @keydown.stop>
-        <label>分辨率<el-select v-model="settings.size" :disabled="busy" :aria-label="`${label}分辨率`"><el-option v-for="size in sizeOptions" :key="size" :label="size" :value="size" /></el-select></label>
-        <label>比例<el-select v-model="settings.ratio" :disabled="busy" :aria-label="`${label}比例`" @change="ratioFromSource = false"><el-option v-for="ratio in ratioOptions" :key="ratio" :label="ratio" :value="ratio" /></el-select></label>
+        <label>分辨率<el-select v-model="settings.size" :disabled="busy" :aria-label="`${label}分辨率`" @change="rememberPreferences"><el-option v-for="size in sizeOptions" :key="size" :label="size" :value="size" /></el-select></label>
+        <label>比例<el-select v-model="settings.ratio" :disabled="busy" :aria-label="`${label}比例`" @change="ratioFromSource = false; rememberPreferences()"><el-option v-for="ratio in ratioOptions" :key="ratio" :label="ratio" :value="ratio" /></el-select></label>
       </div>
     </el-popover>
     <el-button type="primary" :icon="IconSparkles" :loading="generating" :disabled="busy || modelsLoading || !source || !selectedModel || !prompt.trim()" @click="generate">{{ buttonLabel ?? '生成图片' }}</el-button>
@@ -24,6 +24,7 @@ import { IconSparkles } from "@tabler/icons-vue";
 import { useNodeAi, useNodeToolsContext, type NodeMediaModel, type NodeMediaValue } from "@toonflow/nodes-scaffold/runtime";
 import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
+import { useGenerationPreferences } from "@toonflow/node-shared/useGenerationPreferences";
 import { useImageVariationNode } from "../useImageVariationNode";
 
 const props = defineProps<{
@@ -36,6 +37,7 @@ const props = defineProps<{
   disabled?: boolean;
 }>();
 const emit = defineEmits<{ generated: [] }>();
+const rememberPreferences = useGenerationPreferences("image", () => props.settings);
 const generating = defineModel<boolean>("generating", { default: false });
 const { id, node } = useNode();
 const { findNode, getEdges } = useVueFlow();
@@ -51,7 +53,7 @@ const sizeOptions = computed(() => selectedModel.value?.imageSizes?.length ? sel
 const ratioOptions = computed(() => selectedModel.value?.imageRatios?.length ? selectedModel.value.imageRatios : ["16:9"]);
 let generationController: AbortController | undefined;
 let disposed = false;
-let inheritModelConfig = true;
+let inheritModelConfig = !props.settings.model;
 let ratioFromSource = !props.settings.ratio;
 
 function nearestRatio() {

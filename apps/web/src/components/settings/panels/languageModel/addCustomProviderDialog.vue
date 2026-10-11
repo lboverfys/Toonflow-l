@@ -40,10 +40,10 @@
               <el-input v-model="item.label" placeholder="显示名称" aria-label="模型显示名称" />
               <el-button
                 text
-                :icon="expandedModels.has(item.key) ? IconChevronUp : IconChevronDown"
-                :aria-expanded="expandedModels.has(item.key)"
+                :icon="expandedModels.includes(item.key) ? IconChevronUp : IconChevronDown"
+                :aria-expanded="expandedModels.includes(item.key)"
                 aria-label="展开 token 设置"
-                @click="expandedModels.has(item.key) ? expandedModels.delete(item.key) : expandedModels.add(item.key)" />
+                @click="expandedModels = expandedModels.includes(item.key) ? expandedModels.filter(key => key !== item.key) : [...expandedModels, item.key]" />
               <el-button
                 text
                 type="danger"
@@ -51,7 +51,7 @@
                 aria-label="删除模型"
                 @click="models = models.filter((model) => model.key !== item.key)" />
             </div>
-            <div v-if="expandedModels.has(item.key)" class="formGrid tokenSettings">
+            <div v-if="expandedModels.includes(item.key)" class="formGrid tokenSettings">
               <el-form-item label="上下文窗口">
                 <el-input-number
                   v-model="item.contextWindow"
@@ -124,6 +124,7 @@ import {
   IconSearch,
 } from "@tabler/icons-vue";
 import { saveSettings, type CustomProvider, type CustomProviderModel } from "@/stores/settings";
+import { useExpandedKeys } from "@/lib/useTreeExpansion";
 import { languageProviders } from "@toonflow/providers";
 import { isTfRouterProvider } from "@/lib/tf";
 
@@ -132,7 +133,7 @@ const visible = defineModel<boolean>({ default: false });
 const providerForm = ref<FormInstance>();
 const form = reactive({ id: "", label: "", apiUrl: "", protocol: "openai-completions", apiKey: "", requestBodyLimitMiB: undefined as number | undefined });
 const models = ref<(CustomProviderModel & { key: string })[]>([]);
-const expandedModels = ref(new Set<string>());
+const expandedModels = useExpandedKeys(() => `toonflow:languageModelSections:${props.provider?.id ?? "new"}`);
 const fetchedModels = shallowRef<CustomProviderModel[]>([]);
 const selectedIds = ref(new Set<string>());
 const modelSearch = ref("");
@@ -196,7 +197,7 @@ watch(visible, (value) => {
     if (props.provider) {
       const { models: providerModels, id, label, apiUrl, protocol, apiKey, requestBodyLimitMiB } = props.provider;
       Object.assign(form, { id, label, apiUrl, protocol, apiKey, requestBodyLimitMiB });
-      models.value = providerModels.map((item) => ({ ...item, key: crypto.randomUUID() }));
+      models.value = providerModels.map((item) => ({ ...item, key: item.id }));
     }
   } else {
     request?.abort();
@@ -209,7 +210,6 @@ watch([() => form.id, () => form.apiUrl, () => form.protocol, () => form.apiKey]
 function resetForm() {
   Object.assign(form, { id: "", label: "", apiUrl: "", protocol: "openai-completions", apiKey: "", requestBodyLimitMiB: undefined });
   models.value = [];
-  expandedModels.value = new Set();
   fetchedModels.value = [];
   selectedIds.value = new Set();
   modelSearch.value = "";

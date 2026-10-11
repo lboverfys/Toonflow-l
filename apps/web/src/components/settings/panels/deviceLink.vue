@@ -74,7 +74,7 @@
     <el-alert v-if="error" :title="error" type="error" :closable="false" showIcon />
     <el-button v-if="!status && !loading" :icon="IconRefresh" @click="loadStatus()">重新加载</el-button>
 
-    <el-collapse class="advancedSettings">
+    <el-collapse v-model="expandedSections" class="advancedSettings">
       <el-collapse-item title="高级选项" name="advanced">
         <section class="settingSection" aria-label="连接设置">
           <el-form class="connectionForm" labelPosition="top" :disabled="busy || !status">
@@ -129,6 +129,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { QRCode } from "tdesign-vue-next";
 import { IconFolderPlus, IconQrcode, IconRefresh } from "@tabler/icons-vue";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useExpandedKeys } from "@/lib/useTreeExpansion";
 import workspacePicker from "@/pages/home/workspacePicker.vue";
 import { writeClipboardText } from "@/lib/clipboard";
 import { changeDeviceConnection, deviceHubEnabled, getDeviceVersionWarning, isRemoteConnection, mobileConnection, mobileConnectionLabel, mobileConnectionVersionWarning } from "@/lib/mobile";
@@ -138,6 +139,7 @@ type Pairing = { qrCode: string; manualCode: string; url: string };
 type ApiResponse<T> = { code: number; data: T; message?: string };
 
 const props = withDefaults(defineProps<{ visible?: boolean }>(), { visible: true });
+const expandedSections = useExpandedKeys("toonflow:deviceLinkSections");
 const workspaceStore = useWorkspaceStore();
 const headers = { "x-toonflow-mobile-link": "1" };
 const status = ref<LinkStatus>();

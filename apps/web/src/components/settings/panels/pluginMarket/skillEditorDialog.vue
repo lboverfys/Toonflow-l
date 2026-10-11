@@ -15,18 +15,22 @@
             新建文件
           </el-button>
           <el-tree
+            ref="skillTree"
             :key="treeVersion"
             class="tree"
             :data="[treeRoot]"
             nodeKey="key"
             :props="{ label: 'label', children: 'children' }"
-            defaultExpandAll
+            :defaultExpandedKeys="skillExpansion.expandedKeys.value"
+            :autoExpandParent="false"
             highlightCurrent
             :currentNodeKey="selectedPath"
             :draggable="isDirectorySkill"
             :allowDrag="allowDrag"
             :allowDrop="allowDrop"
             @nodeClick="handleNodeClick"
+            @nodeExpand="skillExpansion.expand"
+            @nodeCollapse="skillExpansion.collapse"
             @nodeDrop="handleNodeDrop">
             <template #default="{ data }">
               <span class="treeItem">
@@ -68,6 +72,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { IconFile, IconFilePlus, IconFolder } from "@tabler/icons-vue";
 import type { Plugin } from "./types";
+import { useTreeExpansion } from "@/lib/useTreeExpansion";
 
 interface TreeNode {
   key: string;
@@ -77,6 +82,8 @@ interface TreeNode {
 }
 
 const { skill } = defineProps<{ skill: Plugin }>();
+const skillExpansion = useTreeExpansion(() => `toonflow:skillTree:${skill.name}`);
+const skillTree = skillExpansion.tree;
 const emit = defineEmits<{ saved: []; closed: [] }>();
 const visible = ref(true);
 const files = ref<string[]>([]);

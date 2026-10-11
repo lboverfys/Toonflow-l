@@ -18,7 +18,7 @@
               <el-button class="iconButton" text :icon="IconPlus" :disabled="pickerBusy || editingId !== null || folderDraft !== null" title="新增画布" aria-label="新增画布" @click="handleAddCanvas" />
             </div>
             <el-scrollbar v-loading="loadingTree" maxHeight="min(440px, calc(100dvh - 198px))">
-              <el-tree ref="canvasTree" class="canvasTree" :data="treeEntries" nodeKey="path" :props="{ label: 'name' }" :currentNodeKey="activeCanvasId" :filterNodeMethod="filterEntry" defaultExpandAll highlightCurrent emptyText="" @nodeClick="selectEntry">
+              <el-tree :key="JSON.stringify([directory, !!searchQuery.trim()])" ref="canvasTree" class="canvasTree" :data="treeEntries" nodeKey="path" :props="{ label: 'name' }" :currentNodeKey="activeCanvasId" :filterNodeMethod="filterEntry" :defaultExpandedKeys="canvasExpansion.expandedKeys.value" :autoExpandParent="false" highlightCurrent emptyText="" @nodeExpand="canvasExpansion.expand" @nodeCollapse="canvasExpansion.collapse" @nodeClick="selectEntry">
                 <template #default="{ data }">
                   <div class="canvasEntry" :title="data.path" @contextmenu="openItemMenu($event, data)">
                     <icon-folder-filled v-if="data.type === 'directory'" class="folderIcon" :size="30" />
@@ -65,10 +65,11 @@ import axios from "axios";
 import { translate } from "@toonflow/i18n/vue";
 import { computed, inject, nextTick, ref, shallowRef, watch, type ShallowRef } from "vue";
 import { Panel, useVueFlow, type FlowExportObject } from "@vue-flow/core";
-import { ElMessage, ElMessageBox, type DropdownInstance, type FilterNodeMethodFunction, type InputInstance, type TreeInstance } from "element-plus";
+import { ElMessage, ElMessageBox, type DropdownInstance, type FilterNodeMethodFunction, type InputInstance } from "element-plus";
 import { IconArtboard, IconCheck, IconChevronDown, IconChevronRight, IconDots, IconFolder, IconFolderFilled, IconFolderPlus, IconPlus, IconSearch } from "@tabler/icons-vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import useWorkspaceFiles, { type TextSnapshot } from "@/lib/workspaceFiles";
+import { useTreeExpansion } from "@/lib/useTreeExpansion";
 import { getCanvasAssetDirectories, isCanvasFile } from "@/pages/workspace/canvasFile";
 
 const props = defineProps<{
@@ -113,9 +114,10 @@ const renameError = ref("");
 const { toObject, setNodes, setEdges, setViewport } = useVueFlow();
 type CanvasEntry = { path: string; name: string; type: "file" | "directory"; children?: CanvasEntry[]; empty?: boolean; draft?: boolean };
 const folders = shallowRef<CanvasEntry[]>([]);
-const canvasTree = ref<TreeInstance>();
 const canvasPicker = ref<HTMLElement>();
 const searchQuery = ref("");
+const canvasExpansion = useTreeExpansion(() => `toonflow:canvasTree:${props.directory ?? ""}`, searchQuery);
+const canvasTree = canvasExpansion.tree;
 const loadingTree = ref(false);
 const pickerBusy = computed(() => busy.value || loadingTree.value);
 const folderDraft = ref<string | null>(null);
@@ -149,7 +151,7 @@ const moveFolders = computed(() => [{ path: "", label: translate("画布根目�
 
 function parentPath(path: string) { return path.slice(0, path.lastIndexOf("/") + 1).replace(/\/$/, ""); }
 const filterEntry: FilterNodeMethodFunction = (query: string, entry) => !!entry.draft || String(entry.path).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
-watch([searchQuery, treeEntries], async () => { await nextTick(); canvasTree.value?.filter(searchQuery.value); });
+watch([searchQuery, treeEntries, canvasTree], async () => { await nextTick(); canvasTree.value?.filter(searchQuery.value); });
 watch(canvasListVisible, opened => {
   if (opened) refreshTree().catch(error => { renameError.value = errorMessage(error, "读取画布失败"); });
   else { treeRequest++; loadingTree.value = false; itemMenu.value?.handleClose(); cancelFolder(); }
@@ -561,6 +563,7 @@ async function relocateEntry(entry: CanvasEntry, target: string, directory: stri
   if (!performFileAction) throw new Error("工作区文件管理尚未就绪");
   await performFileAction(directory, "move", entry.path, target, entry.type === "directory" ? "directory" : "canvas");
   checkCanvasDirectory(directory);
+  canvasExpansion.relocate(entry.path, target);
   await refreshTree();
 }
 
@@ -625,6 +628,7 @@ async function handleItemCommand(command: string) {
       // 只删除真实空目录；隐藏文件和普通文档也应阻止删除，不能依据过滤后的画布树递归删除。
       await useWorkspaceFiles(directory).remove(entry.path);
       checkCanvasDirectory(directory);
+      canvasExpansion.relocate(entry.path);
       await refreshTree();
     }
   } catch (error) {

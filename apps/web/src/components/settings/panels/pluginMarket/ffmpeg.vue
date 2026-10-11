@@ -58,7 +58,7 @@
       <el-alert v-if="operationError || download.error" :title="operationError || download.error" type="error" :closable="false" showIcon />
     </el-card>
 
-    <el-collapse class="advancedSettings">
+    <el-collapse v-model="expandedSections" class="advancedSettings">
       <el-collapse-item title="高级设置" name="advanced">
         <el-form labelPosition="top" >
           <el-form-item label="运行方式">
@@ -97,6 +97,9 @@ import { ElMessage } from "element-plus";
 import { isMobile, isRemoteMobile } from "@/lib/mobile";
 import { IconDownload, IconRefresh } from "@tabler/icons-vue";
 import { saveSettings, settings } from "@/stores/settings";
+import { useExpandedKeys } from "@/lib/useTreeExpansion";
+
+const expandedSections = useExpandedKeys("toonflow:ffmpegSections");
 
 type FfmpegConfig = { mode: "auto" | "download" | "system"; source: string };
 type DownloadState = { phase: "idle" | "downloading" | "verifying" | "installing" | "completed" | "error" | "cancelled"; file?: string; received: number; total?: number; error?: string };

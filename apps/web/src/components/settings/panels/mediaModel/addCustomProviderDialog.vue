@@ -79,9 +79,9 @@
             <el-button :icon="IconCopy" @click="copyPrompt">复制提示词给其他 AI</el-button>
           </div>
           <el-text v-if="!modelChoices.length" class="fieldHint" type="info" size="small">请先在文本模型设置中配置模型。</el-text>
-          <details class="promptDetails" :open="promptExpanded" @toggle="promptExpanded = ($event.target as HTMLDetailsElement).open">
+          <details class="promptDetails" :open="expandedSections.includes('prompt')" @toggle="expandedSections = ($event.target as HTMLDetailsElement).open ? ['prompt'] : []">
             <summary>查看完整提示词</summary>
-            <el-input v-if="promptExpanded" :modelValue="providerPrompt" type="textarea" :rows="10" resize="none" readonly aria-label="供应商开发提示词" />
+            <el-input v-if="expandedSections.includes('prompt')" :modelValue="providerPrompt" type="textarea" :rows="10" resize="none" readonly aria-label="供应商开发提示词" />
           </details>
         </section>
         <el-alert v-if="formError" class="formError" :title="formError" type="error" :closable="false" showIcon />
@@ -113,6 +113,7 @@ import type { MediaProvider } from "./types";
 import { providerPrompt } from "./providerPrompt";
 import { modelChoices, saveSettings } from "@/stores/settings";
 import { writeClipboardText } from "@/lib/clipboard";
+import { useExpandedKeys } from "@/lib/useTreeExpansion";
 
 const { mode = "custom" } = defineProps<{ mode?: "builtin" | "custom" }>();
 const visible = defineModel<boolean>({ default: false });
@@ -130,7 +131,7 @@ const addMethods = [
   { label: "文件导入", value: "file", icon: IconFileCode },
   { label: "粘贴代码", value: "code", icon: IconCode },
 ];
-const promptExpanded = ref(false);
+const expandedSections = useExpandedKeys("toonflow:providerPromptSections");
 const code = ref("");
 const fileSource = ref("");
 const fileName = ref("");
@@ -160,7 +161,6 @@ watch(visible, value => {
   if (!value) { agentVisible.value = false; return; }
   selectedProvider.value = mediaProviders[0]?.id ?? "";
   activeTab.value = "file";
-  promptExpanded.value = false;
   formApi.value = undefined;
   addedProvider.value = undefined;
   code.value = fileSource.value = fileName.value = formError.value = "";
