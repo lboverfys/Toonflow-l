@@ -127,7 +127,8 @@ import route124 from "./routes/workspaces/files/rename";
 import route125 from "./routes/workspaces/files/reveal";
 import route126 from "./routes/workspaces/files/write";
 import route127 from "./routes/workspaces/list";
-import route128 from "./routes/workspaces/selectDirectory";
+import route128 from "./routes/workspaces/presence/update";
+import route129 from "./routes/workspaces/selectDirectory";
 
 export default (app: Express) => {
   app.use("/api/agent", route1);
@@ -257,5 +258,6 @@ export default (app: Express) => {
   app.use("/api/workspaces/files/reveal", route125);
   app.use("/api/workspaces/files/write", route126);
   app.use("/api/workspaces/list", route127);
-  app.use("/api/workspaces/selectDirectory", route128);
+  app.use("/api/workspaces/presence/update", route128);
+  app.use("/api/workspaces/selectDirectory", route129);
 }

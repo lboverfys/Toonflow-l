@@ -1,6 +1,6 @@
 <template>
   <div class="imageEditor" :class="{ editing: mode }">
-    <img ref="sourceImage" :src="src" :alt="alt" draggable="false" @load="emit('load', $event)" @error="emit('error', $event)" />
+    <img ref="sourceImage" :src="src" :alt="alt" decoding="async" draggable="false" @load="emit('load', $event)" @error="emit('error', $event)" />
     <canvas
       v-if="mode"
       ref="paintCanvas"

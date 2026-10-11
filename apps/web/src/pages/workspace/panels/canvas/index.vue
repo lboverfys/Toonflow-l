@@ -18,6 +18,7 @@
       :only-render-visible-elements="false"
       :nodes-draggable="true"
       :node-types="nodeTypes"
+      :edgeTypes="edgeTypes"
       :snap-to-grid="snapEnabled"
       :snap-grid="[16, 16]"
       :minZoom="0.02"
@@ -54,13 +55,14 @@
       :default-edge-options="defaultEdgeOptions">
       <template v-for="type in remoteNodeTypes" :key="type" #[`node-${type}`]="nodeProps">
         <remoteNode
+          v-if="!canvasReloading"
           v-bind="nodeProps"
           :component="nodeTypes[type]"
           :error="nodeErrors[type]"
           :loading="nodeLoads.has(type) || (nodeListLoading && !nodeTypes[type] && !nodeErrors[type])" />
       </template>
       <background :gap="16" pattern-color="var(--el-border-color)" />
-      <canvasMenu ref="canvasMenuRef" v-model:canvasId="canvasId" :directory="project?.directory" :initialCanvasId="initialCanvasId" :activateCanvas="activateCanvas" :flushSave="flushCanvases ?? flushCanvasSave">
+      <canvasMenu ref="canvasMenuRef" v-model:canvasId="canvasId" :directory="project?.directory" :initialCanvasId="initialCanvasId" :activateCanvas="activateCanvas" :flushSave="flushCanvases ?? flushCanvasSave" @loaded="resetSavedState" @reload="canvasReloading = $event">
         <assetLibrary ref="assetLibraryRef" v-model="assetsVisible" :directory="project?.directory" />
       </canvasMenu>
       <canvasControls
@@ -119,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowReactive, shallowRef, watch } from "vue";
+import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowReactive, shallowRef, watch } from "vue";
 import axios from "axios";
 import { debounce } from "lodash-es";
 import { ElMessage } from "element-plus";
@@ -162,6 +164,7 @@ import canvasMenu from "./components/canvasMenu.vue";
 import canvasControls from "./components/canvasControls.vue";
 import assetLibrary from "./components/assetLibrary.vue";
 import groupNode from "./components/groupNode.vue";
+import viewportEdge from "./components/viewportEdge.vue";
 import selectionToolbar from "./components/selectionToolbar.vue";
 import nodeSearch from "./components/nodeSearch.vue";
 import { finishGroupDrag, getSelectionTree } from "./selectionNodes";
@@ -190,16 +193,19 @@ const props = withDefaults(defineProps<{
   flushCanvases?: (action?: () => Promise<void>) => Promise<void>;
 }>(), { active: true, settingsVisible: false });
 const { project } = storeToRefs(useWorkspaceStore());
+const workspaceRefreshing = inject("workspaceRefreshing", ref(false));
 
 const canvasElement = ref<HTMLElement>();
 const flowData = ref<(Node | Edge)[]>([]);
 const canvasId = ref("");
+const canvasReloading = ref(false);
 const nodeMenuRef = ref<InstanceType<typeof nodeMenu>>();
 const canvasMenuRef = ref<InstanceType<typeof canvasMenu>>();
 const canvasControlsRef = ref<InstanceType<typeof canvasControls>>();
 const selectionToolbarRef = ref<InstanceType<typeof selectionToolbar>>();
 const nodeSearchRef = ref<InstanceType<typeof nodeSearch>>();
 const nodeTypes = shallowRef<NodeTypesObject>({ canvasGroup: markRaw(groupNode) });
+const edgeTypes = markRaw({ "simple-bezier": markRaw(viewportEdge) });
 const nodeConfigs = shallowRef<Record<string, Record<string, unknown>>>({});
 const nodeOptions = ref<{ type: string; label: string }[]>([]);
 const nodeLoads = shallowReactive(new Map<string, Promise<void>>());
@@ -222,6 +228,8 @@ let gestureScale: number | undefined;
 const isDesktop = new URLSearchParams(window.location.search).get("desktop") === "1";
 let copyingNodes = false;
 const showEdges = ref(true);
+provide("canvasActive", computed(() => props.active));
+provide("canvasShowEdges", showEdges);
 const assetsVisible = ref(false);
 const assetLibraryRef = ref<InstanceType<typeof assetLibrary>>();
 const edgeDisconnect = ref<{ id: string; x: number; y: number }>();
@@ -286,6 +294,7 @@ const createCanvasContext = useCanvasTools({
     return canvasMenuRef.value;
   },
   getCanvasBinding: () => ({ id: canvasId.value, signal: canvasController.signal }),
+  isRefreshing: () => workspaceRefreshing.value,
   resolveCanvasContext: id => props.resolveCanvasContext?.(id),
 });
 function getCanvasContext() {
@@ -294,10 +303,12 @@ function getCanvasContext() {
 const canvasReady = computed(() => !!canvasId.value && !nodeListLoading.value && nodeLoads.size === 0);
 provide("canvas", getCanvasContext);
 defineExpose({ canvasId, canvasReady, getCanvasContext, readDocumentNode, saveDocumentNode, mountDocumentNode, observeDocumentNode, prepareCanvasDelete, flushSave: flushCanvasSave, cancelSave: cancelCanvasSave,
+  prepareRefresh, refreshCanvas, refreshCanvasList: (beforeApply?: () => void) => canvasMenuRef.value?.refreshCanvasList(beforeApply),
+  get revision() { return saveRevision; },
   syncCanvasPath: (previous: string, target: string) => canvasMenuRef.value?.syncCanvasPath(previous, target),
   getMentionNodes: () => flow.nodes.value, findMentionNode: flow.findNode,
   getRetainedNodes: canvasHistory.getRetainedNodes,
-  get saveBusy() { return savePaused; }, get loadError() { return canvasMenuRef.value?.loadError ?? ""; },
+  get saveBusy() { return savePaused; }, get loadError() { return canvasMenuRef.value?.loadError ?? ""; }, saveError: canvasSaveError,
 });
 
 async function prepareCanvasDelete() {
@@ -549,10 +560,11 @@ let saveRevision = 0;
 const saveCanvas = debounce((directory: string, fileName: string) => {
   const flow = toObject();
   const revision = saveRevision;
-  // ACT: 同页保存按顺序完成，防止慢请求覆盖后续修改；不处理多个客户端的并发编辑。
+  // ACT: 同页保存串行取最新修订号；其他客户端已写入时由文件快照接口拒绝覆盖。
   saving = saving.then(async () => {
     try {
-      await useWorkspaceFiles(directory).writeJson(fileName, { toonflowCanvas: true, nodes: flow.nodes, edges: flow.edges, viewport: flow.viewport });
+      if (!canvasMenuRef.value) throw new Error("画布尚未就绪");
+      await canvasMenuRef.value.writeCanvasSnapshot(directory, fileName, { nodes: flow.nodes, edges: flow.edges, viewport: flow.viewport });
       saveError = undefined;
       canvasSaveError.value = "";
       if (revision === saveRevision) canvasDirty.value = false;
@@ -571,7 +583,7 @@ const saveCanvas = debounce((directory: string, fileName: string) => {
 }, 500);
 
 function scheduleCanvasSave() {
-  if (saveCancelled) return;
+  if (saveCancelled || !project.value?.directory || !canvasId.value) return;
   canvasDirty.value = true;
   saveRevision++;
   if (savePaused) {
@@ -642,7 +654,40 @@ watch(
   { immediate: true, flush: "post" }
 );
 onScopeDispose(() => elementSaveWatchers.forEach((stop) => stop()));
-watch(() => [viewport.value.x, viewport.value.y, viewport.value.zoom], scheduleCanvasSave, { flush: "post" });
+// ACT: 平移/缩放属于个人视图，避免浏览项目也覆盖其他成员的整份画布。
+const rememberViewport = debounce((key: string, value: string) => {
+  try { localStorage.setItem(key, value); } catch { /* 视图缓存失败不影响项目保存。 */ }
+}, 300);
+watch(() => [viewport.value.x, viewport.value.y, viewport.value.zoom], () => {
+  const directory = project.value?.directory;
+  if (directory && canvasId.value) rememberViewport(`toonflow.canvasViewport:${JSON.stringify([directory, canvasId.value])}`, JSON.stringify(viewport.value));
+}, { flush: "post" });
+onScopeDispose(() => rememberViewport.flush());
+
+function resetSavedState() {
+  canvasDirty.value = false;
+  canvasSaveError.value = "";
+  saveError = undefined;
+  changedWhilePaused = false;
+}
+
+async function prepareRefresh() {
+  if (!canvasReady.value && canvasId.value) throw new Error("画布正在加载，请稍后刷新");
+  await Promise.all(flow.nodes.value.map(node => useNodeEvent(node.id, flow).emit("save", "reload")));
+  await flushCanvasSave();
+}
+
+async function refreshCanvas() {
+  await prepareRefresh();
+  await flushCanvasSave(async () => {
+    const revision = saveRevision;
+    await canvasMenuRef.value?.refreshCanvas(async () => {
+      await Promise.all(flow.nodes.value.map(node => useNodeEvent(node.id, flow).emit("save", "reload")));
+      await nextTick();
+      if (revision !== saveRevision) throw new Error("刷新期间画布发生了变化，已保留当前修改，请稍后再试");
+    });
+  });
+}
 
 watch(
   [() => project.value?.directory, canvasId],

@@ -176,12 +176,13 @@ async function readDocumentNodes(directory: string, options: DocumentNodeOptions
 }
 
 function resolveCanvasContext(fileName: string): CanvasContext | undefined {
+  if (fileActionBusy) return;
   fileName = canonicalCanvasPath(fileName);
   return [...instances.values()].find(instance => instance.canvasId === fileName)?.getCanvasContext();
 }
 
 function getCanvasContext() {
-  return props.active ? activeInstance.value?.getCanvasContext() : undefined;
+  return props.active && !fileActionBusy ? activeInstance.value?.getCanvasContext() : undefined;
 }
 
 async function flushSave(action?: () => Promise<void>) {
@@ -193,6 +194,32 @@ async function flushSave(action?: () => Promise<void>) {
   // 重命名文件期间暂停所有实例自动保存，目标实例同步新路径后再恢复。
   const run = (index: number): Promise<void> => index < panels.length ? panels[index]!.flushSave(() => run(index + 1)) : action();
   await run(0);
+}
+
+async function refreshProject() {
+  const directory = workspaceStore.project?.directory;
+  if (!directory || fileActionBusy) throw new Error("工作区尚未就绪或正在操作，请稍后刷新");
+  fileActionBusy = true;
+  try {
+    const panels = [...instances.values()];
+    for (const panel of panels) { await panel.prepareRefresh(); checkDirectory(directory); }
+    const revisions = panels.map(panel => panel.revision);
+    await activeInstance.value?.refreshCanvasList(() => {
+      if (panels.some((panel, index) => panel.revision !== revisions[index])) throw new Error("刷新期间画布发生了变化，已保留当前修改，请稍后再试");
+    });
+    checkDirectory(directory);
+    // 列表复用同路径的对象；仅已从磁盘删除且通过保存检查的实例会被移除。
+    for (const panel of panels) {
+      if (panel.canvasId && canvases.value.some(canvas => canvas.id === panel.canvasId)) await panel.refreshCanvas();
+      checkDirectory(directory);
+    }
+    if (!entries.value.length) {
+      const entry = { key: crypto.randomUUID(), fileName: "" };
+      entries.value = [entry];
+      activeKey.value = entry.key;
+    }
+    if (!canvasId.value && canvases.value[0]) await ensureCanvas(canvases.value[0].id, undefined, true);
+  } finally { fileActionBusy = false; }
 }
 
 function relativePath(path: string) {
@@ -373,7 +400,8 @@ const mentionSource: MentionCanvasSource = {
 };
 
 defineExpose({ canvasId, canvasReady, getCanvasContext, readDocumentNode, readDocumentNodes, saveDocumentNode, mountDocumentNode, observeDocumentNode, resolveDocumentNodeFile, performFileAction, flushSave, cancelSave,
-  mentionSource,
+  mentionSource, refreshProject,
+  get saveError() { return [...instances.values()].map(panel => panel.saveError).find(Boolean) ?? ""; },
   get saveBusy() { return fileActionBusy || [...instances.values()].some(panel => panel.saveBusy); },
 });
 </script>

@@ -8,7 +8,7 @@
       :poster="poster"
       :controls="fullscreen"
       playsinline
-      preload="auto"
+      preload="metadata"
       draggable="false"
       :aria-label="label"
       @fullscreenchange="fullscreen = !!video?.matches(':fullscreen')"
@@ -51,11 +51,12 @@
 </template>
 
 <script setup lang="ts">
-import { inject, onBeforeUnmount, ref, watch } from "vue";
+import { inject, onBeforeUnmount, ref, watch, type Ref } from "vue";
 import { useNode, useVueFlow } from "@vue-flow/core";
 import { ElButton, ElDropdown, ElDropdownMenu, ElDropdownItem, ElMessage, ElPopover, ElSlider } from "element-plus";
 import { IconPlayerPlay, IconPlayerPause, IconVolume, IconVolumeOff, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
 import { useNodeFiles } from "@toonflow/nodes-scaffold/runtime";
+import type { NodeDocumentContext } from "@toonflow/nodes-scaffold/nodeDocument";
 
 const { src, label = "节点视频" } = defineProps<{ src: string; label?: string }>();
 const emit = defineEmits<{ loadedmetadata: [event: Event] }>();
@@ -75,6 +76,8 @@ const { node } = useNode();
 const { addNodes, findNode, getNodes, nodeTypes } = useVueFlow();
 const files = useNodeFiles();
 const getCanvas = inject<(() => { id: string } | undefined) | undefined>("canvas", undefined);
+const canvasActive = inject<Readonly<Ref<boolean>> | undefined>("canvasActive", undefined);
+const documentContext = inject<NodeDocumentContext | undefined>("nodeDocument", undefined);
 let captureController: AbortController | undefined;
 
 watch(() => getCanvas?.()?.id, () => captureController?.abort(), { flush: "sync" });
@@ -87,6 +90,21 @@ watch(() => src, () => {
   duration.value = 0;
 }, { flush: "sync" });
 onBeforeUnmount(() => captureController?.abort());
+watch(() => canvasActive?.value !== false || documentContext?.targets.has(node.id), visible => {
+  const element = video.value;
+  if (!visible && element && document.fullscreenElement !== element && document.pictureInPictureElement !== element) element.pause();
+}, { flush: "post" });
+watch(video, (element, _previous, onCleanup) => {
+  if (!element || typeof IntersectionObserver === "undefined") return;
+  const observer = new IntersectionObserver(entries => {
+    const entry = entries.at(-1);
+    if (!entry || entry.isIntersecting || document.fullscreenElement === element || document.pictureInPictureElement === element) return;
+    // ACT: 离屏仅暂停，保留进度和节点状态；全屏及画中画继续播放。
+    element.pause();
+  });
+  observer.observe(element);
+  onCleanup(() => observer.disconnect());
+}, { flush: "post" });
 
 async function enterFullscreen() {
   if (!video.value) return;
@@ -107,7 +125,10 @@ function formatTime(value: number) {
 }
 
 function readMetadata(event: Event) {
-  const value = video.value?.duration ?? 0;
+  const source = event.currentTarget as HTMLVideoElement;
+  if (source.currentSrc !== src) return;
+  ready.value = true;
+  const value = source.duration;
   duration.value = Number.isFinite(value) ? value : 0;
   emit("loadedmetadata", event);
 }
@@ -212,12 +233,13 @@ async function captureFrame(command: "current" | "first" | "last") {
   let workspace: ReturnType<typeof files.getWorkspaceFiles> | undefined;
   try {
     let source = video.value;
-    if (command !== "current") {
+    if (command !== "current" || source.seeking || source.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
       frameVideo = document.createElement("video");
       frameVideo.muted = true;
       frameVideo.preload = "auto";
-      // 用独立视频解码首尾帧，不改变播放器当前进度；尾帧定位到结束前。
-      await loadFrame(frameVideo, command === "first" ? 0 : Math.max(0, duration.value - 0.001), controller.signal);
+      // 用独立视频按需解码，不改变播放器当前进度；尾帧定位到结束前。
+      const time = command === "current" ? source.currentTime : command === "first" ? 0 : Math.max(0, duration.value - 0.001);
+      await loadFrame(frameVideo, time, controller.signal);
       source = frameVideo;
     }
     controller.signal.throwIfAborted();

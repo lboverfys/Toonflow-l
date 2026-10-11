@@ -5,7 +5,7 @@
       ref="canvasPanelRef"
       class="canvasPanel"
       :class="{ backgroundPanel: activePanel !== 'canvas' }"
-      :inert="activePanel !== 'canvas'"
+      :inert="activePanel !== 'canvas' || refreshing"
       :aria-hidden="activePanel !== 'canvas'"
       :active="activePanel === 'canvas'"
       :settingsVisible="settingsVisible" />
@@ -14,6 +14,7 @@
         v-if="activePanel === 'document'"
         :key="workspaceStore.project?.directory"
         :ref="setDocumentPanel"
+        :inert="refreshing"
         :readNode="readDocumentNode"
         :readNodes="readDocumentNodes"
         :mountNode="mountDocumentNode"
@@ -24,6 +25,15 @@
         :saveNode="saveDocumentNode" />
     </keep-alive>
     <workspaceMenu class="workspaceMenu" @openSettings="settingsVisible = true" />
+    <workspacePresence
+      v-if="workspaceStore.project"
+      class="workspacePresence"
+      :directory="workspaceStore.project.directory"
+      :canvasId="canvasPanelRef?.canvasId"
+      :panel="activePanel"
+      :refreshing="refreshing"
+      :saveError="canvasPanelRef?.saveError"
+      @refresh="refreshProject" />
     <el-segmented :modelValue="activePanel" class="panelSwitcher" :options="panelOptions" size="small" aria-label="切换面板" @change="switchPanel">
       <template #default="{ item }">
         <span class="panelOption">
@@ -41,7 +51,7 @@
         aria-controls="agentPanel"
         @click="agentVisible = !agentVisible"></el-button>
     </el-tooltip>
-    <floatingAgent v-model="agentVisible" @resize="agentWidth = $event" />
+    <floatingAgent v-model="agentVisible" :inert="refreshing" @resize="agentWidth = $event" />
     <settings v-model="settingsVisible" />
   </main>
 </template>
@@ -59,6 +69,7 @@ import anonymousData from "@/lib/anonymousData";
 import canvasPanel from "./panels/canvas/canvasHost.vue";
 import type { DocumentNodeOptions } from "./panels/canvas/canvasFiles";
 import workspaceMenu from "./components/workspaceMenu.vue";
+import workspacePresence from "./components/workspacePresence.vue";
 import floatingAgent from "./components/floatingAgent.vue";
 
 const documentPanel = defineAsyncComponent(() => import("./panels/document/index.vue"));
@@ -73,6 +84,8 @@ const panelOptions = [
 const agentVisible = ref(true);
 const agentWidth = ref(0);
 const settingsVisible = ref(false);
+const refreshing = ref(false);
+provide("workspaceRefreshing", refreshing);
 const canvasPanelRef = ref<InstanceType<typeof canvasPanel>>();
 const documentPanelCache = shallowRef<{ directory: string; instance: InstanceType<typeof documentPanel> }>();
 const documentPanelRef = computed(() => documentPanelCache.value?.directory === workspaceStore.project?.directory ? documentPanelCache.value?.instance : undefined);
@@ -100,6 +113,7 @@ registerWorkspaceControl({
   }),
   flushSave,
   async call(request, signal) {
+    if (refreshing.value) throw new Error("项目正在刷新，请稍后重试");
     const directory = workspaceStore.project?.directory;
     if (!directory) throw new Error("请先打开工作区");
     const callSignal = AbortSignal.any([signal, controlLifetime.signal]);
@@ -134,12 +148,31 @@ registerWorkspaceControl({
 });
 
 async function flushSave() {
+  if (refreshing.value) throw new Error("项目正在刷新，请稍后重试");
   await documentPanelRef.value?.flushSave();
   await canvasPanelRef.value?.flushSave();
 }
 
+async function refreshProject() {
+  if (refreshing.value) return;
+  const directory = workspaceStore.project?.directory;
+  if (!directory || !canvasPanelRef.value) return;
+  refreshing.value = true;
+  try {
+    const canvas = canvasPanelRef.value;
+    if (documentPanelRef.value) await documentPanelRef.value.refreshProject(() => canvas.refreshProject());
+    else await canvas.refreshProject();
+    if (workspaceStore.project?.directory !== directory) return;
+    ElMessage.success("项目已刷新");
+  } catch (error) {
+    ElMessage.error(axios.isAxiosError<{ message?: string }>(error)
+      ? error.response?.data?.message || error.message
+      : error instanceof Error ? error.message : "项目刷新失败，当前修改已保留");
+  } finally { refreshing.value = false; }
+}
+
 onBeforeRouteLeave(async () => {
-  if (canvasPanelRef.value?.saveBusy) {
+  if (refreshing.value || canvasPanelRef.value?.saveBusy) {
     ElMessage.warning("画布操作尚未完成，请稍后退出");
     return false;
   }
@@ -170,6 +203,7 @@ onBeforeRouteLeave(async () => {
 });
 
 async function switchPanel(value: string | number | boolean) {
+  if (refreshing.value) return false;
   if (value !== "canvas" && value !== "document") return false;
   try {
     if (activePanel.value === "document") await documentPanelRef.value?.flushSave();
@@ -273,6 +307,18 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
       gap: 5px;
       padding: 0 3px;
       line-height: 24px;
+    }
+  }
+
+  .workspacePresence {
+    position: absolute;
+    top: 15px;
+    right: 70px;
+    z-index: 5;
+
+    @media (max-width: 1000px) {
+      top: 60px;
+      right: 15px;
     }
   }
 

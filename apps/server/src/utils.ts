@@ -17,6 +17,7 @@ import * as canvas from "@/agent/bridge/canvas";
 import * as question from "@/agent/bridge/question";
 import * as workspace from "@/utils/workspace";
 import * as workspaceFile from "@/utils/workspace/files";
+import * as workspacePresence from "@/utils/workspace/presence";
 import * as chatImages from "@/utils/workspace/chatImages";
 import * as skillFile from "@/utils/skills/files";
 import * as mcpControl from "@/utils/mcp/control";
@@ -48,6 +49,7 @@ export default {
   question,
   workspace,
   workspaceFile,
+  workspacePresence,
   chatImages,
   skillFile,
   mcpControl,

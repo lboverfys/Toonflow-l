@@ -9,9 +9,18 @@
       previewTeleported
       fit="cover"
       :alt="`预览引用 ${index}`"
+      decoding="async"
       draggable="false"
       @click.stop
       @error="mediaError" />
+    <img
+      v-else-if="item.dataType === 'VIDEO' && videoThumbnail && !previewError"
+      class="preview"
+      :src="videoThumbnail"
+      decoding="async"
+      draggable="false"
+      alt=""
+      aria-hidden="true" />
     <video
       v-else-if="item.dataType === 'VIDEO' && previewUrl && !previewError"
       class="preview"
@@ -91,6 +100,9 @@ function readVideoPreview(event: Event) {
   if (!context) return;
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
   videoThumbnail.value = canvas.toDataURL("image/webp");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
 }
 
 function readDuration(event: Event) {

@@ -8,7 +8,7 @@
 </template>
 
 <script setup lang="ts">
-import { onActivated, onBeforeUnmount, onDeactivated, ref, shallowReactive, shallowRef, watch } from "vue";
+import { nextTick, onActivated, onBeforeUnmount, onDeactivated, ref, shallowReactive, shallowRef, watch } from "vue";
 import { DockviewVue, type DockviewApi, type DockviewReadyEvent } from "dockview-vue";
 import { ElMessage } from "element-plus";
 import type { ExtResource } from "@toonflow/ext-scaffold/runtime";
@@ -620,6 +620,25 @@ function refreshDocuments(force = false) {
   drainRefreshQueue();
 }
 function onWindowFocus() { refreshDocuments(true); }
+
+async function refreshProject(refreshCanvases: () => Promise<void>) {
+  await flushSave();
+  const nodeSessions = uniqueSessions().filter(session => session.context.resource.kind === "canvasNode");
+  // 让文档插件先释放旧挂载；刷新后通过原有 active 生命周期获取新的 release 回调。
+  for (const session of nodeSessions) session.context.active = false;
+  await nextTick();
+  try {
+    await refreshCanvases();
+    refreshFileTree();
+    const visible = new Set((editorApi.value?.panels ?? []).filter(panel => panel.api.isVisible)
+      .map(panel => sessions.get(panel.id)).filter((session): session is DocumentSession => !!session));
+    for (const session of visible) await session.refreshDisk();
+  } finally {
+    if (!lifetime.signal.aborted) for (const session of nodeSessions) {
+      if (!session.closing) session.context.active = active.value;
+    }
+  }
+}
 function onDocumentKeydown(event: KeyboardEvent) {
   if (!active.value || event.altKey || !(event.ctrlKey || event.metaKey)) return;
   const target = event.target instanceof Element ? event.target : undefined;
@@ -659,7 +678,7 @@ onBeforeUnmount(() => {
   sessionWatchers.forEach(stop => stop());
   disposables.forEach(disposable => disposable.dispose());
 });
-defineExpose({ flushSave, cancelSave, getDocument, openDocument, writeDocument, performFileAction });
+defineExpose({ flushSave, cancelSave, getDocument, openDocument, writeDocument, performFileAction, refreshProject });
 </script>
 
 <style lang="scss">

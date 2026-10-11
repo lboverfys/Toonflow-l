@@ -16,6 +16,7 @@ export function useCanvasTools(options: {
     renameCanvas(canvasId: string, name: string, signal?: AbortSignal): Promise<void>;
   };
   getCanvasBinding(): { id: string; signal: AbortSignal };
+  isRefreshing?(): boolean;
   resolveCanvasContext?(id: string): CanvasContext | undefined;
 }) {
   const flow = useVueFlow();
@@ -68,6 +69,7 @@ export function useCanvasTools(options: {
         return typeof label === "string" && label.trim() ? label : undefined;
       },
       async call(request, signal) {
+        if (options.isRefreshing?.()) throw new Error("项目正在刷新，请稍后重试");
         if (redirected) return redirected.call(request, signal);
         canvasSignal.throwIfAborted();
         id = options.getCanvasBinding().id;
