@@ -1,4 +1,4 @@
-import { canvasOperations } from "@toonflow/tool-canvas/runtime";
+import { canvasOperations, getCanvasCallTimeout } from "@toonflow/tool-canvas/runtime";
 import type { CanvasInfo, CanvasContext } from "@toonflow/tools-scaffold/runtime";
 import type { AgentEvent } from "@/agent/runtime/types";
 
@@ -33,7 +33,9 @@ export function createCanvasContext(cwd: string, canvas: CanvasInfo, send: (even
             else resolve(result);
           };
           const abort = () => finish({ error: "画布调用已取消" });
-          const timer = setTimeout(() => finish({ error: "画布调用超时，请确认画布仍然打开" }), 120000);
+          // 人工确认超时先由前端关闭窗口，额外留出取消结果的回传时间。
+          const timeout = getCanvasCallTimeout(operation.name) + (operation.name === "arrangeCanvas" ? 10000 : 0);
+          const timer = setTimeout(() => finish({ error: "画布调用超时，请确认画布仍然打开" }), timeout);
           pendingCalls.set(callId, { cwd, finish });
           activeCalls.add(callId);
           signal?.addEventListener("abort", abort, { once: true });

@@ -72,6 +72,11 @@ export type CanvasRequest = {
   [Name in CanvasOperationName]: { name: Name; args: z.output<(typeof canvasSchemas)[Name]> };
 }[CanvasOperationName];
 
+export function getCanvasCallTimeout(name: string) {
+  // ACT: 智能整理包含模型分析和人工确认，所有桥接共用十分钟等待；其他操作保持两分钟。
+  return name === "arrangeCanvas" ? 600000 : 120000;
+}
+
 export const canvasOperations = [
   { name: "getCanvas", label: "画布概览", description: "读取激活画布的 ID、节点数、连线数、选中数量和视口，不返回全部节点、连线或函数。include 按需选择 canvases（画布列表）或 nodeTypes（availableNodeTypes），二者共用 cursor/limit 分页。已知节点 ID 时可直接读取节点。所有读取工具每次最多 64 KiB，返回 hasMore/nextCursor；继续分页须保留原参数，仅替换 cursor。cursor 失效时重新查询。canvasId 可选，用于校验目标仍是当前激活画布。不要直接修改画布 JSON。", parameters: canvasSchemas.getCanvas },
   { name: "findCanvasNodes", label: "查找画布节点", description: "按 query（节点 ID 或完整名称）、types 和 selectedOnly 筛选节点，省略筛选时分页列举；返回 nodes 简要信息，其中名称预览最多 512 字符，不返回正文和函数定义。limit 默认 30、最多 100，每次最多扫描 2000 个节点。totalNodes 是画布节点总数而非命中数；selectedOnly 按各页读取时的选择状态筛选，并非冻结快照。即使 nodes 为空，hasMore 为 true 仍须使用 nextCursor 继续扫描。处理全部节点时逐批完成并保留摘要和游标，避免将各页详情不断堆进上下文。", parameters: canvasSchemas.findCanvasNodes },
@@ -88,7 +93,7 @@ export const canvasOperations = [
   { name: "connectNodes", label: "连接节点", description: "批量连接激活画布的输出端口 sourceHandle 和输入端口 targetHandle，一次可传入多组连接。先用 getCanvasNodes 的 ports 字段确认目标节点与端口；沿用画布和节点的连接校验，任一项校验失败则整体不执行。", parameters: canvasSchemas.connectNodes },
   { name: "deleteEdges", label: "删除连线", description: "从激活画布批量删除指定 edgeIds 的连线，任一项校验失败则整体不执行。", parameters: canvasSchemas.deleteEdges },
   { name: "selectNodes", label: "选择节点", description: "选择激活画布中指定 nodeIds 的节点；传空数组取消节点选择。", parameters: canvasSchemas.selectNodes },
-  { name: "arrangeCanvas", label: "整理画布", description: "根据节点实际尺寸和连线，将激活画布的全部顶层节点从左到右自动排列，并适应视图。子节点保持相对位置，不修改内容、连线或选择，不触发生成。返回 arrangedCount、最多 100 项 arrangedNodeIds、truncated 和 viewport；truncated 仅指 ID 回执缩略，不代表仅整理了部分节点。节点尺寸未就绪或存在不可移动节点时拒绝整理。仅在需要整理整幅画布时调用；局部调整使用 moveNodes，单纯查看使用 fitCanvas。", parameters: canvasSchemas.arrangeCanvas },
+  { name: "arrangeCanvas", label: "整理画布", description: "打开激活画布的智能整理窗口，调用用户配置的文字模型分析分组，等待用户确认后替换已有分组并按节点实际尺寸和连线从左到右排列、适应视图。可一步撤销；不修改节点内容或连接，不触发媒体生成。用户取消时不应用方案。返回 arrangedCount、最多 100 项 arrangedNodeIds、truncated 和 viewport；truncated 仅指 ID 回执缩略。节点尺寸未就绪或存在不可移动节点时拒绝整理。仅在用户需要整理整幅画布时调用一次，等待窗口确认，不重复发起；局部调整使用 moveNodes，单纯查看使用 fitCanvas。", parameters: canvasSchemas.arrangeCanvas },
   { name: "fitCanvas", label: "适应画布", description: "调整激活画布视口以展示 nodeIds 指定的节点；省略 nodeIds 则展示全部节点。返回 fitted、viewport、nodeCount，传入 nodeIds 时另返回最多 100 项 nodeIds 和 truncated；截断只影响回执。", parameters: canvasSchemas.fitCanvas },
   { name: "nodeTools", label: "调用节点函数", description: "调用激活画布节点注册的 node:functionName。先通过 getNodeTools 读取该节点实际函数的完整 parameters，再按 schema 填写 args。新建节点可在同轮查询和调用；不要通过修改画布 JSON 代替节点函数。返回值由具体业务函数决定，五个画布读取工具的 64 KiB 限制不适用于此执行入口。", parameters: canvasSchemas.nodeTools },
 ] as const;

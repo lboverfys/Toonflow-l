@@ -78,7 +78,7 @@ metadata:
 | `connectNodes` | `{ connections: [{ source, sourceHandle, target, targetHandle }] }` | 批量连接输出与输入端口，返回 `{ edges }`。完全相同的连接已存在时返回已有边。 |
 | `deleteEdges` | `{ edgeIds: [...] }` | 删除指定连线，返回 `edgeIds` 及关联节点信息 `nodes`。 |
 | `selectNodes` | `{ nodeIds: [...] }` | 替换当前选择，返回 `selectedCount`、最多 100 项 `selectedNodeIds` 和 `truncated`；空数组取消节点选择。 |
-| `arrangeCanvas` | `{}` | 整理整个当前画布：按真实节点尺寸与连线将顶层节点从左到右排列，子节点随父节点移动，并自动适配视口。返回 `arrangedCount`、最多 100 项 `arrangedNodeIds`、`truncated` 和 `viewport`；不改内容、连线或选择，不触发生成。 |
+| `arrangeCanvas` | `{}` | 打开当前画布智能整理窗口，文字 AI 分析分组，用户确认后替换原分组并按尺寸与连线从左到右排列、适配视口，可一步撤销。返回 `arrangedCount`、最多 100 项 `arrangedNodeIds`、`truncated` 和 `viewport`；保留内容与连接，不触发媒体生成，取消不应用方案。 |
 | `fitCanvas` | `{ nodeIds?: [...] }` | 调整视口，返回 `fitted`、`viewport`、`nodeCount` 和 `truncated`；传入 `nodeIds` 时另返回最多 100 项 `nodeIds`，省略时展示全部节点。 |
 
 上述操作回执的 `truncated` 只表示 ID 列表缩略，不表示操作只完成了预览部分。不要为了取全回执重复执行操作；按需用读取工具核对受影响范围。
@@ -139,9 +139,9 @@ metadata:
 
 ### 批量整理节点
 
-仅当用户明确要求整理整幅当前画布时，在确认目标后调用一次 `arrangeCanvas({})`，不自行计算所有节点坐标再逐个移动。此工具复用画布现有整理功能，不接受 `nodeIds` 或其他局部范围参数。
+仅当用户明确要求整理整幅当前画布时，在确认目标后调用一次 `arrangeCanvas({})`。工具打开窗口，用已配置的文字模型分析节点、连接与语义分组，等待用户确认后重新分组和排列；不要重复调用，也不自行计算所有坐标逐个移动。此工具不接受 `nodeIds` 或其他局部范围参数。
 
-待整理节点尚未测量或不可移动时，工具明确返回错误；不要猜测尺寸或绕过移动限制。空画布正常返回空的 `arrangedNodeIds`，不执行布局或视口调整。
+无可整理节点、节点尚未测量或不可移动时，工具明确返回错误；不要猜测尺寸或绕过移动限制。模型不可用时在窗口提示配置，用户取消时不修改画布。
 
 只整理指定镜头或局部节点时，读取实际位置与目标范围，用 `moveNodes` 的 `moves` 数组调整这些节点，按需用 `fitCanvas({ "nodeIds": [...] })` 展示。只要求看清内容时直接用 `fitCanvas`，不重排节点。不得为了局部整理调用 `arrangeCanvas` 移动用户其他节点，也不删除或重建节点来代替移动。
 

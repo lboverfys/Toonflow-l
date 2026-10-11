@@ -20,7 +20,7 @@
       :node-types="nodeTypes"
       :snap-to-grid="snapEnabled"
       :snap-grid="[16, 16]"
-      :min-zoom="0.2"
+      :minZoom="0.02"
       :max-zoom="8"
       :nodes-connectable="true"
       :connection-mode="ConnectionMode.Strict"
@@ -65,11 +65,13 @@
       </canvasMenu>
       <canvasControls
         ref="canvasControlsRef"
+        :active="active"
         v-model:assetsVisible="assetsVisible"
         v-model:snapEnabled="snapEnabled"
         v-model:showEdges="showEdges"
         :canvasId="canvasId"
         :directory="project?.directory"
+        :projectName="project?.name ?? ''"
         :batchHistory="canvasHistory.batch"
         @update:showEdges="edgeDisconnect = undefined" />
       <nodeMenu
@@ -268,6 +270,10 @@ let workspaceController = new AbortController();
 const createCanvasContext = useCanvasTools({
   availableNodes,
   flushSave: flushCanvasSave,
+  arrangeCanvas: signal => {
+    if (!canvasControlsRef.value) throw new Error("画布尚未就绪");
+    return canvasControlsRef.value.requestArrange(signal);
+  },
   menu() {
     if (!canvasMenuRef.value) throw new Error("画布菜单尚未就绪");
     return canvasMenuRef.value;
@@ -1159,6 +1165,19 @@ const defaultEdgeOptions = markRaw({
   }
   &.edgesHidden :deep(.vue-flow__handle:not(.connectedNodeActive)) {
     display: none !important;
+  }
+
+  :deep(.vue-flow__edge-path) {
+    stroke: var(--el-text-color-secondary);
+    stroke-width: 1.25;
+    stroke-opacity: 0.65;
+    vector-effect: non-scaling-stroke;
+  }
+
+  :deep(.vue-flow__edge.edgeNodeActive .vue-flow__edge-path),
+  :deep(.vue-flow__edge:hover .vue-flow__edge-path) {
+    stroke-width: 2;
+    stroke-opacity: 1;
   }
 
   :deep(.vue-flow__edge.edgeActive .vue-flow__edge-path) {

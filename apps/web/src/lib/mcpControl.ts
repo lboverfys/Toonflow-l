@@ -2,6 +2,7 @@ import { locale } from "@toonflow/i18n/vue";
 import { onScopeDispose, shallowRef, watch, type WatchSource } from "vue";
 import { useRouter } from "vue-router";
 import type { NodeToolInfo } from "@toonflow/tools-scaffold/runtime";
+import { getCanvasCallTimeout } from "@toonflow/tool-canvas/runtime";
 import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
 import { saveSettings, settings } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -88,7 +89,7 @@ export function useMcpControl() {
         const controller = new AbortController();
         calls.set(request.callId, controller);
         connectionCalls.set(request.callId, controller);
-        const callSignal = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120000)]);
+        const callSignal = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(getCanvasCallTimeout(request.name))]);
         let result: unknown;
         let error: string | undefined;
         try {

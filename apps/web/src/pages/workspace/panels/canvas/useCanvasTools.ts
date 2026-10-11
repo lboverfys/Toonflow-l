@@ -1,13 +1,14 @@
 import { nextTick, watch, type Ref } from "vue";
 import { useVueFlow, type XYPosition } from "@vue-flow/core";
 import { useNodeEvent, useNodeToolsContext, validateConnection } from "@toonflow/nodes-scaffold/runtime";
-import { canvasSchemas, type CanvasContext, type CanvasToolCall } from "@toonflow/tool-canvas/runtime";
-import { arrangeCanvas } from "./arrangeCanvas";
+import { canvasSchemas, getCanvasCallTimeout, type CanvasContext, type CanvasToolCall } from "@toonflow/tool-canvas/runtime";
+import type { arrangeCanvas } from "./arrangeCanvas";
 import { canvasEdgeSummary, canvasNodeSummary, createCanvasQueries, isCanvasRead } from "./canvasQueries";
 
 export function useCanvasTools(options: {
   availableNodes: Ref<{ type: string; label: string }[]>;
   flushSave(): Promise<void>;
+  arrangeCanvas(signal: AbortSignal): ReturnType<typeof arrangeCanvas>;
   menu(): {
     getCanvases(): { id: string; name: string }[];
     addCanvas(name?: string, signal?: AbortSignal): Promise<string>;
@@ -71,7 +72,7 @@ export function useCanvasTools(options: {
         canvasSignal.throwIfAborted();
         id = options.getCanvasBinding().id;
         const changesCanvas = request.name === "addCanvas" || request.name === "switchCanvas" || request.name === "renameCanvas";
-        const callSignal = AbortSignal.any([workspaceSignal, ...(changesCanvas ? [] : [canvasSignal]), AbortSignal.timeout(120000), ...(signal ? [signal] : [])]);
+        const callSignal = AbortSignal.any([workspaceSignal, ...(changesCanvas ? [] : [canvasSignal]), AbortSignal.timeout(getCanvasCallTimeout(request.name)), ...(signal ? [signal] : [])]);
         callSignal.throwIfAborted();
         let cancel = () => {};
         try {
@@ -235,7 +236,7 @@ export function useCanvasTools(options: {
       }
       case "arrangeCanvas": {
         canvasSchemas.arrangeCanvas.parse(request.args);
-        const { arrangedNodeIds, viewport } = await arrangeCanvas(flow, signal);
+        const { arrangedNodeIds, viewport } = await options.arrangeCanvas(signal);
         return { arrangedNodeIds: arrangedNodeIds.slice(0, 100), arrangedCount: arrangedNodeIds.length, truncated: arrangedNodeIds.length > 100, viewport };
       }
       case "fitCanvas": {

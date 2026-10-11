@@ -21,20 +21,10 @@
             <icon-folders :size="17" />
           </el-button>
         </el-tooltip>
-        <!-- trigger 用 contextmenu 是为了让整理按钮只由 arrangeNodes 控制显隐，同时仍保留点击外部自动关闭 -->
-        <el-tooltip :showArrow="false" content="整理画布" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]" :disabled="undoPopoverVisible">
-          <span class="toolTrigger">
-            <el-popover trigger="contextmenu" placement="top-start" :width="180" v-model:visible="undoPopoverVisible">
-              <template #reference>
-                <el-button class="toolButton" text :disabled="!canArrange" aria-label="整理画布" @click="arrangeNodes">
-                  <icon-sitemap :size="17" />
-                </el-button>
-              </template>
-              <div class="zoomMenu">
-                <el-button class="zoomAction" style="width: 100%" text @click="undoArrange">撤销整理</el-button>
-              </div>
-            </el-popover>
-          </span>
+        <el-tooltip :showArrow="false" content="整理画布" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+          <el-button class="toolButton" text :disabled="!canArrange" aria-label="整理画布" @click="arrangeNodes">
+            <icon-sitemap :size="17" />
+          </el-button>
         </el-tooltip>
         <el-tooltip :showArrow="false" :content="showMap ? '隐藏地图' : '显示地图'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
           <el-button
@@ -88,15 +78,15 @@
                   class="toolButton"
                   text
                   aria-label="缩放菜单"
-                  @wheel.stop.prevent="$event.deltaY && applyZoom(Math.min(800, Math.max(20, zoomPercent - Math.sign($event.deltaY))))">
+                  @wheel.stop.prevent="$event.deltaY && applyZoom(Math.min(800, Math.max(2, zoomPercent - Math.sign($event.deltaY))))">
                   {{ zoomPercent }}%
                 </el-button>
               </template>
               <div class="zoomMenu">
                 <el-input-number
                   class="zoomInput"
-                  :model-value="zoomPercent"
-                  :min="20"
+                  :modelValue="zoomPercent"
+                  :min="2"
                   :max="800"
                   :controls="false"
                   aria-label="缩放百分比"
@@ -151,6 +141,7 @@
       </div>
     </elCard>
   </panel>
+  <arrangeDialog ref="arrangeDialogRef" :active="active" :canvasId="canvasId" :directory="directory" :projectName="projectName" :batchHistory="batchHistory" />
   <el-dialog v-model="contactVisible" :title="contactInfo.title" width="min(360px, calc(100vw - 32px))" alignCenter appendToBody>
     <div class="contactContent">
       <q-r-code
@@ -168,17 +159,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { Panel, useVueFlow, type XYPosition } from "@vue-flow/core";
+import { computed, ref } from "vue";
+import { Panel, useVueFlow } from "@vue-flow/core";
 import { MiniMap } from "@vue-flow/minimap";
 import { IconMap, IconMagnet, IconFocusCentered, IconHelp, IconBook, IconBug, IconBrandWechat, IconBriefcase } from "@tabler/icons-vue";
 import { ElMessage } from "element-plus";
 import { QRCode } from "tdesign-vue-next";
-import { arrangeCanvas } from "../arrangeCanvas";
+import arrangeDialog from "./arrangeDialog.vue";
 
 const props = defineProps<{
+  active: boolean;
   canvasId: string;
   directory: string | undefined;
+  projectName: string;
   batchHistory: (action: () => Promise<void>) => Promise<void>;
 }>();
 const snapEnabled = defineModel<boolean>("snapEnabled", { required: true });
@@ -203,34 +196,21 @@ const contacts = {
 };
 const contactInfo = computed(() => contacts[contactType.value]);
 const flow = useVueFlow();
-const { viewport, zoomTo, zoomIn, zoomOut, fitView, getNodes, updateNode } = flow;
+const { viewport, zoomTo, zoomIn, zoomOut, fitView, getNodes } = flow;
 const zoomPercent = computed(() => Math.round(viewport.value.zoom * 100));
-const layoutSnapshot = ref<{ id: string; position: XYPosition }[]>();
-const undoPopoverVisible = ref(false);
-const arranging = ref(false);
-let arrangeController: AbortController | undefined;
+const arrangeDialogRef = ref<InstanceType<typeof arrangeDialog>>();
 const canArrange = computed(() => {
-  const nodes = getNodes.value.filter((node) => !node.parentNode);
+  const nodes = getNodes.value.filter((node) => node.type !== "canvasGroup");
   return (
+    props.active &&
     !!props.canvasId &&
     !!props.directory &&
-    !arranging.value &&
+    !arrangeDialogRef.value?.visible &&
     nodes.length > 0 &&
     nodes.every((node) => node.dimensions.width > 0 && node.dimensions.height > 0)
   );
 });
-defineExpose({ arrangeNodes });
-
-watch(
-  () => [props.canvasId, props.directory],
-  () => {
-    arrangeController?.abort();
-    layoutSnapshot.value = undefined;
-    undoPopoverVisible.value = false;
-  },
-  { flush: "sync" }
-);
-onBeforeUnmount(() => arrangeController?.abort());
+defineExpose({ arrangeNodes, requestArrange });
 
 function showContact(type: "community" | "business") {
   contactType.value = type;
@@ -244,40 +224,16 @@ function applyZoom(value: number | undefined) {
 
 async function arrangeNodes() {
   if (!canArrange.value) return;
-  const controller = new AbortController();
-  arrangeController = controller;
-  arranging.value = true;
   try {
-    await props.batchHistory(async () => {
-      const { snapshot, arrangedNodeIds } = await arrangeCanvas(flow, controller.signal);
-      controller.signal.throwIfAborted();
-      if (!arrangedNodeIds.length) return;
-      layoutSnapshot.value = snapshot;
-      undoPopoverVisible.value = true;
-    });
+    await requestArrange();
   } catch (error) {
-    if (!controller.signal.aborted) ElMessage.error(error instanceof Error ? error.message : "整理画布失败");
-  } finally {
-    arrangeController = undefined;
-    arranging.value = false;
+    if (!(error instanceof Error && error.name === "AbortError")) ElMessage.error(error instanceof Error ? error.message : "整理画布失败");
   }
 }
 
-async function undoArrange() {
-  const snapshot = layoutSnapshot.value;
-  if (!snapshot) return;
-  try {
-    await props.batchHistory(async () => {
-      const nodeIds = new Set(getNodes.value.map((node) => node.id));
-      snapshot.forEach(({ id, position }) => {
-        if (nodeIds.has(id)) updateNode(id, { position });
-      });
-      layoutSnapshot.value = undefined;
-      undoPopoverVisible.value = false;
-    });
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "撤销整理失败");
-  }
+async function requestArrange(signal?: AbortSignal) {
+  if (!canArrange.value || !arrangeDialogRef.value) throw new Error("画布尚未就绪或正在整理");
+  return arrangeDialogRef.value.open(signal);
 }
 </script>
 

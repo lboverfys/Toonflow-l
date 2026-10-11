@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { getCanvasCallTimeout } from "@toonflow/tool-canvas/runtime";
 import conf from "@/utils/conf";
 import { isMobileLinkRequest } from "@/utils/mobileLink";
 
@@ -133,7 +134,8 @@ export function callControl(connectionId: string, name: string, args: Record<str
       if (!connection.response.destroyed) connection.response.write(`data: ${JSON.stringify({ type: "cancel", callId })}\n\n`);
       finish({ error: "控制命令已取消或超时" });
     };
-    const timer = setTimeout(abort, 120000);
+    const timeout = getCanvasCallTimeout(name) + (name === "arrangeCanvas" ? 10000 : 0);
+    const timer = setTimeout(abort, timeout);
     connection.pending = { id: callId, finish };
     signal.addEventListener("abort", abort, { once: true });
     connection.response.write(`data: ${JSON.stringify({ type: "call", callId, name, args, directory })}\n\n`);
