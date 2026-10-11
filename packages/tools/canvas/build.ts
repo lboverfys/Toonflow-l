@@ -12,7 +12,8 @@ await createToolConfig({
 节点业务参数和执行行为通过已注册的 nodeTools 操作；nodeId、node:functionName 和参数结构以 getNodeTools 返回值为准，args 根据用户任务填写，不能猜测未注册的函数或字段。
 连线前核对输出端口、输入端口及类型兼容性；节点位置使用画布坐标，合理留出内容和连线空间。已有节点能够复用时不要重复创建。
 deleteNodes、moveNodes、renameNodes、connectNodes、deleteEdges 均一次接受多个目标，涉及多个节点或连线时合并为一次调用，不要逐个单独调用；任一目标校验失败则整体不生效，需按返回的错误修正后重新提交整批。
-每次操作等待返回结果，用 getCanvasNodes/getCanvasEdges 只核对受影响节点、连接和业务输出；节点函数不存在或画布离线时说明具体问题。`,
+每次操作等待返回回执，用 getCanvasNodes/getCanvasEdges 只核对受影响节点、连接和业务输出；节点函数不存在或画布离线时说明具体问题。
+媒体节点返回 generating/running 只表示后台生成已启动。默认继续完成已授权且不依赖该结果的工作，然后简短告知生成中的节点并结束本轮，让用户在同一对话继续安排其他任务；即使存在状态工具，也不循环调用 getGenerationStatus、getCanvasNodes、getConfig 或读取文件等待生成完成。用户查询进度时按需查询一次；只有明确要求等待结果时才按实际工具能力等待。依赖未完成结果的后续工作记为待办，不能使用旧输出或重复提交生成；结果在原节点更新，不承诺自动唤醒对话或完成通知。`,
   configRules: [],
   components: Object.fromEntries([
     "addNode", "moveNodes", "renameNodes", "nodeTools", "connectNodes",

@@ -545,7 +545,7 @@ nodeTools.register({
 
 nodeTools.register({
   name: "generateVideo",
-  description: "启动此节点的后台视频生成，使用当前提示词、模型、模式、时长、分辨率、比例和参考素材；立即返回已开始，用 getGenerationStatus 查询完成结果，cancelGeneration 停止生成",
+  description: "启动此节点的后台视频生成，使用当前提示词、模型、模式、时长、分辨率、比例和参考素材；立即返回已开始，默认不轮询等待。用户查询进度或后续需要结果时用 getGenerationStatus 查询，cancelGeneration 停止生成",
   parameters: z.strictObject({}),
   execute(_args, { signal }) {
     signal?.throwIfAborted();
