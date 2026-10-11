@@ -17,7 +17,7 @@
         </el-form-item>
       </el-form>
       <form-create v-model="formValues" v-model:api="formApi" :rule="formRules" :option="formOptions" />
-      <details v-if="provider?.readme" class="providerHelp">
+      <details v-if="provider?.readme" class="providerHelp" :open="expandedSections.includes('help')" @toggle="expandedSections = ($event.target as HTMLDetailsElement).open ? ['help'] : []">
         <summary>使用说明</summary>
         <messageMarkdown class="providerReadme" :content="provider.readme" />
       </details>
@@ -74,8 +74,10 @@ import messageMarkdown from "@/components/messageMarkdown.vue";
 import type { MediaProvider, MediaProviderModel } from "./types";
 import { settings, saveSettings } from "@/stores/settings";
 import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
+import { useExpandedKeys } from "@/lib/useTreeExpansion";
 
 const { provider } = defineProps<{ provider?: MediaProvider }>();
+const expandedSections = useExpandedKeys(() => `toonflow:providerSections:${provider?.id ?? ""}`);
 const modelEditorDialog = shallowRef<Component>();
 const visible = defineModel<boolean>({ default: false });
 const emit = defineEmits<{ saved: [provider: MediaProvider] }>();

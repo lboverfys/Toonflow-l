@@ -75,7 +75,7 @@
             </div>
           </el-form-item>
         </template>
-        <details class="modelOptions">
+        <details class="modelOptions" :open="expandedSections.includes('options')" @toggle="expandedSections = ($event.target as HTMLDetailsElement).open ? ['options'] : []">
           <summary>更多配置（JSON）</summary>
           <el-input v-model="options" type="textarea" dir="ltr" :rows="6" resize="vertical" aria-label="模型的更多配置" />
         </details>
@@ -93,6 +93,9 @@
 import { ref, watch } from "vue";
 import { IconArrowRight, IconPlus, IconTrash } from "@tabler/icons-vue";
 import type { MediaProviderModel } from "./types";
+import { useExpandedKeys } from "@/lib/useTreeExpansion";
+
+const expandedSections = useExpandedKeys("toonflow:modelEditorSections");
 
 const { model, models } = defineProps<{ model?: MediaProviderModel; models: MediaProviderModel[] }>();
 const visible = defineModel<boolean>({ default: false });

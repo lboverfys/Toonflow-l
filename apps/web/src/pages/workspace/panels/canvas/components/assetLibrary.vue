@@ -6,7 +6,7 @@
       <el-button class="toolbarButton" text :icon="IconX" title="关闭素材库" aria-label="关闭素材库" @click="visible = false" />
     </div>
     <el-scrollbar class="libraryScroll" maxHeight="min(440px, calc(100dvh - 198px))">
-      <el-tree ref="assetTree" class="assetTree" :data="displayEntries" nodeKey="path" :props="{ label: 'name' }" :currentNodeKey="folder === '.' ? undefined : folder" :filterNodeMethod="filterEntry" defaultExpandAll highlightCurrent emptyText="" @nodeClick="selectFolder">
+      <el-tree :key="searchQuery.trim() ? 'search' : 'browse'" ref="assetTree" class="assetTree" :data="displayEntries" nodeKey="path" :props="{ label: 'name' }" :currentNodeKey="folder === '.' ? undefined : folder" :filterNodeMethod="filterEntry" :defaultExpandedKeys="assetExpansion.expandedKeys.value" :autoExpandParent="false" highlightCurrent emptyText="" @nodeExpand="assetExpansion.expand" @nodeCollapse="assetExpansion.collapse" @nodeClick="selectFolder">
         <template #default="{ data }">
           <div class="assetEntry" :title="data.name" :draggable="data.type === 'file'" @dragstart.stop="startAssetDrag($event, data)" @dblclick.stop="openPreview(data)" @contextmenu="openItemMenu($event, data)">
             <icon-folder-filled v-if="data.type === 'directory'" class="folderIcon" :size="30" />
@@ -64,7 +64,7 @@
         </div>
         <div class="locationPath" :title="saveLocationLabel">{{ saveLocationLabel }}</div>
         <el-scrollbar class="saveFolderScroll" maxHeight="220px">
-          <el-tree class="saveFolderTree" :data="folders" nodeKey="path" :props="{ label: 'name' }" :currentNodeKey="saveDirectory" :expandOnClickNode="false" defaultExpandAll highlightCurrent @nodeClick="(entry: AssetEntry) => { if (!saving && saveFolderName === undefined) saveDirectory = entry.path; }">
+          <el-tree ref="saveFolderTree" class="saveFolderTree" :data="folders" nodeKey="path" :props="{ label: 'name' }" :currentNodeKey="saveDirectory" :expandOnClickNode="false" :defaultExpandedKeys="saveExpansion.expandedKeys.value" :autoExpandParent="false" highlightCurrent @nodeExpand="saveExpansion.expand" @nodeCollapse="saveExpansion.collapse" @nodeClick="(entry: AssetEntry) => { if (!saving && saveFolderName === undefined) saveDirectory = entry.path; }">
             <template #default="{ data }">
               <span class="saveFolderEntry"><icon-folder-filled :size="20" /><span>{{ data.name }}</span></span>
             </template>
@@ -87,11 +87,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import axios from "axios";
-import { ElMessage, ElTree, type InputInstance, type TreeNodeData } from "element-plus";
+import { ElMessage, type InputInstance, type TreeNodeData } from "element-plus";
 import { IconDots, IconEye, IconFile, IconFolderFilled, IconFolderPlus, IconMusic, IconPhoto, IconSearch, IconVideo, IconX } from "@tabler/icons-vue";
 import type { NodeOutput } from "@toonflow/nodes-scaffold/values";
 import { startAssetDrag } from "../canvasDrop";
 import useWorkspaceFiles from "@/lib/workspaceFiles";
+import { useTreeExpansion } from "@/lib/useTreeExpansion";
 import assetMenu from "./assetMenu.vue";
 
 type AssetEntry = { name: string; path: string; type: "file" | "directory"; children?: AssetEntry[]; draft?: boolean };
@@ -110,7 +111,10 @@ const saveFolderName = ref<string>();
 const saveFolderInput = ref<InputInstance>();
 const saveLocationLabel = computed(() => saveDirectory.value === "." ? "素材库" : `素材库 / ${saveDirectory.value.split("/").join(" / ")}`);
 const searchQuery = ref("");
-const assetTree = ref<InstanceType<typeof ElTree>>();
+const assetExpansion = useTreeExpansion("toonflow:assetTree", searchQuery);
+const assetTree = assetExpansion.tree;
+const saveExpansion = useTreeExpansion("toonflow:assetSaveTree");
+const saveFolderTree = saveExpansion.tree;
 const folderInput = ref<InputInstance>();
 const newFolderParent = ref<string>();
 const newFolderName = ref("");
@@ -147,6 +151,7 @@ function openItemMenu(event: MouseEvent, entry: AssetEntry) {
 }
 
 async function refreshAssets(path?: string, target?: string) {
+  if (path) { assetExpansion.relocate(path, target); saveExpansion.relocate(path, target); }
   if (path && (folder.value === path || folder.value.startsWith(path + "/"))) {
     folder.value = target ? target + folder.value.slice(path.length) : ".";
   }
@@ -165,7 +170,7 @@ function filterEntry(query: string, entry: TreeNodeData) {
   return !!entry.draft || entry.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 }
 
-watch(searchQuery, query => assetTree.value?.filter(query));
+watch([searchQuery, assetTree], async () => { await nextTick(); assetTree.value?.filter(searchQuery.value); });
 
 async function startFolder() {
   searchQuery.value = "";

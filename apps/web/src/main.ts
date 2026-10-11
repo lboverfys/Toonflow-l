@@ -20,6 +20,7 @@ import { registerLanguage } from "@/lib/i18n";
 import { locale, translate } from "@toonflow/i18n/vue";
 
 const app = createApp(App);
+app.provide("nodePreferences", settingsStorage);
 app.onUnmount(registerLanguage());
 const isDesktop = new URLSearchParams(window.location.search).get("desktop") === "1";
 const requiresWebView2Update = isDesktop && /Windows/i.test(navigator.userAgent)
