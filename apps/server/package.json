@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     "./app": "./src/app.ts",
+    "./mediaStorage": "./src/types/mediaStorage.ts",
     "./remoteConnection": "./src/remoteConnection.ts",
     "./desktop": "./src/types/desktop.ts",
     "./mcp": "./src/utils/mcp/runtime.ts",

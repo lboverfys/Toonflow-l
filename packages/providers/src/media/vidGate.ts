@@ -92,6 +92,17 @@ function requestBody(request: VideoRequest) {
 async function submit(context: ProviderContext, body: string) {
   const task = context.videoTask!;
   if (task.state.phase !== "prepared") throw new Error("VidGate 原提交回执尚未确认，未保存任务编号。渠道文档未提供幂等或回执找回接口，请凭本地操作编号及错误中的请求编号核查站点记录；此操作不会补发生成");
+  for (const value of (JSON.parse(body) as { reference_images?: string[] }).reference_images ?? []) {
+    const params = new URL(value).searchParams;
+    if (params.get("x-oss-signature-version") !== "OSS4-HMAC-SHA256") continue;
+    const timestamp = params.get("x-oss-date")?.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, "$1-$2-$3T$4:$5:$6Z");
+    const expiresAt = Date.parse(timestamp ?? "") + Number(params.get("x-oss-expires")) * 1000;
+    if (!Number.isFinite(expiresAt) || expiresAt < Date.now() + 60000) {
+      const error = "OSS 参考图链接已过期或即将过期，尚未向 VidGate 提交视频。本地参考图可重新生成以取得新链接；手填的图片链接请先更新后再生成";
+      await task.update({ phase: "failed", error });
+      throw new Error(error);
+    }
+  }
   const { base, headers } = apiBase(context);
   await task.update({ phase: "submitting", error: undefined, retryAt: undefined });
   let response: Response;
@@ -173,9 +184,9 @@ async function poll(context: ProviderContext) {
 export default {
   id: "vidGate",
   label: "VidGate",
-  version: "1.0.0",
+  version: "1.1.0",
   apiUrl: "http://vidgate.top:18080",
-  readme: "填写 API Key 即可使用 VidGate，API 地址可修改。当前入口为 HTTP，密钥与请求会以明文传输；如站点提供 HTTPS，请改用 HTTPS 地址。Seedance 2.5 支持 5/10/15/30 秒，Seedance 2.0 fast 支持 5/10/15 秒。文档标价均为 1.5/次，实际以站点账户计费为准。最多 9 张参考图，仅接受公网 HTTPS 图片直链，在视频节点逐行填写；文档未提供本地素材上传接口，不接受 Base64 或本机路径。异步提交后每 20 秒查询，任务编号持久保存，等待或下载中断可恢复原任务。渠道未声明幂等协议，提交回执丢失时不会自动补发生成，须到站点核查。优先认证下载成片，网关取片返回 502 时使用任务成片直链，密钥不会发送给 CDN。",
+  readme: "填写 API Key 即可使用 VidGate，API 地址可修改。当前入口为 HTTP，密钥与请求会以明文传输；如站点提供 HTTPS，请改用 HTTPS 地址。Seedance 2.5 支持 5/10/15/30 秒，Seedance 2.0 fast 支持 5/10/15 秒。文档标价均为 1.5/次，实际以站点账户计费为准。参考图合计最多 9 张：可在视频节点逐行填写公网 HTTPS 图片直链，也可在「设置 → 素材存储」启用阿里云 OSS 后直接连接本地图片；应用先上传图片，再提交视频。先按本地图片顺序，再按手填链接顺序对应 @Image1、@Image2。OSS 存储、请求和流量另行计费，链接有效期须覆盖排队与生成时间。异步提交后每 20 秒查询，任务编号持久保存，等待或下载中断可恢复原任务。渠道未声明幂等协议，提交回执丢失时不会自动补发生成，须到站点核查。优先认证下载成片，网关取片返回 502 时使用任务成片直链，密钥不会发送给 CDN。",
   rules,
   models: [
     { id: "seedance_v2.5", label: "Dreamina Seedance 2.5 · 最长 30 秒", type: "video", mode: ["text", ["imageReference:9"]], referenceImageInput: "url", taskRecovery: true, videoRatios: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"], durationResolutionMap: [{ duration: [5, 10, 15, 30], resolution: ["720p"] }] },

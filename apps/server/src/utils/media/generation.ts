@@ -10,6 +10,7 @@ import { lockWorkspaceFiles, resolveWorkspacePath, writeWorkspaceFile } from "@/
 import { runVideoTask } from "@/utils/media/videoTasks";
 export { getVideoTask, getVideoTaskRequest } from "@/utils/media/videoTasks";
 import { runImageTask } from "@/utils/media/imageTasks";
+import { getOssStorageSettings, uploadOssReferences } from "@/utils/media/oss";
 export { getImageTask, getImageTaskRequest } from "@/utils/media/imageTasks";
 
 const maxMediaSize = 100 * 1024 * 1024;
@@ -159,7 +160,7 @@ export async function generateMedia(
   if (rules.some(rule => rule.field === "apiKey") && (typeof provider.config.apiKey !== "string" || !provider.config.apiKey.trim())) invalid("请先在媒体模型设置中配置供应商 API Key");
   if (!videoTask?.requestSaved) {
     if (request.referenceImageUrls?.length && (mediaType !== "video" || model.referenceImageInput !== "url")) invalid("当前模型不支持参考图链接输入");
-    if (mediaType === "video" && model.referenceImageInput === "url" && request.images?.length) invalid("此渠道只接受公网 HTTPS 图片直链，请使用参考图链接输入；未上传或公开本地素材");
+    if (mediaType === "video" && model.referenceImageInput === "url" && (request.images?.length ?? 0) + (request.referenceImageUrls?.length ?? 0) > 9) invalid("本地参考图与 HTTPS 链接合计最多 9 张");
   }
   if (mediaType === "video" && model.taskRecovery === true && !videoTask) {
     return runVideoTask(directory, request, provider.config,
@@ -172,6 +173,17 @@ export async function generateMedia(
   }
   // 恢复使用首次保存的原始请求，不重新读取可能已修改或删除的参考素材。
   const restoring = videoTask?.requestSaved === true || imageTask?.requestSaved === true;
+  const ossConfig = !restoring && mediaType === "video" && model.referenceImageInput === "url" && request.images?.length ? getOssStorageSettings() : undefined;
+  if (ossConfig) {
+    let total = 0;
+    for (const image of request.images!) {
+      const { path } = await resolveWorkspacePath(directory, image.path);
+      const info = await stat(path);
+      if (!info.isFile() || !info.size || info.size > 20 * 1024 * 1024) invalid("OSS 本地参考图为空或超过单张 20 MiB 的传输限制");
+      total += info.size;
+      if (total > 50 * 1024 * 1024) invalid("OSS 本地参考图合计超过 50 MiB 的传输限制");
+    }
+  }
   if (!restoring && providerInfo.id === "dola") {
     if (mediaType === "image" && request.images?.length) invalid("Dola 图片模型仅支持文生图，不能使用参考图或局部重绘");
     if ((request.images?.length ?? 0) > 9) invalid("Dola 视频最多使用 9 张参考图片");
@@ -205,6 +217,7 @@ export async function generateMedia(
   const references = async (items: MediaReference[] | undefined, type: string) => items ? Promise.all(items.map(item => readReference(directory, item, type, signal))) : undefined;
   let images: MediaInput[] | undefined = restoring ? undefined : await references(request.images, "image");
   if (!restoring && request.referenceImageUrls?.length) images = [...(images ?? []), ...request.referenceImageUrls.map((url): MediaInput => ({ type: "url", url }))];
+  if (ossConfig && images) images = await uploadOssReferences(images, ossConfig, signal);
   signal?.throwIfAborted();
   const assets = mediaType === "audio"
     ? await provider.generateAudio!({
