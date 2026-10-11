@@ -213,7 +213,7 @@ function parseProvider(source: string) {
   if (!models.success) invalid(models.error.issues.map(issue => translateMessage(issue.message)).join("; "));
   const rules = z.array(z.record(z.string(), z.json())).safeParse(value("rules") ?? []);
   if (!rules.success) invalid("供应商 rules 必须为表单配置对象数组");
-  return { object, modelProperty: entries.get("models"), id: id as string, label, icon, version: version?.trim(), readme, modelsUrl: modelsUrl as string | undefined, rules: rules.data, models: models.data };
+  return { object, modelProperty: entries.get("models"), labelProperty: entries.get("label"), id: id as string, label, icon, version: version?.trim(), readme, modelsUrl: modelsUrl as string | undefined, rules: rules.data, models: models.data };
 }
 
 function metadata(fileName: string, source: string) {
@@ -229,13 +229,20 @@ export function validateMediaProviderSource(source: string) {
   return metadata(`${id}.ts`, source);
 }
 
-function replaceModels(source: string, models: z.infer<typeof mediaModelsSchema>) {
-  const { object, modelProperty } = parseProvider(source);
+function replaceProviderConfig(source: string, models: z.infer<typeof mediaModelsSchema>, label?: string) {
+  const { object, modelProperty, labelProperty } = parseProvider(source);
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
   const formatted = JSON.stringify(models, null, 2).replace(/\n/g, `${newline}  `);
   const start = modelProperty?.type === "ObjectProperty" ? modelProperty.value.start! : object.start! + 1;
   const end = modelProperty?.type === "ObjectProperty" ? modelProperty.value.end! : start;
-  return source.slice(0, start) + (modelProperty ? formatted : `${newline}  models: ${formatted},`) + source.slice(end);
+  const changes = [{ start, end, value: modelProperty ? formatted : `${newline}  models: ${formatted},` }];
+  if (label !== undefined && labelProperty?.type === "ObjectProperty") {
+    changes.push({ start: labelProperty.value.start!, end: labelProperty.value.end!, value: JSON.stringify(label) });
+  }
+  for (const change of changes.sort((left, right) => right.start - left.start)) {
+    source = source.slice(0, change.start) + change.value + source.slice(change.end);
+  }
+  return source;
 }
 
 export async function initializeMediaProviders(sourceDirectory: string, bundled: readonly string[], revision: string) {
@@ -248,7 +255,8 @@ export async function initializeMediaProviders(sourceDirectory: string, bundled:
     const current = await readProvider(targetDirectory, name).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
     const source = await readFile(join(sourceDirectory, name), "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
     if (source === null) continue;
-    const next = current ? replaceModels(source, parseProvider(current.source).models) : source;
+    const saved = current ? parseProvider(current.source) : undefined;
+    const next = saved ? replaceProviderConfig(source, saved.models, saved.label) : source;
     metadata(name, next);
     await writeAtomic(target, next);
   }
@@ -319,7 +327,7 @@ export async function addMediaProvider(source: string) {
   return result;
 }
 
-export async function saveMediaProvider(fileName: string, models: z.infer<typeof mediaModelsSchema>, revision: string, expectedApiKey?: string) {
+export async function saveMediaProvider(fileName: string, models: z.infer<typeof mediaModelsSchema>, revision: string, label?: string, expectedApiKey?: string) {
   if (!mediaProviderFileSchema.safeParse(fileName).success) invalid("供应商文件名无效");
   const checked = mediaModelsSchema.safeParse(models, validationOptions());
   if (!checked.success) invalid(checked.error.issues.map(issue => translateMessage(issue.message)).join("; "));
@@ -329,8 +337,8 @@ export async function saveMediaProvider(fileName: string, models: z.infer<typeof
   try {
     const current = await readProvider(path, fileName);
     if (current.revision !== revision) invalid("供应商文件已被修改，请刷新页面后再编辑", 409);
-    // ACT: 只替换 models 源码区间，保留供应商函数及其余用户编辑。
-    const source = replaceModels(current.source, checked.data);
+    // ACT: 只替换名称和 models 源码区间，保留供应商函数、标识及其余用户编辑。
+    const source = replaceProviderConfig(current.source, checked.data, label?.trim());
     const result = metadata(fileName, source);
     if (expectedApiKey !== undefined && getMediaProviderApiKey(result.id) !== expectedApiKey) invalid("供应商配置已变更，请重试", 409);
     await writeWorkspaceFile(join(path, fileName), source);
@@ -386,7 +394,7 @@ export async function refreshMediaProviderModels(fileName: string, revision?: st
     });
   }))).flat();
   const types = new Set(models.map(model => model.type));
-  return saveMediaProvider(fileName, [...provider.models.filter(model => !types.has(model.type)), ...models], provider.revision, apiKey);
+  return saveMediaProvider(fileName, [...provider.models.filter(model => !types.has(model.type)), ...models], provider.revision, undefined, apiKey);
 }
 
 export async function deleteMediaProvider(fileName: string, revision: string) {
@@ -408,7 +416,7 @@ export async function loadMediaProviderSource(source: string, config: Record<str
   const { id } = parseProvider(source);
   // ACT: VM 只隔离可信供应商的全局上下文；不可信代码需要独立进程等更强隔离。
   const context = createContext({
-    Buffer, URL, URLSearchParams, TextEncoder, TextDecoder, Blob,
+    Buffer, URL, URLSearchParams, TextEncoder, TextDecoder, Blob, FormData,
     AbortController, AbortSignal, setTimeout, clearTimeout,
   }, { codeGeneration: { strings: false, wasm: false } });
   const rejectImport = () => { throw new Error("供应商不能导入模块，请使用 this.tool 中的宿主工具"); };

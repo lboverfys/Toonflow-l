@@ -50,7 +50,7 @@ export async function createApp({
     const { default: initializeExt } = await import("@/utils/plugins/initializeExt");
     await initializeExt(resolve(dataDirectory, "ext"), extRoot, pluginRevision);
   }
-  // ACT: 同步供应商代码时保留用户编辑的模型列表和独立配置。
+  // ACT: 同步供应商代码时保留用户编辑的名称、模型列表和独立配置。
   if (dataDirectory && providersRoot) {
     const sourceDirectory = resolve(providersRoot, "media");
     let providerRevision = pluginRevision;
