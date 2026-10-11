@@ -52,7 +52,7 @@
         </div>
         <promptInput v-model="data.promptModel" v-model:text="data.prompt" :references="referenceMentions" expandable />
         <template v-if="selectedModel?.referenceImageInput === 'url'">
-          <div class="referenceHint">参考图使用公开可访问的 HTTPS 直链，每行一张，最多 9 张；按顺序对应 @Image1、@Image2。留空为文生视频。</div>
+          <div class="referenceHint">本地图片连线会通过「设置 → 素材存储」中的阿里云 OSS 自动上传；也可在下方每行填写一个 HTTPS 图片直链。先按上方图片顺序，再按链接顺序对应 @Image1、@Image2，合计最多 9 张。没有图片和链接时为文生视频。</div>
           <el-input v-model="data.referenceImageUrlsText" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :disabled="generating || deleting || pendingTask" placeholder="https://example.com/reference.png" aria-label="参考图片 HTTPS 直链" />
         </template>
         <div class="promptFooter">
@@ -197,7 +197,6 @@ function validateReferenceUrls(urls: string[]) {
 }
 
 function getMatchingModes(choice?: NodeMediaModel, urls = referenceUrls(choice)) {
-  if (choice?.referenceImageInput === "url" && mediaCounts.value.image) return [];
   const counts = { ...mediaCounts.value, image: mediaCounts.value.image + urls.length };
   return (choice?.mode ?? []).filter((mode) => {
     const { image, video, audio } = counts;
@@ -328,7 +327,7 @@ async function startGeneration() {
   const images = refList.value.flatMap((item) => item.dataType === "IMAGE" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []);
   const referenceImageUrls = referenceUrls(choice);
   validateReferenceUrls(referenceImageUrls);
-  if (choice.referenceImageInput === "url" && images.length) throw new Error("此渠道只接受公网 HTTPS 图片直链，请移除本地图片连线并填写参考图链接");
+  if (choice.referenceImageInput === "url" && images.length + referenceImageUrls.length > 9) throw new Error("本地参考图与 HTTPS 链接合计最多 9 张");
   if (choice.mode?.length && !matchingModes.value.length) throw new Error("当前模型没有适合这些参考素材的生成模式，请更换模型或调整引用");
   const workspace = files.getWorkspaceFiles();
   const controller = new AbortController();
