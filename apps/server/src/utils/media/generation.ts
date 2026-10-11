@@ -204,6 +204,22 @@ export async function generateMedia(
       if (total > 70 * 1024 * 1024) invalid("参考图片合计不能超过 70 MiB");
     }
   }
+  if (!restoring && providerInfo.id === "fankeVideo") {
+    const limits = (Array.isArray(model.mode) ? model.mode : []).find(Array.isArray) ?? [];
+    for (const [type, items] of [["image", request.images], ["audio", request.audios]] as const) {
+      const limit = Number(limits.find(value => typeof value === "string" && value.startsWith(`${type}Reference:`))?.split(":")[1] ?? 0);
+      if ((items?.length ?? 0) > limit) invalid(`此 Foke Video 模型最多支持 ${limit} 个 ${type === "image" ? "图片" : "音频"}参考`);
+    }
+    if (request.videos?.length || request.firstFrame || request.lastFrame) invalid("这 4 个 Foke Video 模型不支持参考视频或首尾帧模式");
+    let total = 0;
+    for (const input of [...(request.images ?? []), ...(request.audios ?? [])]) {
+      const { path } = await resolveWorkspacePath(directory, input.path);
+      const info = await stat(path);
+      if (!info.isFile() || !info.size) invalid("Foke Video 参考素材必须为非空文件");
+      total += info.size;
+      if (total > 90 * 1024 * 1024) invalid("Foke Video 参考素材合计超过本地 90 MiB 传输上限");
+    }
+  }
   if (!restoring && providerInfo.id === "laoliImage") {
     let total = 0;
     for (const image of request.images ?? []) {

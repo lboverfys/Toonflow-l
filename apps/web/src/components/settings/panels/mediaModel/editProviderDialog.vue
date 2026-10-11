@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     v-model="visible"
-    :title="`编辑媒体供应商：${provider?.label ?? ''}`"
+    title="编辑媒体供应商"
     width="min(800px, calc(100vw - 32px))"
     alignCenter
     appendToBody
@@ -11,8 +11,16 @@
     :showClose="!saving"
     @closed="formApi = undefined">
     <div class="providerEditor">
-      <messageMarkdown v-if="provider?.readme" class="providerReadme" :content="provider.readme" />
+      <el-form labelPosition="top" :disabled="saving" @submit.prevent>
+        <el-form-item label="供应商名称" required>
+          <el-input v-model="providerLabel" :maxlength="200" aria-label="供应商名称" />
+        </el-form-item>
+      </el-form>
       <form-create v-model="formValues" v-model:api="formApi" :rule="formRules" :option="formOptions" />
+      <details v-if="provider?.readme" class="providerHelp">
+        <summary>使用说明</summary>
+        <messageMarkdown class="providerReadme" :content="provider.readme" />
+      </details>
       <div class="modelHeader">
         <h4>模型配置 <el-text type="info">{{ models.length }}</el-text></h4>
         <el-button :icon="IconPlus" size="small" :disabled="saving" @click="editModel()">手动添加</el-button>
@@ -72,6 +80,7 @@ const modelEditorDialog = shallowRef<Component>();
 const visible = defineModel<boolean>({ default: false });
 const emit = defineEmits<{ saved: [provider: MediaProvider] }>();
 const models = ref<MediaProviderModel[]>([]);
+const providerLabel = ref("");
 const modelEditorVisible = ref(false);
 const editingModelIndex = ref<number>();
 const saving = ref(false);
@@ -97,6 +106,7 @@ watch(visible, isVisible => {
   formRules.value = formCreate.copyRules(provider?.rules ?? []);
   formValues.value = structuredClone(toRaw((provider && configs?.[provider.id]) ?? {}));
   revision.value = provider?.revision ?? "";
+  providerLabel.value = provider?.label ?? "";
   models.value = JSON.parse(JSON.stringify(provider?.models ?? []));
 }, { immediate: true });
 
@@ -129,6 +139,8 @@ async function saveModels() {
   let configSaved = false;
   saving.value = true;
   try {
+    const label = providerLabel.value.trim();
+    if (!label || label.length > 200) throw new Error("供应商名称须为 1～200 个字符");
     if (!(await formApi.value.validate().then(() => true, () => false))) return;
     const config = formApi.value.formData();
     if ("apiKey" in config) {
@@ -145,7 +157,7 @@ async function saveModels() {
       return { ...item, id, label };
     });
     const { data } = await axios.put<{ code: number; data: MediaProvider; message?: string }>("/api/providers/media/save", {
-      fileName, revision: revision.value, models: values,
+      fileName, revision: revision.value, models: values, label,
     });
     if (data.code !== 200 || !data.data) throw new Error(data.message || "保存模型失败");
     revision.value = data.data.revision;
@@ -169,8 +181,8 @@ async function saveModels() {
     visible.value = false;
   } catch (error) {
     const message = axios.isAxiosError(error) ? error.response?.data?.message || error.message : error instanceof Error ? error.message : "保存失败，请重试";
-    formError.value = configSaved ? `模型与连接配置已保存，读取最新模型失败：${message}。请重新打开编辑。`
-      : modelsSaved ? `模型已保存，连接配置未保存：${message}。填写内容已保留，请重试。` : message;
+    formError.value = configSaved ? `供应商与连接配置已保存，读取最新模型失败：${message}。请重新打开编辑。`
+      : modelsSaved ? `供应商名称与模型已保存，连接配置未保存：${message}。填写内容已保留，请重试。` : message;
   } finally {
     saving.value = false;
   }
@@ -184,7 +196,25 @@ async function saveModels() {
   overflow-y: auto;
   overscroll-behavior: contain;
 
-  .providerReadme { margin-bottom: 20px; }
+  .providerHelp {
+    margin-bottom: 24px;
+    padding: 12px 16px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: var(--el-border-radius-base);
+    background: var(--el-fill-color-light);
+
+    summary {
+      width: fit-content;
+      color: var(--el-text-color-regular);
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .providerReadme {
+      margin-top: 12px;
+      overflow-wrap: anywhere;
+    }
+  }
 
   .modelHeader {
     display: flex;
