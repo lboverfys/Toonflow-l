@@ -5,26 +5,27 @@
       ref="imageRef"
       class="preview"
       :src="previewUrl"
-      :previewSrcList="[previewUrl]"
+      :previewSrcList="[originalUrl || previewUrl]"
       previewTeleported
       fit="cover"
       :alt="`预览引用 ${index}`"
       decoding="async"
       draggable="false"
       @click.stop
-      @error="mediaError" />
+      @error="thumbnailFailed ? mediaError() : thumbnailFailed = true" />
     <img
-      v-else-if="item.dataType === 'VIDEO' && videoThumbnail && !previewError"
-      class="preview"
-      :src="videoThumbnail"
-      decoding="async"
-      draggable="false"
-      alt=""
-      aria-hidden="true" />
-    <video
       v-else-if="item.dataType === 'VIDEO' && previewUrl && !previewError"
       class="preview"
       :src="previewUrl"
+      decoding="async"
+      draggable="false"
+      alt=""
+      aria-hidden="true"
+      @error="thumbnailFailed = true" />
+    <video
+      v-else-if="item.dataType === 'VIDEO' && originalUrl && !previewError"
+      class="preview"
+      :src="originalUrl"
       preload="auto"
       muted
       playsinline
@@ -59,11 +60,12 @@ import { useNodeFiles } from "@toonflow/nodes-scaffold/workspaceFiles";
 import type { NodeInputValue } from "@toonflow/nodes-scaffold/values";
 
 const props = defineProps<{ item: NodeInputValue; index: number }>();
-const emit = defineEmits<{ remove: []; preview: [url: string] }>();
+const emit = defineEmits<{ remove: []; preview: [url: string, originalUrl: string] }>();
 const imageRef = ref<InstanceType<typeof ElImage>>();
 const previewError = ref("");
 const duration = ref("");
 const videoThumbnail = ref("");
+const thumbnailFailed = ref(false);
 const media = computed(() => props.item.value !== undefined && (props.item.dataType === "IMAGE" || props.item.dataType === "VIDEO") ? { ...props.item.value } : undefined);
 const itemIcon = computed(() => props.item.dataType === "IMAGE" ? IconPhoto : props.item.dataType === "VIDEO" ? IconVideo : props.item.dataType === "AUDIO" ? IconMusic : IconFileText);
 const title = computed(() => {
@@ -75,14 +77,22 @@ watch(media, () => {
   previewError.value = "";
   duration.value = "";
   videoThumbnail.value = "";
+  thumbnailFailed.value = false;
 });
-const { useFileUrl } = useNodeFiles();
-const previewUrl = useFileUrl(media, error => {
+const { useFileUrl, useMediaInfo } = useNodeFiles();
+const originalUrl = useFileUrl(() => props.item.dataType === "IMAGE" || thumbnailFailed.value ? media.value : undefined, error => {
   previewError.value = error instanceof Error ? error.message : "读取引用文件失败";
 });
+const thumbnailUrl = useFileUrl(media, () => { thumbnailFailed.value = true; }, true);
+const info = useMediaInfo(() => props.item.dataType === "VIDEO" ? media.value : undefined, error => {
+  previewError.value = error instanceof Error ? error.message : "读取引用信息失败";
+});
+const previewUrl = computed(() => props.item.dataType === "VIDEO" ? videoThumbnail.value || (thumbnailFailed.value ? "" : thumbnailUrl.value)
+  : thumbnailFailed.value ? originalUrl.value : thumbnailUrl.value);
+watch(info, value => { if (value?.duration !== undefined) setDuration(value.duration); });
 
-watch([previewUrl, previewError, videoThumbnail], ([url, error, thumbnail]) => {
-  emit("preview", error ? "" : props.item.dataType === "VIDEO" ? thumbnail : url);
+watch([previewUrl, previewError, originalUrl], ([url, error, original]) => {
+  emit("preview", error ? "" : url, error ? "" : props.item.dataType === "IMAGE" ? original : url);
 }, { immediate: true });
 
 function mediaError() {
@@ -91,7 +101,7 @@ function mediaError() {
 
 function readVideoPreview(event: Event) {
   const video = event.currentTarget as HTMLVideoElement;
-  if (video.currentSrc !== previewUrl.value || !video.videoWidth || !video.videoHeight) return;
+  if (video.currentSrc !== originalUrl.value || !video.videoWidth || !video.videoHeight) return;
   const canvas = document.createElement("canvas");
   const scale = 96 / Math.max(video.videoWidth, video.videoHeight);
   canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
@@ -106,7 +116,10 @@ function readVideoPreview(event: Event) {
 }
 
 function readDuration(event: Event) {
-  const seconds = (event.currentTarget as HTMLVideoElement).duration;
+  setDuration((event.currentTarget as HTMLVideoElement).duration);
+}
+
+function setDuration(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return;
   const totalSeconds = Math.floor(seconds);
   duration.value = `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;

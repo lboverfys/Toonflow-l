@@ -8,7 +8,7 @@ export function useNodeReferences(handleId = "in") {
   const { id, node } = useNode<NodeData & { referenceOrder?: Record<string, string[]> }>();
   const { removeEdges } = useVueFlow();
   const inputValues = ref<NodeInputValue[]>([]);
-  const previews = ref(new Map<string, string>());
+  const previews = ref(new Map<string, { thumbnail: string; original: string }>());
   const refList = computed({
     get() {
       const order = new Map(node.data.referenceOrder?.[handleId]?.map((key, index) => [key, index]));
@@ -24,7 +24,8 @@ export function useNodeReferences(handleId = "in") {
           id: referenceKey(item),
           name: `参考 ${index + 1}`,
           value: `{{ref ${index + 1}}}`,
-          avatar: previews.value.get(referenceKey(item)) || undefined,
+          avatar: previews.value.get(referenceKey(item))?.thumbnail || undefined,
+          previewUrl: previews.value.get(referenceKey(item))?.original || undefined,
         }]
       : []
   ));
@@ -37,8 +38,8 @@ export function useNodeReferences(handleId = "in") {
     }
   });
 
-  function setReferencePreview(item: NodeInputValue, url: string) {
-    previews.value.set(referenceKey(item), url);
+  function setReferencePreview(item: NodeInputValue, url: string, originalUrl: string) {
+    previews.value.set(referenceKey(item), { thumbnail: url, original: originalUrl });
   }
 
   function removeReference(item: NodeInputValue) {

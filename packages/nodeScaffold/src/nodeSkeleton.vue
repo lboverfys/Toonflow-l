@@ -123,12 +123,17 @@
         :class="{ selected: node.selected }"
         shadow="never"
         :bodyStyle="{ padding: '8px' }"
-        :style="{ minHeight: `${Math.max(cardHeight, !previewReady ? previewHeight : 0)}px` }">
+        :style="{ minHeight: `${Math.max(cardHeight, !contentVisible ? previewHeight : 0)}px` }">
         <div v-if="loading" class="loadingContent" role="status" aria-label="节点加载中">
           <icon-loader2 class="loadingIcon" :size="24" aria-hidden="true" />
           <span>加载中...</span>
         </div>
-        <slot v-else-if="previewReady || documentTarget" />
+        <slot v-else-if="contentVisible" />
+        <div v-else-if="previewReady" class="overviewContent" :style="{ height: `${Math.max(cardHeight - 18, previewHeight ? previewHeight - 18 : overviewSrc ? 240 : 144)}px` }">
+          <img v-if="overviewSrc && !overviewError" :src="overviewSrc" :alt="label" decoding="async" draggable="false" @load="emit('overviewLoad', $event)" @error="overviewError = true" />
+          <component v-else :is="icon ?? IconBox" :size="40" aria-hidden="true" />
+          <span v-if="overviewLabel" class="overviewLabel" role="status">{{ overviewLabel }}</span>
+        </div>
       </el-card>
       <template v-for="group in handleGroups" :key="group.type">
         <handle
@@ -190,7 +195,7 @@ defineOptions({ inheritAttrs: false });
 
 const topVisible = defineModel<boolean>("topVisible", { default: false });
 const bottomVisible = defineModel<boolean>("bottomVisible", { default: false });
-const emit = defineEmits<{ fullscreen: [] }>();
+const emit = defineEmits<{ fullscreen: []; overviewLoad: [event: Event] }>();
 const downloading = ref(false);
 const props = withDefaults(
   defineProps<
@@ -198,6 +203,9 @@ const props = withDefaults(
       icon?: Component;
       loading?: boolean;
       previewReady?: boolean;
+      previewDetailed?: boolean;
+      overviewSrc?: string;
+      overviewLabel?: string;
       topWidth?: string | number;
       bottomWidth?: string | number;
       downloadUrl?: string;
@@ -210,6 +218,7 @@ const props = withDefaults(
     handles: () => [],
     outputs: () => ({}),
     previewReady: true,
+    previewDetailed: true,
     fullscreenVisible: true,
     topWidth: "20vw",
     bottomWidth: "20vw",
@@ -222,12 +231,15 @@ const handleGroups = computed(() => [
 const cardHeight = computed(() => Math.max(100, ...handleGroups.value.map((group) => (group.items.length + 1) * 44)));
 const contentCard = ref<{ $el: HTMLElement }>();
 const previewHeight = ref(0);
-watch(() => props.previewReady, (ready, previous) => {
-  if (!ready && previous && contentCard.value) previewHeight.value = contentCard.value.$el.offsetHeight;
-}, { flush: "pre" });
+const overviewError = ref(false);
+watch(() => props.overviewSrc, () => { overviewError.value = false; });
 const { id: nodeId, node } = useNode();
 const documentContext = inject<NodeDocumentContext | undefined>("nodeDocument", undefined);
 const documentTarget = computed(() => documentContext?.targets.get(nodeId));
+const contentVisible = computed(() => !!documentTarget.value || props.previewReady && (props.previewDetailed || props.overviewSrc === undefined));
+watch(contentVisible, (ready, previous) => {
+  if (!ready && previous && contentCard.value) previewHeight.value = contentCard.value.$el.offsetHeight;
+}, { flush: "pre" });
 const skeletonElement = ref<HTMLElement>();
 const canvasSize = shallowRef<{ width: string; height: string }>();
 let documentLease: symbol | undefined;
@@ -343,6 +355,7 @@ async function focusNode(event: MouseEvent) {
 
 function zoomCanvas(event: WheelEvent) {
   if (documentTarget.value) return;
+  if (hostZoomCanvas) return hostZoomCanvas(event);
   if (document.fullscreenElement) return;
   if (!(zoomActivationKeyCode.value === true || (event.ctrlKey && zoomOnPinch.value)) || !d3Zoom.value || !d3Selection.value) return;
   const bounds = d3Selection.value.node()?.getBoundingClientRect();
@@ -351,6 +364,8 @@ function zoomCanvas(event: WheelEvent) {
   event.stopPropagation();
   d3Zoom.value.scaleBy(d3Selection.value, 2 ** wheelDelta(event), [event.clientX - bounds.left, event.clientY - bounds.top]);
 }
+
+const hostZoomCanvas = inject<((event: WheelEvent) => void) | undefined>("canvasZoom", undefined);
 
 const slotsHiddenByInteraction = ref(false);
 // ACT: 多选只操作节点；未选中的节点仍可通过 v-model 主动打开槽位。
@@ -585,6 +600,17 @@ watch(
   width: 220px;
   color: var(--el-text-color-primary);
   text-align: left;
+
+  .overviewContent {
+    position: relative;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    color: var(--el-text-color-secondary);
+
+    > img { width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+    .overviewLabel { position: absolute; bottom: 4px; padding: 2px 6px; border-radius: 4px; background: var(--el-bg-color-overlay); font-size: 12px; }
+  }
 
   &.documentNode {
     display: flex;
