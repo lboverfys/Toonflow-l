@@ -58,15 +58,17 @@
 
       <section class="settingSection devicePanel" aria-labelledby="linkedDevicesTitle">
         <div class="sectionHeader">
-          <h3 id="linkedDevicesTitle">设备连接状态</h3>
+          <h3 id="linkedDevicesTitle">受信设备</h3>
           <el-button :icon="IconRefresh" :disabled="busy" text aria-label="刷新设备连接状态" @click="loadStatus(false, true)">刷新</el-button>
         </div>
         <div v-for="device in status.devices" :key="device.id" class="deviceItem">
           <span class="deviceName">{{ device.name }}</span>
           <el-tag :type="device.online ? 'success' : 'info'" size="small">{{ device.online ? '已连接' : '离线' }}</el-tag>
-          <el-button type="danger" link :disabled="busy" @click="revokeDevice(device.id)">撤销</el-button>
+          <el-button link :disabled="busy" @click="renameDevice(device.id, device.name)">重命名</el-button>
+          <el-button type="danger" link :disabled="busy" @click="revokeDevice(device.id)">撤销信任</el-button>
           <el-alert v-if="device.online && getDeviceVersionWarning(status.appVersion, device.appVersion)" class="deviceVersionWarning" :title="getDeviceVersionWarning(status.appVersion, device.appVersion)" type="warning" :closable="false" showIcon />
         </div>
+        <p class="description">配对成功后持续信任，离线或重启不会清除授权。撤销后，该设备必须重新配对。</p>
         <p v-if="!status.devices.length" class="description">等待设备连接</p>
       </section>
     </template>
@@ -310,6 +312,18 @@ async function generatePairing() {
   } finally {
     if (pairingController === request) generating.value = false;
   }
+}
+
+async function renameDevice(id: string, name: string) {
+  if (busy.value) return;
+  revoking.value = true;
+  error.value = "";
+  try {
+    const { value } = await ElMessageBox.prompt("为这台受信设备设置便于识别的名称", "重命名设备", { inputValue: name, inputValidator: value => !!value?.trim() && value.trim().length <= 100 || "名称需为 1～100 个字符" });
+    await axios.put("/api/mobileLink/rename", { id, name: value.trim() }, { headers });
+    await loadStatus(false);
+  } catch (cause) { if (cause !== "cancel" && cause !== "close") error.value = errorMessage(cause); }
+  finally { revoking.value = false; }
 }
 
 async function revokeDevice(id: string) {

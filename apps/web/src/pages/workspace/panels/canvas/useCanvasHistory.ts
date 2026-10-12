@@ -2,6 +2,7 @@ import { computed, nextTick, onScopeDispose, ref, shallowRef, watch } from "vue"
 import { debounce } from "lodash-es";
 import { useVueFlow, type Node, type Edge } from "@vue-flow/core";
 import { useNodeEvent } from "@toonflow/nodes-scaffold/nodeEvent";
+import { canvasChanges, mergeCanvas, type CanvasSnapshot as SharedCanvasSnapshot } from "@toonflow/server/canvasMerge";
 
 type CanvasSnapshot = { nodes: Node[]; edges: Edge[]; key: string };
 
@@ -18,6 +19,7 @@ export function useCanvasHistory(flow: ReturnType<typeof useVueFlow>, binding: (
   let dragging = false;
   const canUndo = computed(() => !!binding() && !applying.value && !grouping.value && cursor.value > 0);
   const canRedo = computed(() => !!binding() && !applying.value && !grouping.value && cursor.value < snapshots.value.length - 1);
+  const busy = computed(() => applying.value || grouping.value > 0);
 
   function capture(): CanvasSnapshot {
     flow.getNodes.value.forEach(node => nodeReferences.set(node.id, node));
@@ -143,6 +145,26 @@ export function useCanvasHistory(flow: ReturnType<typeof useVueFlow>, binding: (
     }
   }
 
+  async function applyRemote(action: () => Promise<void>) {
+    commit();
+    const before = capture();
+    const wasApplying = applying.value;
+    applying.value = true;
+    record.cancel();
+    try {
+      await action();
+      const after = capture();
+      const changes = canvasChanges(before, after);
+      if (!changes.length) return;
+      // 远端变更同步到每个结构快照，撤销不把其他成员已保存的操作一起回退。
+      snapshots.value = snapshots.value.map(snapshot => {
+        const merged = mergeCanvas({ ...snapshot, toonflowCanvas: true, viewport: flow.viewport.value } as SharedCanvasSnapshot, changes).canvas;
+        const value = { nodes: merged.nodes as Node[], edges: merged.edges as Edge[] };
+        return { ...value, key: JSON.stringify(value) };
+      });
+    } finally { record.cancel(); applying.value = wasApplying; }
+  }
+
   flow.onNodeDragStart(() => {
     if (!binding() || applying.value || dragging) return;
     record.cancel();
@@ -176,5 +198,5 @@ export function useCanvasHistory(flow: ReturnType<typeof useVueFlow>, binding: (
   onScopeDispose(() => { revision++; record.cancel(); });
 
   const getRetainedNodes = () => [...nodeReferences.values(), ...flow.getNodes.value];
-  return { canUndo, canRedo, record, commit, undo, redo, batch, getRetainedNodes };
+  return { canUndo, canRedo, busy, record, commit, undo, redo, batch, applyRemote, getRetainedNodes };
 }

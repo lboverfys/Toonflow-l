@@ -40,5 +40,6 @@ export default router.put("/", validateFields({ directory: z.string().min(1).max
     if (req.query.expectedRevision) revision = createHash("sha256").update(bytes).digest("hex");
   }
   finally { release(); }
+  u.canvasSync.notifyFileChange(directory, path);
   res.json(success(revision ? { revision } : undefined));
 });

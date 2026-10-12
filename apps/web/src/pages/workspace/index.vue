@@ -33,6 +33,7 @@
       :panel="activePanel"
       :refreshing="refreshing"
       :saveError="canvasPanelRef?.saveError"
+      @resolveSave="canvasPanelRef?.showSaveConflict()"
       @refresh="refreshProject" />
     <el-segmented :modelValue="activePanel" class="panelSwitcher" :options="panelOptions" size="small" aria-label="切换面板" @change="switchPanel">
       <template #default="{ item }">

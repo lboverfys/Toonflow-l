@@ -1,7 +1,7 @@
 <template>
   <div class="workspacePresence" role="group" aria-label="项目刷新与协作状态">
     <el-tooltip v-if="saveError" :content="saveError" placement="bottom" :trigger="['hover', 'focus']" :popperStyle="{ maxWidth: 'min(400px, calc(100vw - 24px))', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }" :showArrow="false" :hideAfter="0">
-      <span class="saveWarning" tabindex="0" role="status" :aria-label="'保存受阻：' + saveError"><icon-alert-triangle :size="15" aria-hidden="true" /><span class="saveWarningText">保存受阻</span></span>
+      <el-button class="saveWarning" text :aria-label="'处理保存问题：' + saveError" @click="emit('resolveSave')"><icon-alert-triangle :size="15" aria-hidden="true" /><span class="saveWarningText">保存受阻</span></el-button>
     </el-tooltip>
     <el-tooltip content="刷新项目" placement="bottom" :showArrow="false" :hideAfter="0">
       <el-button class="refreshButton" text :icon="IconRefresh" :loading="refreshing" :disabled="!directory" aria-label="刷新项目" @click="refreshProject" />
@@ -50,7 +50,7 @@ import { locale } from "@toonflow/i18n/vue";
 type PresenceMember = { id: string; name: string; active: boolean; visible: boolean; panel: "canvas" | "document"; path: string };
 type PresencePayload = { directory: string; clientId: string; sessionId: string; panel: "canvas" | "document"; path: string; active: boolean; visible: boolean };
 const props = defineProps<{ directory: string; canvasId?: string; panel: "canvas" | "document"; refreshing?: boolean; saveError?: string }>();
-const emit = defineEmits<{ refresh: [] }>();
+const emit = defineEmits<{ refresh: []; resolveSave: [] }>();
 const membersVisible = ref(false);
 const members = shallowRef<PresenceMember[]>([]);
 const selfId = ref("");

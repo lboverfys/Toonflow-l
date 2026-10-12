@@ -72,6 +72,7 @@ import { settingsStorage } from "@/stores/settings";
 import useWorkspaceFiles, { type TextSnapshot } from "@/lib/workspaceFiles";
 import { useTreeExpansion } from "@/lib/useTreeExpansion";
 import { getCanvasAssetDirectories } from "@/pages/workspace/canvasFile";
+import type { CanvasSnapshot } from "@toonflow/server/canvasMerge";
 
 const props = defineProps<{
   directory?: string;
@@ -79,7 +80,7 @@ const props = defineProps<{
   activateCanvas?: (id: string, signal?: AbortSignal) => Promise<void>;
   flushSave: (action?: () => Promise<void>) => Promise<void>;
 }>();
-const emit = defineEmits<{ loaded: []; reload: [value: boolean] }>();
+const emit = defineEmits<{ loaded: [disk: { canvas: CanvasSnapshot; revision: string }]; reload: [value: boolean] }>();
 const workspaceStore = useWorkspaceStore();
 const workspaceName = computed(() => workspaceStore.project?.name || "未命名工作区");
 const projectNameDraft = ref("");
@@ -279,6 +280,7 @@ async function applyCanvas(canvasId: string, directory: string, signal?: AbortSi
     nextCanvas.flow = { nodes: data.nodes, edges: data.edges, viewport: data.viewport };
     nextCanvas.snapshot = { revision: snapshot.revision, encoding: snapshot.encoding };
   }
+  const disk = { canvas: JSON.parse(JSON.stringify({ toonflowCanvas: true, ...nextCanvas.flow! })) as CanvasSnapshot, revision: nextCanvas.snapshot!.revision };
   if (!refresh) await props.flushSave();
   checkCanvasDirectory(directory, signal);
   if (currentCanvas && !refresh) currentCanvas.flow = toObject();
@@ -311,16 +313,15 @@ async function applyCanvas(canvasId: string, directory: string, signal?: AbortSi
   boundCanvas.value = nextCanvas;
   activeCanvasId.value = nextCanvas.id;
   settingsStorage.setItem(`toonflow:lastCanvas:${directory}`, JSON.stringify(nextCanvas.id));
-  emit("loaded");
+  emit("loaded", disk);
   signal?.throwIfAborted();
 }
 
-async function writeCanvasSnapshot(directory: string, fileName: string, flow: Pick<FlowExportObject, "nodes" | "edges" | "viewport">) {
-  checkCanvasDirectory(directory);
+function updateCanvasSnapshot(disk: { canvas: CanvasSnapshot; revision: string }) {
   const canvas = boundCanvas.value;
-  if (!canvas?.snapshot || canvas.id !== fileName) throw new Error("画布尚未完成读取，无法保存");
-  const revision = await useWorkspaceFiles(directory).writeTextSnapshot(fileName, `${JSON.stringify({ toonflowCanvas: true, ...flow }, null, 2)}\n`, canvas.snapshot);
-  canvas.snapshot = { ...canvas.snapshot, revision };
+  if (!canvas?.snapshot) return;
+  canvas.snapshot = { ...canvas.snapshot, revision: disk.revision };
+  canvas.flow = structuredClone(disk.canvas) as unknown as Canvas["flow"];
 }
 
 async function refreshCanvasList(beforeApply?: () => void) {
@@ -724,7 +725,7 @@ function syncDocumentNode(canvasId: string, nodeId: string, handleId: string, te
   else if (inline) (data.outputs ??= {})[handleId] = { dataType: "STRING", value: text };
 }
 
-defineExpose({ getCanvases, addCanvas, switchCanvas, renameCanvas, syncCanvasPath, syncDocumentNode, writeCanvasSnapshot, refreshCanvasList, refreshCanvas, loadError });
+defineExpose({ getCanvases, addCanvas, switchCanvas, renameCanvas, syncCanvasPath, syncDocumentNode, updateCanvasSnapshot, refreshCanvasList, refreshCanvas, loadError });
 </script>
 
 <style lang="scss" scoped>

@@ -15,15 +15,17 @@ function readAppVersion(value: unknown) {
 }
 
 function serverUrl(value: unknown) {
-  if (typeof value !== "string" || value.length > 2048) throw new Error("连接地址无效");
+  if (typeof value !== "string" || value.length > 2048) throw Object.assign(new Error("连接地址无效"), { status: 400 });
   const source = value.trim();
   const bare = !/^[a-z][\w+.-]*:\/\//i.test(source);
-  let url = new URL(bare ? `https://${source}` : source);
+  const address = bare ? `https://${source}` : source;
+  if (!URL.canParse(address)) throw Object.assign(new Error("连接地址无效"), { status: 400 });
+  let url = new URL(address);
   const privateHost = isIP(url.hostname) === 4 && /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(url.hostname) || url.hostname === "localhost";
   if (bare && privateHost) url = new URL(`http://${source}`);
   if ((url.protocol !== "https:" && !(url.protocol === "http:" && privateHost))
     || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
-    throw new Error("请使用局域网 HTTP 地址或公网 HTTPS 地址，且不包含路径");
+    throw Object.assign(new Error("请使用局域网 HTTP 地址或公网 HTTPS 地址，且不包含路径"), { status: 400 });
   }
   return url.origin;
 }
@@ -37,14 +39,20 @@ export async function createRemoteConnection(directory: string, options: {
 } = {}) {
   const path = resolve(directory, "mobileConnection.json");
   let connection: RemoteConnection | undefined;
+  let connections: RemoteConnection[] = [];
   let savedText: string | undefined;
   try {
     savedText = await readFile(path, "utf8");
     const saved = JSON.parse(savedText);
-    if (typeof saved.deviceToken !== "string" || !/^[\w-]{32,256}$/.test(saved.deviceToken) || typeof saved.name !== "string") {
-      throw new Error("设备连接配置无效");
-    }
-    connection = { url: serverUrl(saved.url), deviceToken: saved.deviceToken, name: saved.name.slice(0, 128), appVersion: readAppVersion(saved.appVersion) };
+    const entries = saved.version === 2 ? saved.connections : [saved];
+    if (!Array.isArray(entries)) throw new Error("设备连接配置无效");
+    connections = entries.map(item => {
+      if (!item || typeof item.deviceToken !== "string" || !/^[\w-]{32,256}$/.test(item.deviceToken) || typeof item.name !== "string") throw new Error("设备连接配置无效");
+      return { url: serverUrl(item.url), deviceToken: item.deviceToken, name: item.name.slice(0, 128), appVersion: readAppVersion(item.appVersion) };
+    });
+    const activeUrl = saved.version === 2 ? saved.activeUrl : connections[0]?.url;
+    connection = connections.find(item => item.url === activeUrl);
+    if (activeUrl !== undefined && !connection) throw new Error("已记住的连接不存在");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -81,21 +89,22 @@ export async function createRemoteConnection(directory: string, options: {
   const heartbeatTimer = active ? setInterval(() => { void refreshConnection(); }, 5000) : undefined;
   heartbeatTimer?.unref();
   void refreshConnection();
-  const status = () => active
+  const status = () => ({ ...(active
     ? { mode: "remote", name: active.name, url: active.url, appVersion, remoteAppVersion, online: online === true ? Date.now() - lastSuccess < 15000 : online }
-    : { mode: "local", appVersion };
+    : { mode: "local", appVersion }), connections: connections.map(({ url, name, appVersion }) => ({ url, name, appVersion })) });
   const router = express.Router();
   router.use(languageRequest);
   async function saveConnection(value?: RemoteConnection) {
     const previous = savedText;
-    const next = value ? JSON.stringify(value) : undefined;
-    if (next) await writeAtomic(path, next, { mode: 0o600 });
-    else await rm(path, { force: true });
+    const remembered = value ? [value, ...connections.filter(item => item.url !== value.url)] : connections;
+    const next = JSON.stringify({ version: 2, activeUrl: value?.url, connections: remembered });
+    await writeAtomic(path, next, { mode: 0o600 });
     try {
       // 写入让出事件循环后也要复检，不能在配对期间开启共享后自动停掉它。
       if (value) options.validateTarget?.(value.url);
       await options.onChange?.(Boolean(value));
       savedText = next;
+      connections = remembered;
     } catch (error) {
       if (previous) await writeAtomic(path, previous, { mode: 0o600 });
       else await rm(path, { force: true });
@@ -176,6 +185,41 @@ export async function createRemoteConnection(directory: string, options: {
     } finally {
       changing = false;
     }
+  });
+  router.post("/reconnect", async (request, response) => {
+    changing = true;
+    try {
+      const url = serverUrl(request.body?.url);
+      const remembered = connections.find(item => item.url === url);
+      if (!remembered) throw Object.assign(new Error("没有保存这台设备，请先配对"), { status: 404 });
+      options.validateTarget?.(url);
+      const result = await fetch(`${url}/api/mobileLink/heartbeat`, { redirect: "error", signal: AbortSignal.timeout(8000),
+        headers: { "X-Toonflow-Device-Token": remembered.deviceToken, "X-Toonflow-App-Version": appVersion ?? "" } });
+      if (result.status === 401) throw Object.assign(new Error("这台设备的授权已撤销，请重新配对"), { status: 401 });
+      if (!result.ok) throw new Error("设备暂时无法连接，请确认对方已开启共享");
+      const body = await result.json() as { code?: number; data?: { appVersion?: unknown } };
+      if (body.code !== 200) throw new Error("设备返回了无效的连接状态");
+      await saveConnection({ ...remembered, appVersion: readAppVersion(body.data?.appVersion) });
+      completeChange(response, { mode: "remote", url, name: remembered.name });
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      response.status(status ?? 502).json({ message: error instanceof Error ? translateError(error) : translateMessage("无法连接服务器") });
+    } finally { changing = false; }
+  });
+  router.post("/forget", async (request, response) => {
+    changing = true;
+    try {
+      const url = serverUrl(request.body?.url);
+      if (url === active?.url) return void response.status(409).json({ message: translateMessage("请先断开连接，再忘记设备") });
+      const remembered = connections.filter(item => item.url !== url);
+      const next = JSON.stringify({ version: 2, activeUrl: active?.url, connections: remembered });
+      await writeAtomic(path, next, { mode: 0o600 });
+      connections = remembered;
+      savedText = next;
+      response.json(status());
+    } catch (error) {
+      response.status((error as { status?: number }).status ?? 500).json({ message: error instanceof Error ? translateError(error) : translateMessage("无法忘记设备") });
+    } finally { changing = false; }
   });
   return { router, remote: Boolean(active), proxy: active ? remoteProxy(active) : undefined,
     stop() { clearInterval(heartbeatTimer); heartbeatController?.abort(); } };

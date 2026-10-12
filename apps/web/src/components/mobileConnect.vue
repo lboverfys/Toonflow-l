@@ -1,7 +1,7 @@
 <template>
   <el-dialog v-model="visible" title="设备互联" modalClass="deviceConnectOverlay" width="min(560px, calc(100vw - 32px))" :alignCenter="viewportHeight > 600" :top="viewportHeight <= 600 ? '16px' : undefined" appendToBody :closeOnClickModal="!submitting" :closeOnPressEscape="!submitting" :showClose="!submitting">
     <div v-loading="loading" class="mobileConnect" :class="{ compact: viewportHeight < 320 }" :style="{ maxHeight: `${Math.max(80, viewportHeight - (viewportHeight < 320 ? 104 : 128))}px`, height: choosingConnection ? '428px' : undefined }">
-      <el-segmented v-if="choosingConnection" class="inputModes" :modelValue="view" :options="connectionModes" :disabled="loading || submitting" block ariaLabel="连接方式" @change="value => value === 'manual' ? showManual() : scanAgain()">
+      <el-segmented v-if="choosingConnection" class="inputModes" :modelValue="view" :options="connectionModes" :disabled="loading || submitting" block ariaLabel="连接方式" @change="value => value === 'manual' ? showManual() : value === 'remembered' ? showRemembered() : scanAgain()">
         <template #default="{ item }">
           <span class="modeOption"><component :is="item.icon" :size="18" aria-hidden="true" />{{ item.label }}</span>
         </template>
@@ -25,7 +25,7 @@
         <p class="description">{{ mobileConnection.online === true ? '正在使用这个设备的项目与配置。' : mobileConnection.online === false ? '暂时无法连接这个设备，请检查对方是否运行以及网络连接。' : '正在确认这个设备是否可以连接…' }}</p>
         <el-alert v-if="mobileConnectionVersionWarning" :title="mobileConnectionVersionWarning" type="warning" :closable="false" showIcon />
         <div class="connectionActions">
-          <el-button type="primary" :disabled="submitting" @click="scanAgain">连接其他设备</el-button>
+          <el-button type="primary" :disabled="submitting" @click="mobileConnection.connections?.length ? showRemembered() : showManual()">连接其他设备</el-button>
           <el-button :loading="submitting" @click="disconnect">断开并独立运行</el-button>
         </div>
       </section>
@@ -40,6 +40,18 @@
           <el-button type="primary" :loading="submitting" @click="connect">连接这个设备</el-button>
           <el-button :disabled="submitting" @click="scanAgain">重新扫描</el-button>
         </div>
+      </section>
+      <section v-else-if="view === 'remembered'" class="rememberedPanel" aria-label="已配对设备">
+        <p class="description">已配对设备可直接连接。断开会保留记录；主机撤销授权后需要重新配对。</p>
+        <div v-for="device in mobileConnection.connections" :key="device.url" class="rememberedDevice">
+          <div class="rememberedInfo"><strong>{{ device.name }}</strong><code>{{ device.url }}</code></div>
+          <div class="connectionActions">
+            <el-button type="primary" :loading="submitting" :disabled="mobileConnection.mode === 'remote' && mobileConnection.url === device.url" @click="changeConnection('reconnect', { url: device.url })">{{ mobileConnection.mode === 'remote' && mobileConnection.url === device.url ? '当前连接' : '连接' }}</el-button>
+            <el-button :disabled="submitting" @click="manualUrl = device.url; showManual()">重新配对</el-button>
+            <el-button type="danger" link :disabled="submitting || mobileConnection.mode === 'remote' && mobileConnection.url === device.url" @click="forgetDevice(device.url)">忘记</el-button>
+          </div>
+        </div>
+        <el-button :disabled="submitting" @click="showManual">连接新设备</el-button>
       </section>
       <section v-else-if="view === 'manual'" class="manualPanel" aria-label="手动连接">
         <p class="description">在对方“设备互联”中展开“手动连接信息”，查看地址和配对码。</p>
@@ -94,12 +106,13 @@ import { changeDeviceConnection, deviceConnectionSupported, deviceHubEnabled, ge
 type Candidate = { name: string; url: string; qrCode: string; appVersion?: string };
 
 const visible = defineModel<boolean>({ default: false });
-const view = ref<"scan" | "manual" | "confirm" | "current">("scan");
-const connectionModes = [
+const view = ref<"scan" | "manual" | "confirm" | "current" | "remembered">("scan");
+const connectionModes = computed(() => [
+  ...((mobileConnection.value.connections?.length ?? 0) > 0 ? [{ label: "已配对设备", value: "remembered", icon: IconDeviceDesktop }] : []),
   { label: "扫码连接", value: "scan", icon: IconQrcode },
   { label: "手动输入", value: "manual", icon: IconKeyboard },
-];
-const choosingConnection = computed(() => !deviceHubEnabled.value && deviceConnectionSupported.value && (view.value === "scan" || view.value === "manual"));
+]);
+const choosingConnection = computed(() => !deviceHubEnabled.value && deviceConnectionSupported.value && ["scan", "manual", "remembered"].includes(view.value));
 const manualUrl = ref("");
 const manualCode = ref("");
 const viewportHeight = ref(window.visualViewport?.height ?? window.innerHeight);
@@ -304,7 +317,7 @@ async function connectManually() {
   }
 }
 
-async function changeConnection(action: "connect" | "disconnect", body?: { qrCode: string } | { url: string; code: string }) {
+async function changeConnection(action: "connect" | "disconnect" | "reconnect", body?: { qrCode: string } | { url: string; code?: string }) {
   if (submitting.value) return;
   stopCamera();
   submitting.value = true;
@@ -316,6 +329,26 @@ async function changeConnection(action: "connect" | "disconnect", body?: { qrCod
     error.value = errorMessage(cause);
     submitting.value = false;
   }
+}
+
+async function forgetDevice(url: string) {
+  submitting.value = true;
+  error.value = "";
+  try {
+    await axios.post("/api/connection/forget", { url }, { headers: { "x-toonflow-workspace": "1" } });
+    await refreshMobileConnection();
+    if (manualUrl.value === url) manualUrl.value = mobileConnection.value.connections?.[0]?.url ?? "";
+    manualCode.value = "";
+    if (!mobileConnection.value.connections?.length) showManual();
+  } catch (cause) { error.value = errorMessage(cause); }
+  finally { submitting.value = false; }
+}
+
+function showRemembered() {
+  stopCamera();
+  candidate.value = undefined;
+  error.value = "";
+  view.value = "remembered";
 }
 
 watch(deviceHubEnabled, enabled => {
@@ -338,8 +371,9 @@ watch(visible, async open => {
   try {
     const connection = await refreshMobileConnection();
     if (!visible.value || run !== dialogRun) return;
-    view.value = connection.mode === "remote" ? "current" : "scan";
-    if (connection.mode === "local") void startCamera();
+    manualUrl.value ||= connection.connections?.[0]?.url ?? "";
+    manualCode.value = "";
+    view.value = connection.mode === "remote" ? "current" : connection.connections?.length ? "remembered" : "manual";
   } catch (cause) {
     if (visible.value && run === dialogRun) error.value = errorMessage(cause);
   } finally {
@@ -403,6 +437,14 @@ onBeforeUnmount(() => {
     --el-border-radius-base: var(--ui-radius);
 
     .modeOption { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px 0; font-weight: 500; }
+  }
+
+  .rememberedPanel {
+    display: grid;
+    gap: 16px;
+    .rememberedDevice { padding: 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; }
+    .rememberedInfo { display: grid; gap: 4px; margin-bottom: 10px; code { overflow-wrap: anywhere; color: var(--el-text-color-secondary); } }
+    .connectionActions { display: flex; flex-wrap: wrap; gap: 8px; .el-button { margin: 0; } }
   }
 
   .connectionBody {

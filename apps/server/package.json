@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     "./app": "./src/app.ts",
+    "./canvasMerge": "./src/utils/workspace/canvasMerge.ts",
     "./mediaStorage": "./src/types/mediaStorage.ts",
     "./remoteConnection": "./src/remoteConnection.ts",
     "./desktop": "./src/types/desktop.ts",

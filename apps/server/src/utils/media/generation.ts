@@ -136,8 +136,27 @@ async function assetBytes(asset: MediaAsset, mediaType: "image" | "video" | "aud
   return { bytes, mimeType };
 }
 
+const activeNodeGenerations = new Set<string>();
+
 export async function generateMedia(
-  cwd: string,
+  cwd: string, mediaType: "image" | "video" | "audio", request: MediaGenerationRequest,
+  signal?: AbortSignal, videoTask?: VideoTaskContext, imageTask?: ImageTaskContext,
+): Promise<GeneratedMedia[]> {
+  const directory = await realpath(cwd);
+  const outputDirectory = request.outputDirectory ?? "assets/generated";
+  const output = await resolveWorkspacePath(directory, outputDirectory, true);
+  const parts = relative(directory, output.path).replaceAll("\\", "/").split("/");
+  const nodePath = parts[0] === "assets" && parts[1] !== "generated" && (parts.length === 2 || parts.length === 3 && parts[2] === "inpaint")
+    ? join(directory, "assets", parts[1]!) : undefined;
+  const key = !videoTask && !imageTask && nodePath ? process.platform === "win32" ? nodePath.toLowerCase() : nodePath : undefined;
+  if (key && activeNodeGenerations.has(key)) throw Object.assign(new Error("此节点已有设备正在生成，请等待完成，未提交新的生成任务"), { status: 409 });
+  if (key) activeNodeGenerations.add(key);
+  try { return await generateMediaResult(directory, mediaType, request, signal, videoTask, imageTask); }
+  finally { if (key) activeNodeGenerations.delete(key); }
+}
+
+async function generateMediaResult(
+  directory: string,
   mediaType: "image" | "video" | "audio",
   request: MediaGenerationRequest,
   signal?: AbortSignal,
@@ -146,9 +165,7 @@ export async function generateMedia(
 ): Promise<GeneratedMedia[]> {
   signal?.throwIfAborted();
   if (!request.prompt.trim()) invalid("请输入生成提示词");
-  const directory = await realpath(cwd);
   const outputDirectory = request.outputDirectory ?? "assets/generated";
-  await resolveWorkspacePath(directory, outputDirectory, true);
   const providerInfo = await getMediaProvider(request.providerId);
   const model = providerInfo.models.find(model => model.id === request.modelId && model.type === mediaType);
   if (!model) invalid("所选媒体模型不存在或类型不匹配，请重新选择");

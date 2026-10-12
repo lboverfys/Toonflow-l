@@ -39,6 +39,20 @@ const canvasId = computed(() => activeInstance.value?.canvasId ?? "");
 const canvasReady = computed(() => activeInstance.value?.canvasReady ?? false);
 const lifetime = new AbortController();
 const workspaceStore = useWorkspaceStore();
+const syncError = ref("");
+watch(() => workspaceStore.project?.directory, (directory, _previous, onCleanup) => {
+  if (!directory) return;
+  const controller = new AbortController();
+  onCleanup(() => controller.abort());
+  void useWorkspaceFiles(directory).watchCanvases(async event => {
+    if (event.heartbeat) return;
+    const path = event.path ? canonicalCanvasPath(event.path) : undefined;
+    const panels = [...instances.values()].filter(panel => panel.canvasReady && panel.canvasId && (!path || panel.canvasId === path));
+    const results = await Promise.allSettled(panels.map(panel => panel.receiveCanvasUpdate(event.ready ? undefined : event)));
+    const failure = results.find(result => result.status === "rejected");
+    syncError.value = failure?.status === "rejected" ? String(failure.reason?.message ?? failure.reason) : "";
+  }, error => { syncError.value = error instanceof Error ? error.message : "画布同步暂时中断"; }, controller.signal);
+}, { immediate: true });
 const canvases = shallowRef<{ id: string; name: string }[]>([]);
 let fileActionBusy = false;
 provide("canvasList", canvases);
@@ -202,17 +216,14 @@ async function refreshProject() {
   fileActionBusy = true;
   try {
     const panels = [...instances.values()];
-    for (const panel of panels) { await panel.prepareRefresh(); checkDirectory(directory); }
+    for (const panel of panels) { await panel.refreshCanvas(); checkDirectory(directory); }
     const revisions = panels.map(panel => panel.revision);
     await activeInstance.value?.refreshCanvasList(() => {
       if (panels.some((panel, index) => panel.revision !== revisions[index])) throw new Error("刷新期间画布发生了变化，已保留当前修改，请稍后再试");
     });
     checkDirectory(directory);
     // 列表复用同路径的对象；仅已从磁盘删除且通过保存检查的实例会被移除。
-    for (const panel of panels) {
-      if (panel.canvasId && canvases.value.some(canvas => canvas.id === panel.canvasId)) await panel.refreshCanvas();
-      checkDirectory(directory);
-    }
+    syncError.value = "";
     if (!entries.value.length) {
       const entry = { key: crypto.randomUUID(), fileName: "" };
       entries.value = [entry];
@@ -401,7 +412,8 @@ const mentionSource: MentionCanvasSource = {
 
 defineExpose({ canvasId, canvasReady, getCanvasContext, readDocumentNode, readDocumentNodes, saveDocumentNode, mountDocumentNode, observeDocumentNode, resolveDocumentNodeFile, performFileAction, flushSave, cancelSave,
   mentionSource, refreshProject,
-  get saveError() { return [...instances.values()].map(panel => panel.saveError).find(Boolean) ?? ""; },
+  showSaveConflict() { [...instances.values()].find(panel => panel.saveError)?.showSaveConflict(); },
+  get saveError() { return [...instances.values()].map(panel => panel.saveError).find(Boolean) || syncError.value; },
   get saveBusy() { return fileActionBusy || [...instances.values()].some(panel => panel.saveBusy); },
 });
 </script>
