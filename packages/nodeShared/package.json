@@ -10,6 +10,7 @@
     "./showNodeError": "./src/showNodeError.ts",
     "./useNodeReferences": "./src/useNodeReferences.ts",
     "./useNodeGeneration": "./src/useNodeGeneration.ts",
+    "./generationTiming": "./src/components/generationTiming.vue",
     "./useGenerationPreferences": "./src/useGenerationPreferences.ts",
     "./groupNodeModels": "./src/groupNodeModels.ts"
   },

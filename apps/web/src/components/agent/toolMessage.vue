@@ -17,7 +17,8 @@
             <el-button v-if="!data.markdown" text size="small" :icon="IconCopy" :aria-label="index === 0 ? '复制工具参数' : '复制工具结果'" @click="emit('copy', data.content)" />
           </span>
           <messageMarkdown v-if="data.markdown" class="toolData" :class="{ toolError: index === 1 && tool.status === 'error' }" :content="data.markdown" :directory="directory" :codeOptions="toolCodeOptions" />
-          <pre v-else class="toolData toolPlain" :class="{ toolError: index === 1 && tool.status === 'error' }" tabindex="0" :aria-label="index === 0 ? '工具参数' : '工具结果'">{{ data.content }}</pre>
+          <pre v-else class="toolData toolPlain" :class="{ toolError: index === 1 && tool.status === 'error' }" tabindex="0" :aria-label="index === 0 ? '工具参数' : '工具结果'">{{ expandedData[index] ? data.content : data.content.slice(0, 16_384) }}</pre>
+          <el-button v-if="data.content.length > 16_384" text size="small" @click="expandedData[index] = !expandedData[index]">{{ expandedData[index] ? '收起长内容' : `显示全部（${data.content.length.toLocaleString()} 字符）` }}</el-button>
         </template>
       </template>
     </div>
@@ -61,14 +62,16 @@ onErrorCaptured(error => {
 const collapsed = defineModel<boolean>("collapsed", { default: true });
 const toolStatusLabels = { running: "调用中…", success: "已完成", error: "调用失败", interrupted: "已中断" };
 const toolCodeOptions = { maxHeight: 240, lineNumbers: false };
+const expandedData = ref<Record<number, boolean>>({});
 const args = computed(() => formatToolData(tool.args));
 const result = computed(() => formatToolData(tool.result));
 
 function formatToolData(value: unknown) {
   if (value === undefined) return;
+  if (typeof value === "string" && value.length > 16_384) return { content: value, markdown: undefined };
   try {
     const content = JSON.stringify(typeof value === "string" ? JSON.parse(value) : value, null, 2) ?? "";
-    // ACT: 超过 16K 字符只渲染完整文本，限制高亮与 token DOM 开销；更大数据量可改为虚拟行。
+    // ACT: 长内容首次仅显示 16K 字符，用户展开后再渲染全文，复制仍保留完整结果。
     return { content, markdown: content.length <= 16_384 ? `~~~json\n${content}\n~~~` : undefined };
   } catch {
     return { content: String(value), markdown: undefined };

@@ -5,10 +5,10 @@
       class="videoPreview"
       :class="{ nodrag: fullscreen }"
       :src="src"
-      :poster="poster"
+      :poster="cachedPoster || poster"
       :controls="fullscreen"
       playsinline
-      preload="metadata"
+      :preload="metadata?.duration && metadata.width && metadata.height ? 'none' : 'metadata'"
       draggable="false"
       :aria-label="label"
       @fullscreenchange="fullscreen = !!video?.matches(':fullscreen')"
@@ -58,12 +58,21 @@ import { IconPlayerPlay, IconPlayerPause, IconVolume, IconVolumeOff, IconPhotoSc
 import { useNodeFiles } from "@toonflow/nodes-scaffold/runtime";
 import type { NodeDocumentContext } from "@toonflow/nodes-scaffold/nodeDocument";
 
-const { src, label = "节点视频" } = defineProps<{ src: string; label?: string }>();
+const { src, previewSrc, metadata, label = "节点视频" } = defineProps<{ src: string; previewSrc?: string; metadata?: { width?: number; height?: number; duration?: number }; label?: string }>();
 const emit = defineEmits<{ loadedmetadata: [event: Event] }>();
 const video = ref<HTMLVideoElement>();
 const fullscreen = ref(false);
 const ready = ref(false);
 const poster = ref("");
+const cachedPoster = ref("");
+watch(() => previewSrc, (value, _previous, onCleanup) => {
+  cachedPoster.value = "";
+  if (!value) return;
+  const image = new Image();
+  image.onload = () => { cachedPoster.value = value; };
+  image.src = value;
+  onCleanup(() => { image.onload = null; image.src = ""; });
+}, { immediate: true });
 const playing = ref(false);
 const muted = ref(false);
 const volume = ref(100);
@@ -89,6 +98,9 @@ watch(() => src, () => {
   currentTime.value = 0;
   duration.value = 0;
 }, { flush: "sync" });
+watch([() => src, () => metadata], () => {
+  if (metadata?.duration && metadata.width && metadata.height) { ready.value = true; duration.value = metadata.duration; }
+}, { immediate: true });
 onBeforeUnmount(() => captureController?.abort());
 watch(() => canvasActive?.value !== false || documentContext?.targets.has(node.id), visible => {
   const element = video.value;
@@ -117,7 +129,7 @@ async function enterFullscreen() {
   }
 }
 
-defineExpose({ enterFullscreen, ready, capturing, captureFrame });
+defineExpose({ enterFullscreen, ready, capturing, captureFrame, playing, fullscreen });
 
 function formatTime(value: number) {
   const seconds = Math.floor(Number.isFinite(value) ? Math.max(0, value) : 0);
@@ -137,7 +149,7 @@ function readPreview(event: Event) {
   const source = event.currentTarget as HTMLVideoElement;
   if (source.currentSrc !== src) return;
   ready.value = true;
-  if (poster.value || !source.videoWidth || !source.videoHeight) return;
+  if (cachedPoster.value || poster.value || !source.videoWidth || !source.videoHeight) return;
   try {
     const canvas = document.createElement("canvas");
     // ACT: 复用已解码帧，封面最长边限制为 640px；更高清画面由视频播放提供。

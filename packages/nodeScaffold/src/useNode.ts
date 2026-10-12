@@ -22,7 +22,8 @@ export function useNode<T extends NodeOutputs = NodeOutputs>(options: NodeOption
   const documentContext = inject<NodeDocumentContext | undefined>("nodeDocument", undefined);
   const getNodeConfig = inject<((nodeType: string) => Record<string, unknown>) | undefined>("nodeConfig", undefined);
   const config = computed(() => readonly(getNodeConfig?.(node.type ?? "") ?? {}));
-  const previewReady = useNodePreviewReady();
+  const retainPreview = ref(false);
+  const previewReady = useNodePreviewReady(retainPreview);
   const { updateNodeInternals } = useVueFlow();
   const defaults = getCurrentInstance()?.type as Pick<NodeOptions, "handles" | "icon"> | undefined;
   const handles = ref<NodeHandle[]>(options.handles ?? structuredClone(defaults?.handles ?? []));
@@ -41,13 +42,14 @@ export function useNode<T extends NodeOutputs = NodeOutputs>(options: NodeOption
     outputs: outputs.value,
   }));
   const nodeEvent = useNodeEvent();
-  const { getWorkspaceFiles, uploadFile, removeNodeFiles, useFileUrl } = useNodeFiles();
+  const { getWorkspaceFiles, getWorkspaceDirectory, uploadFile, removeNodeFiles, useFileUrl, useMediaInfo } = useNodeFiles();
 
   return {
     id,
     node,
     config,
     previewReady,
+    retainPreview,
     nodeProps,
     handles,
     outputs,
@@ -57,7 +59,9 @@ export function useNode<T extends NodeOutputs = NodeOutputs>(options: NodeOption
     ffmpeg: useNodeFfmpeg(),
     files: {
       getWorkspaceFiles,
+      getWorkspaceDirectory,
       useFileUrl,
+      useMediaInfo,
       uploadFile: (file: File) => uploadFile(id, file),
       removeNodeFiles: () => removeNodeFiles(id),
     },

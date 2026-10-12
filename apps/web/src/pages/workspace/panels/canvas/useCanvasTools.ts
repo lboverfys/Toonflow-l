@@ -7,6 +7,7 @@ import { canvasEdgeSummary, canvasNodeSummary, createCanvasQueries, isCanvasRead
 
 export function useCanvasTools(options: {
   availableNodes: Ref<{ type: string; label: string }[]>;
+  ensureNodeType(type: string): Promise<void>;
   flushSave(): Promise<void>;
   arrangeCanvas(signal: AbortSignal): ReturnType<typeof arrangeCanvas>;
   menu(): {
@@ -142,6 +143,8 @@ export function useCanvasTools(options: {
         const args = canvasSchemas.addNode.parse(request.args);
         const type = options.availableNodes.value.find(node => node.type === args.type);
         if (!type) throw new Error("节点类型未启用或尚未加载，请先查询 getCanvas");
+        await options.ensureNodeType(type.type);
+        signal.throwIfAborted();
         const id = crypto.randomUUID();
         flow.addNodes({ id, type: type.type, position: nodePosition(args.position), data: { label: args.label ?? type.label } });
         await nextTick();

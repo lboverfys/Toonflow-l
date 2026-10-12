@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { basename, dirname, resolve } from "node:path";
-import { readFile, readdir } from "@toonflow/file";
+import { readFile, stat } from "@toonflow/file";
+import { listSessionSummaries } from "./sessionIndex";
+import { cacheFile, readCache, writeCache } from "@/utils/cache";
 import { calculateContextTokens, estimateTokens, getLastAssistantUsage, parseSessionEntries, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSession, FileEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { AgentEvent, AgentMention, AgentSubAgent, AgentToolCall } from "@/agent/runtime/types";
@@ -240,17 +242,28 @@ export async function renameAgentSession(cwd: string, path: string, name: string
 }
 
 export async function listAgentSessions(cwd: string, directory: string) {
-  const files = new Set((await readdir(directory, { withFileTypes: true })).filter((item) => item.isFile()).map((item) => item.name));
-  const sessions = await SessionManager.list(cwd, directory);
-  return sessions
-    .filter((item) => files.has(basename(item.path)) && !item.parentSessionPath)
-    .sort((left, right) => right.modified.getTime() - left.modified.getTime())
-    .map((item) => ({
-      file: basename(item.path),
-      name: item.name || (item.messageCount ? item.firstMessage.trim().slice(0, 60) : "") || "新对话",
-      modified: item.modified,
-      messageCount: item.messageCount,
-    }));
+  return listSessionSummaries(directory);
+}
+
+export async function getAgentSessionPage(cwd: string, path: string, before?: string) {
+  const info = await stat(path);
+  const revision = `${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+  const providers = conf.get("settings", {}).customProviders;
+  const modelSettings = Array.isArray(providers) ? providers.map(provider => ({ id: provider?.id, models: provider?.models })) : [];
+  const cache = cacheFile("sessionIndex", JSON.stringify([path, revision, before ?? "latest", modelSettings, 2]));
+  type Page = Awaited<ReturnType<typeof getAgentSession>> & { before?: string };
+  if (!getActiveAgentSession(path)) {
+    const cached = await readCache<Page>(cache);
+    if (cached && Array.isArray(cached.messages) && Array.isArray(cached.subAgents) && !cached.subAgents.length) return cached;
+  }
+  const session = await getAgentSession(cwd, path);
+  const end = before ? session.messages.findIndex(message => message.id === before) : session.messages.length;
+  if (end < 0) throw Object.assign(new Error("历史对话已变化，请重新打开后继续读取"), { status: 409 });
+  const start = Math.max(0, end - 40);
+  const page = { ...session, messages: session.messages.slice(start, end), before: start ? session.messages[start]!.id : undefined };
+  const after = await stat(path);
+  if (!session.running && !session.subAgents.length && after.size === info.size && after.mtimeMs === info.mtimeMs && after.ctimeMs === info.ctimeMs) await writeCache(cache, page);
+  return page;
 }
 
 export async function getAgentSession(cwd: string, path: string) {

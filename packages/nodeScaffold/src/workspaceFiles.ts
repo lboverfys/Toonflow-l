@@ -3,9 +3,10 @@ import type { NodeMediaValue } from "./values";
 import { useNodePreviewReady } from "./useNodePreviewReady";
 
 export interface WorkspaceFiles {
+  getMediaInfo?(path: string): Promise<{ width?: number; height?: number; duration?: number }>;
   list(path?: string): Promise<{ directory: string; entries: { name: string; path: string; type: "file" | "directory" }[] }>;
   read(path: string): Promise<ArrayBuffer>;
-  acquireUrl?(path: string, mimeType: string): { url: Promise<string>; release(): void };
+  acquireUrl?(path: string, mimeType: string, preview?: boolean): { url: Promise<string>; release(): void };
   readText(path: string): Promise<string>;
   readTextSnapshot(path: string): Promise<{ text: string; revision: string; encoding: "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" }>;
   writeTextSnapshot(path: string, text: string, snapshot: { revision: string; encoding: "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" }): Promise<string>;
@@ -38,6 +39,15 @@ export async function uploadNodeFile(files: WorkspaceFiles, nodeId: string, file
 export function useNodeFiles() {
   const createFiles = inject<(() => WorkspaceFiles) | undefined>("workspaceFiles", undefined);
   const retainNodeFiles = inject("retainNodeFiles", false);
+  const getWorkspaceDirectory = inject<() => string>("workspaceDirectory", () => { throw new Error("当前画布未提供工作目录"); });
+  const reportedErrors = new WeakSet<Error>();
+  function reportError(error: unknown, onError: (error: unknown) => void) {
+    if (error instanceof Error) {
+      if (reportedErrors.has(error)) return;
+      reportedErrors.add(error);
+    }
+    onError(error);
+  }
 
   function getWorkspaceFiles() {
     if (!createFiles) throw new Error("当前画布未提供工作区文件能力");
@@ -58,7 +68,7 @@ export function useNodeFiles() {
     });
   }
 
-  function useFileUrl(file: MaybeRefOrGetter<NodeMediaValue | undefined>, onError: (error: unknown) => void) {
+  function useFileUrl(file: MaybeRefOrGetter<NodeMediaValue | undefined>, onError: (error: unknown) => void, preview = false) {
     const fileUrl = ref("");
     const previewReady = useNodePreviewReady();
     watch([() => toValue(file), previewReady], async ([value, ready], _previous, onCleanup) => {
@@ -74,7 +84,7 @@ export function useNodeFiles() {
       if (!value || !ready) return;
       try {
         const files = getWorkspaceFiles();
-        shared = files.acquireUrl?.(value.url, value.mimeType);
+        shared = files.acquireUrl?.(value.url, value.mimeType, preview);
         if (shared) {
           const sharedUrl = await shared.url;
           if (!cancelled) fileUrl.value = sharedUrl;
@@ -84,11 +94,27 @@ export function useNodeFiles() {
         if (cancelled) return;
         fileUrl.value = url = URL.createObjectURL(new Blob([content], { type: value.mimeType }));
       } catch (error) {
-        if (!cancelled) onError(error);
+        if (!cancelled) reportError(error, onError);
       }
     }, { immediate: true });
     return fileUrl;
   }
 
-  return { getWorkspaceFiles, uploadFile, removeNodeFiles, useFileUrl };
+  function useMediaInfo(file: MaybeRefOrGetter<NodeMediaValue | undefined>, onError: (error: unknown) => void) {
+    const info = ref<{ width?: number; height?: number; duration?: number }>();
+    const ready = useNodePreviewReady();
+    watch([() => toValue(file), ready], async ([value, visible], _previous, onCleanup) => {
+      let cancelled = false;
+      onCleanup(() => { cancelled = true; });
+      info.value = undefined;
+      if (!value || !visible) return;
+      try {
+        const data = await getWorkspaceFiles().getMediaInfo?.(value.url);
+        if (!cancelled) info.value = data;
+      } catch (error) { if (!cancelled) reportError(error, onError); }
+    }, { immediate: true });
+    return info;
+  }
+
+  return { getWorkspaceFiles, getWorkspaceDirectory, uploadFile, removeNodeFiles, useFileUrl, useMediaInfo };
 }

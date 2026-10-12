@@ -16,7 +16,7 @@ const stateSchema = z.object({
 });
 const recordSchema = z.object({
   version: z.literal(1), id: taskIdSchema, identity: z.string(), request: imageGenerationSchema,
-  state: stateSchema, createdAt: z.number(), updatedAt: z.number(), lastError: z.string().optional(),
+  state: stateSchema, createdAt: z.number(), updatedAt: z.number(), finishedAt: z.number().optional(), lastError: z.string().optional(),
   result: z.array(z.object({ path: z.string(), mimeType: z.string(), mediaType: z.literal("image") })).min(1).max(4).optional(),
 });
 const requestSchema = z.object({ endpoint: z.enum(["/v1/images/generations/async", "/v1/images/edits/async", "/v1/task"]), body: z.string(), digest: z.string() });
@@ -65,6 +65,7 @@ export async function getImageTask(cwd: string, outputDirectory: string): Promis
   if (!task) return null;
   return {
     operationId: task.id, providerId: task.request.providerId, modelId: task.request.modelId,
+    startedAt: task.createdAt, endedAt: task.finishedAt ?? (task.result || ["failed", "expired"].includes(task.state.phase) ? task.updatedAt : undefined),
     phase: task.result ? "completed" : task.state.phase, taskId: task.state.taskId, retryAt: task.state.retryAt,
     error: task.state.error ?? task.lastError, running: active.has(directory), result: task.result, updatedAt: task.updatedAt,
   };
@@ -107,7 +108,11 @@ export async function runImageTask(
     }
     await writeAtomic(join(directory, "current.json"), JSON.stringify(operationId));
     const task = record;
-    const save = async () => { task.updatedAt = Date.now(); await writeAtomic(recordPath, JSON.stringify(task)); };
+    const save = async () => {
+      task.updatedAt = Date.now();
+      if (task.result || ["failed", "expired"].includes(task.state.phase)) task.finishedAt ??= task.updatedAt;
+      await writeAtomic(recordPath, JSON.stringify(task));
+    };
     const requestPath = (await resolveWorkspacePath(cwd, relative(cwd, join(directory, `${operationId}.request.json`)))).path;
     const resultPath = (await resolveWorkspacePath(cwd, relative(cwd, join(directory, `${operationId}.result.json`)))).path;
     let requestSaved = !!(await stat(requestPath).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; }));

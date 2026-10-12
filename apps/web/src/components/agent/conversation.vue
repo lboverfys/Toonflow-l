@@ -25,6 +25,7 @@
           </template>
         </chat-item>
         <div class="messageSpace" :style="{ height: `${messageVirtualizer.getTotalSize()}px` }">
+          <el-button v-if="before" class="earlierMessages" text :loading="earlierLoading" @click="loadEarlierMessages">加载更早的消息</el-button>
           <div
             v-for="{ item, row } in visibleMessages"
             :key="item.id"
@@ -198,6 +199,21 @@ const directory = workspaceStore.project?.directory;
 const draftAttachments = ref<AgentAttachment[]>([]);
 const createCanvasContext = inject<(() => CanvasContext | undefined) | undefined>("canvas", undefined);
 const messages = ref<AgentMessage[]>((props.initialSession?.messages ?? []).map(message => ({ ...message })));
+const before = ref(props.initialSession?.before);
+const earlierLoading = ref(false);
+
+async function loadEarlierMessages() {
+  if (!before.value || earlierLoading.value || !props.sessionFile) return;
+  earlierLoading.value = true;
+  try {
+    const { data } = await axios.get<{ data: AgentConversation }>("/api/agent/get", { params: { directory, sessionFile: props.sessionFile, page: true, before: before.value }, headers: { "x-toonflow-workspace": "1" } });
+    const ids = new Set(messages.value.map(message => message.id));
+    atLatestMessage.value = false;
+    messages.value = [...data.data.messages.filter(message => !ids.has(message.id)), ...messages.value];
+    before.value = data.data.before;
+  } catch (error) { ElMessage.error(error instanceof Error ? error.message : "读取历史消息失败"); }
+  finally { earlierLoading.value = false; }
+}
 const browserMessages = computed(() => {
   const groups = new Map<string, { id: string; tools: AgentToolCall[] }>();
   let turnId: string | undefined;
@@ -255,7 +271,7 @@ const messageVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(comput
     getItemKey: (index: number) => keys[index]!,
     estimateSize: () => 240,
     overscan: 3,
-    paddingStart: 12,
+      paddingStart: before.value ? 52 : 12,
     anchorTo: "end" as const,
     followOnAppend: true,
     scrollEndThreshold: 48,
@@ -518,6 +534,7 @@ async function deleteMessage(item: AgentMessage) {
     }
     messages.value = messages.value.filter(message => message.id !== item.id &&
       !(item.replyTo && message.role === "assistant" && !message.report && message.replyTo === item.replyTo));
+    if (before.value && !messages.value.some(message => message.id === before.value)) before.value = messages.value[0]?.id;
   } catch (error) {
     const message = axios.isAxiosError<{ message?: string }>(error) ? error.response?.data?.message : undefined;
     ElMessage.error(message || (error instanceof Error ? error.message : "删除消息失败"));
@@ -876,6 +893,7 @@ watch(() => !props.initialSession?.parentFile && !!workspaceStore.pendingAgentMe
     .messageSpace {
       position: relative;
       width: 100%;
+      .earlierMessages { position: absolute; top: 8px; left: 12px; }
     }
 
     .scrollBottom {

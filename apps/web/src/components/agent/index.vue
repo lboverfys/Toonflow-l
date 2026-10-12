@@ -4,6 +4,7 @@
       :key="conversationKey"
       :name="name"
       :history="history"
+      :hasMoreHistory="historyOffset !== undefined"
       :sessionFile="sessionFile"
       :parentFile="selectedConversation?.parentFile"
       :subAgents="selectedConversation?.subAgents"
@@ -12,6 +13,7 @@
       @back="backToParent"
       @new-chat="newConversation"
       @history="loadHistory(!initialized)"
+      @moreHistory="loadHistory(false, true)"
       @select="selectConversation"
       @rename="renameConversation"
       @remove="removeConversation"
@@ -59,6 +61,7 @@ const name = computed(() => {
 const sessionFile = computed(() => selectedConversation.value?.file);
 const workspaceStore = useWorkspaceStore();
 const history = ref<AgentHistory[]>([]);
+const historyOffset = ref<number>();
 const loading = ref(false);
 const historyLoading = ref(false);
 const initialized = ref(false);
@@ -172,29 +175,31 @@ async function newConversation() {
 
 async function readConversation(directory: string, file: string) {
   const { data } = await axios.get<{ code: number; data: AgentConversation; message?: string }>("/api/agent/get", {
-    params: { directory, sessionFile: file }, headers: { "x-toonflow-workspace": "1" },
+    params: { directory, sessionFile: file, page: true }, headers: { "x-toonflow-workspace": "1" },
   });
   if (data.code !== 200) throw new Error(data.message || "读取对话失败");
   return data.data;
 }
 
-async function loadHistory(openLatest = false) {
+async function loadHistory(openLatest = false, more = false) {
   const directory = workspaceStore.project?.directory;
   if (!directory || loading.value || historyLoading.value) return;
   const currentRequest = ++requestId;
   historyLoading.value = true;
   loading.value = openLatest;
   try {
-    const { data } = await axios.get<{ code: number; data: AgentHistory[]; message?: string }>("/api/agent/list", {
-      params: { directory }, headers: { "x-toonflow-workspace": "1" },
+    const { data } = await axios.get<{ code: number; data: { items: AgentHistory[]; nextOffset?: number }; message?: string }>("/api/agent/list", {
+      params: { directory, offset: more ? historyOffset.value : 0 }, headers: { "x-toonflow-workspace": "1" },
     });
     if (data.code !== 200) throw new Error(data.message || "读取历史对话失败");
     if (currentRequest !== requestId) return;
-    history.value = data.data;
+    const knownFiles = new Set(history.value.map(item => item.file));
+    history.value = more ? [...history.value, ...data.data.items.filter(item => !knownFiles.has(item.file))] : data.data.items;
+    historyOffset.value = data.data.nextOffset;
     // 首条回复结束前会话可能尚未落盘，仍允许从历史菜单切回。
     for (const item of conversations.value) if (item.file) setSessionFile(item, item.file);
     if (openLatest) {
-      const session = !workspaceStore.pendingAgentMessage && data.data[0] ? await readConversation(directory, data.data[0].file) : null;
+      const session = !workspaceStore.pendingAgentMessage && data.data.items[0] ? await readConversation(directory, data.data.items[0].file) : null;
       if (currentRequest !== requestId) return;
       showConversation(session);
       initialized.value = true;
@@ -285,6 +290,7 @@ async function removeConversation(file: string) {
 watch(() => workspaceStore.project?.directory, directory => {
   requestId++;
   history.value = [];
+  historyOffset.value = undefined;
   conversations.value = [];
   conversationRefs.clear();
   pendingEvents.clear();

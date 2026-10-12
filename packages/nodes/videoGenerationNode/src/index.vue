@@ -8,7 +8,7 @@
     :downloadName="outputFile?.url.split(/[\\/]/).at(-1)"
     @fullscreen="player?.enterFullscreen()"
     :bottomWidth="660"
-    :style="{ width: previewUrl && videoWidth ? `${videoWidth + 18}px` : undefined }">
+    :style="{ width: videoWidth ? `${videoWidth + 18}px` : undefined }">
     <template #topActions>
       <el-button :icon="IconMusic" text :disabled="!outputFile || generating || deleting || uploading || actions?.processing" @click.stop="actions?.open('extractAudio')">提取音轨</el-button>
       <el-button :icon="IconLayersSubtract" text :disabled="!outputFile || generating || deleting || uploading || actions?.processing" @click.stop="actions?.open('separate')">分离音视频</el-button>
@@ -34,6 +34,8 @@
         v-if="previewUrl"
         ref="player"
         :src="previewUrl"
+        :previewSrc="posterUrl"
+        :metadata="mediaInfo"
         label="生成视频"
         @loadedmetadata="resizeVideo" />
       <div v-else class="videoEmpty" role="img" aria-label="暂无生成视频">
@@ -69,6 +71,7 @@
             placement="top-start"
             @visible-change="(visible) => visible && loadModels().catch((error) => showNodeError(error, '模型读取失败'))">
             <template #prefix><icon-sparkles :size="17" /></template>
+            <template #label="{ label }"><span class="modelLabel" :title="`${selectedModel?.providerLabel ?? ''} · ${label}`"><span class="providerName">{{ selectedModel?.providerLabel }}</span><span class="modelName">{{ label }}</span></span></template>
             <el-option-group v-for="provider in modelGroups" :key="provider.id" :label="provider.label">
               <el-option
                 v-for="item in provider.models"
@@ -99,6 +102,7 @@
             :aria-label="generating ? '停止本地等待' : pendingTask ? '恢复原视频任务' : '生成视频'"
             @click="generating ? stopGeneration() : startGeneration().catch((error) => showNodeError(error, '视频生成失败'))" />
         </div>
+        <generationTiming :timing="data.generationTiming" :running="generating || !!videoTask?.running" />
         <div v-if="videoTask || taskStatusError" class="taskStatus" role="status" aria-live="polite">
           <div v-if="videoTask">{{ taskPhaseLabel }}<span v-if="videoTask.phase === 'in_progress' && videoTask.progress !== undefined"> · {{ videoTask.progress }}%</span></div>
           <div v-if="videoTask?.taskId">任务编号：{{ videoTask.taskId }}</div>
@@ -117,13 +121,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onScopeDispose, ref, watch, watchEffect } from "vue";
 import { ElButton, ElCard, ElSelect, ElOption, ElOptionGroup, ElLoading, ElDropdown, ElDropdownMenu, ElDropdownItem, ElInput } from "element-plus";
 import { IconCameraAi, IconSparkles, IconArrowUp, IconPlayerStop, IconTransfer, IconMusic, IconLayersSubtract, IconScissors, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
 import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeVideoRequest, type NodeHandle, type VideoTaskStatus } from "@toonflow/nodes-scaffold/runtime";
 import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
-import { useNodeGeneration } from "@toonflow/node-shared/useNodeGeneration";
+import { useNodeGeneration, type GenerationTiming } from "@toonflow/node-shared/useNodeGeneration";
+import generationTiming from "@toonflow/node-shared/generationTiming";
 import { useGenerationPreferences } from "@toonflow/node-shared/useGenerationPreferences";
 import { useNodeReferences } from "@toonflow/node-shared/useNodeReferences";
 import promptInput from "@toonflow/node-shared/promptInput";
@@ -142,11 +147,11 @@ defineOptions({
   ] satisfies NodeHandle[],
 });
 const vLoading = ElLoading.directive;
-const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals } = useNode({
+const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals, retainPreview } = useNode({
   label: "视频生成",
 });
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
-const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean; appliedVideoTaskId?: string; referenceImageUrlsText: string });
+const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean; appliedVideoTaskId?: string; referenceImageUrlsText: string; generationTiming?: GenerationTiming });
 const rememberPreferences = useGenerationPreferences("video", () => data.value);
 data.value.prompt ??= "";
 data.value.promptModel ??= [];
@@ -261,6 +266,10 @@ const previewUrl = files.useFileUrl(
   outputFile,
   (error) => showNodeError(error, "视频读取失败")
 );
+const posterUrl = files.useFileUrl(outputFile, error => showNodeError(error, "视频封面读取失败"), true);
+const mediaInfo = files.useMediaInfo(outputFile, error => showNodeError(error, "视频信息读取失败"));
+watchEffect(() => { if (mediaInfo.value?.width && mediaInfo.value.height) videoWidth.value = Math.max(180, 240 * mediaInfo.value.width / mediaInfo.value.height); });
+watchEffect(() => { retainPreview.value = generating.value || uploading.value || !!player.value?.playing || !!player.value?.fullscreen || !!actions.value?.visible || !!actions.value?.processing; });
 
 onMounted(async () => {
   try {
@@ -371,7 +380,7 @@ async function startGeneration() {
       if (!result) throw new Error("供应商未返回视频");
       outputs.value.video = { dataType: "VIDEO", value: { url: result.path, mimeType: result.mimeType } };
       if (input.operationId) data.value.appliedVideoTaskId = input.operationId;
-    }))
+    }), { operationId: input.operationId })
     .catch((error) => showNodeError(error, "视频生成失败"))
     .finally(() => {
       generationController = undefined;
@@ -382,10 +391,11 @@ async function startGeneration() {
 }
 
 async function refreshVideoTask() {
-  const directory = taskWorkspaceDirectory ||= (await files.getWorkspaceFiles().list()).directory;
+  const directory = taskWorkspaceDirectory ||= files.getWorkspaceDirectory();
   const task = await ai.getVideoTask({ directory, outputDirectory: `assets/${id}` });
   if (disposed) return;
   videoTask.value = task;
+  if (task) generationState.syncTask(task);
   taskStatusError.value = "";
   if (task?.phase === "completed" && task.operationId !== data.value.appliedVideoTaskId) {
     const result = task.result?.[0];
@@ -420,7 +430,7 @@ async function resumeGeneration() {
   const controller = new AbortController();
   generationController = controller;
   pollVideoTask();
-  generation = generationState.run(() => ai.resumeVideoTask({ directory, outputDirectory: `assets/${id}`, operationId: task.operationId }, controller.signal))
+  generation = generationState.run(() => ai.resumeVideoTask({ directory, outputDirectory: `assets/${id}`, operationId: task.operationId }, controller.signal), { operationId: task.operationId, startedAt: task.startedAt })
     .then(([result]) => {
       if (!result || disposed) return;
       outputs.value.video = { dataType: "VIDEO", value: { url: result.path, mimeType: result.mimeType } };
@@ -593,20 +603,26 @@ nodeTools.register({
 
   .promptFooter {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: flex-start;
     gap: 12px;
 
     .modelSelect {
-      width: 190px;
-      min-width: 0;
+      flex: 1;
+      min-width: 160px;
 
       &:deep(.el-select__wrapper) {
         gap: 6px;
-        padding: 0;
-        box-shadow: none;
-        background: transparent;
+        min-height: 48px;
+        padding: 6px 10px;
+        box-shadow: 0 0 0 1px var(--el-border-color-lighter) inset;
+        background: var(--el-fill-color-light);
       }
+      :deep(.el-select__selected-item) { position: static; transform: none; white-space: normal; }
+      .modelLabel { display: grid; gap: 2px; min-width: 0; line-height: 1.35; }
+      .providerName { color: var(--el-text-color-secondary); font-size: 11px; }
+      .modelName { overflow-wrap: anywhere; color: var(--el-text-color-primary); font-size: 13px; }
     }
 
     .sendButton {

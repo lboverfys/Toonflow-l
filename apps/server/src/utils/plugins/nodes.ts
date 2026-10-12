@@ -1,5 +1,5 @@
 import { t, translateMessage } from "@/lib/i18n";
-import { lstat, readFile } from "@toonflow/file";
+import { lstat, open } from "@toonflow/file";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import conf from "@/utils/conf";
@@ -9,7 +9,10 @@ export const nodesDirectory = resolve(dirname(conf.path), "nodes");
 export const configRulesSchema = z.array(z.record(z.string(), z.json())).max(100);
 type ConfigRule = z.infer<typeof configRulesSchema>[number];
 
-export async function readNode(name: string) {
+type NodeMetadata = { name: string; displayName: string; version: string; author: string; readme: string; github: string; configRules: z.infer<typeof configRulesSchema>; revision: string };
+const metadataCache = new Map<string, NodeMetadata>();
+
+export async function readNode(name: string): Promise<NodeMetadata> {
   nodeNameSchema.parse(name);
   const path = resolve(nodesDirectory, `${name}.umd.js`);
   const file = await lstat(path).catch((error: NodeJS.ErrnoException) => {
@@ -17,8 +20,25 @@ export async function readNode(name: string) {
     throw error;
   });
   if (!file.isFile()) throw Object.assign(new Error("节点文件无效"), { status: 400 });
-  // ACT: 当前整包读取，内存开销随节点总体积增长；节点变多或包变大时改为只读首行。
-  const source = await readFile(path, "utf8");
+  const revision = `${file.size}:${file.mtimeMs}:${file.ctimeMs}`;
+  const cached = metadataCache.get(name);
+  if (cached?.revision === revision) return cached;
+  const handle = await open(path, "r");
+  let source = "";
+  try {
+    const chunks: Buffer[] = [];
+    let offset = 0;
+    while (offset < Math.min(file.size, 1024 * 1024)) {
+      const buffer = Buffer.alloc(4096);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+      if (!bytesRead) break;
+      const chunk = buffer.subarray(0, bytesRead);
+      chunks.push(chunk);
+      offset += bytesRead;
+      if (chunk.includes(10)) break;
+    }
+    source = Buffer.concat(chunks).toString("utf8");
+  } finally { await handle.close(); }
   let metadata: Record<string, unknown> = {};
   try {
     const header = source.match(/^\/\*! toonflowNode:([^\r\n]*) \*\/(?:\r?\n|$)/)?.[1];
@@ -34,8 +54,9 @@ export async function readNode(name: string) {
   }
   const rules = configRulesSchema.safeParse(metadata.configRules ?? []);
   if (!rules.success) throw Object.assign(new Error("节点配置表单规则无效，请重新构建节点"), { status: 400 });
-  return {
+  const result: NodeMetadata = {
     name,
+    revision,
     displayName: typeof metadata.displayName === "string" && metadata.displayName.trim() ? metadata.displayName : name,
     version: typeof metadata.version === "string" ? metadata.version.trim() : "",
     author: typeof metadata.author === "string" ? metadata.author : "",
@@ -43,6 +64,8 @@ export async function readNode(name: string) {
     github,
     configRules: rules.data,
   };
+  metadataCache.set(name, result);
+  return result;
 }
 
 export function configFields(rules: ConfigRule[], conditional = false): { rule: ConfigRule; conditional: boolean }[] {

@@ -110,7 +110,7 @@ export const appOperations: {
     parameters: z.strictObject({ fileName: mediaProviderFileSchema, revision }), refresh: { type: "provider", nameField: "fileName" },
   },
   {
-    name: "listAssets", description: "列出全局素材库的文件和文件夹树；与工作区 assets 目录不同。", method: "GET", path: "/api/assets/list", parameters: z.strictObject({}),
+    name: "listAssets", description: "分页列出全局素材库的一层目录，每页最多 200 项；有 nextOffset 时继续读取。query 搜索子目录文件，每页最多 50 项，有 nextCursor 时继续。与工作区 assets 目录不同。", method: "GET", path: "/api/assets/list", parameters: z.strictObject({ path: z.string().optional(), offset: z.number().int().nonnegative().optional(), directoriesOnly: z.enum(["true", "false"]).optional(), query: z.string().max(256).optional(), cursor: z.string().optional() }),
   },
   {
     name: "createAssetDirectory", description: "在全局素材库创建文件夹，path 为素材库内相对路径。", method: "POST", path: "/api/assets/mkdir", parameters: z.strictObject({ path }),

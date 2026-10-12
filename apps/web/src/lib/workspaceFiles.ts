@@ -9,6 +9,37 @@ export type TextSnapshot = { text: string; revision: string; encoding: "utf-8" |
 const client = axios.create({ baseURL: "/api/workspaces/files", headers: { "x-toonflow-workspace": "1" } });
 registerApiLanguage(client);
 const fileUrls = new Map<string, { directory: string; path: string; url: Promise<string>; users: number }>();
+const listRequests = new Map<string, Promise<{ directory: string; empty: boolean; entries: WorkspaceEntry[] }>>();
+type MediaAccess = { path: string; url: string; mimeType: string; revision: string; width?: number; height?: number; duration?: number };
+const mediaRequests = new Map<string, Map<string, { promise: Promise<MediaAccess>; resolve(value: MediaAccess): void; reject(reason: unknown): void }>>();
+
+function requestMedia(directory: string, path: string) {
+  let batch = mediaRequests.get(directory);
+  if (!batch) {
+    batch = new Map();
+    mediaRequests.set(directory, batch);
+    const requests = batch;
+    queueMicrotask(async () => {
+      mediaRequests.delete(directory);
+      const paths = [...requests.keys()];
+      for (let offset = 0; offset < paths.length; offset += 50) {
+        const page = paths.slice(offset, offset + 50);
+        try {
+          const { data } = await client.post<{ data: (MediaAccess | { path: string; error: string })[] }>("/mediaAccess", { directory, paths: page });
+          const items = new Map(data.data.map(item => [item.path, item]));
+          for (const path of page) {
+            const item = items.get(path);
+            if (item && "error" in item) requests.get(path)!.reject(new Error(item.error));
+            else if (item) requests.get(path)!.resolve(item);
+            else requests.get(path)!.reject(new Error("媒体访问地址缺失"));
+          }
+        } catch (error) { page.forEach(path => requests.get(path)!.reject(error)); }
+      }
+    });
+  }
+  if (!batch.has(path)) batch.set(path, Promise.withResolvers<MediaAccess>());
+  return batch.get(path)!.promise;
+}
 
 function cachePath(path: string) {
   return path.replaceAll("\\", "/").split("/").filter(part => part && part !== ".").join("/").toLowerCase();
@@ -33,8 +64,30 @@ export default function useWorkspaceFiles(directory?: MaybeRefOrGetter<string | 
   }
 
   async function list(path = "", signal?: AbortSignal) {
-    const { data } = await client.get<{ data: { directory: string; empty: boolean; entries: WorkspaceEntry[] } }>("/list", { params: { directory: getDirectory(), path }, signal });
-    return data.data;
+    const directory = getDirectory();
+    const key = JSON.stringify([directory, path]);
+    let request = listRequests.get(key);
+    if (!request) {
+      request = client.get<{ data: { directory: string; empty: boolean; entries: WorkspaceEntry[] } }>("/list", { params: { directory, path } })
+        .then(({ data }) => data.data).finally(() => listRequests.delete(key));
+      listRequests.set(key, request);
+    }
+    signal?.throwIfAborted();
+    const result = await request;
+    signal?.throwIfAborted();
+    return result;
+  }
+
+  async function canvasEntries(signal?: AbortSignal) {
+    const directory = getDirectory();
+    const entries: (WorkspaceEntry & { empty?: boolean })[] = [];
+    let offset: number | undefined = 0;
+    do {
+      const { data }: { data: { data: { entries: typeof entries; nextOffset?: number } } } = await client.get("/canvases", { params: { directory, offset }, signal });
+      entries.push(...data.data.entries);
+      offset = data.data.nextOffset;
+    } while (offset !== undefined);
+    return entries;
   }
 
   async function read(path: string) {
@@ -47,13 +100,15 @@ export default function useWorkspaceFiles(directory?: MaybeRefOrGetter<string | 
     return data.data;
   }
 
-  function acquireUrl(path: string, mimeType?: string) {
+  function acquireUrl(path: string, mimeType?: string, preview = false) {
     const directory = getDirectory();
-    const key = JSON.stringify([directory, path, mimeType]);
+    const key = JSON.stringify([directory, path, mimeType, preview]);
     let entry = fileUrls.get(key);
     if (!entry) {
-      const url = client.get<Blob>("/read", { params: { directory, path }, responseType: "blob" })
-        .then(({ data }) => URL.createObjectURL(mimeType ? new Blob([data], { type: mimeType }) : data));
+      const url = /^(image|video|audio)\//.test(mimeType ?? "") && /\.(png|jpe?g|webp|avif|gif|bmp|svg|apng|mp4|m4v|mov|webm|mkv|avi|ogv|mp3|wav|ogg|opus|flac|m4a|aac)$/i.test(path) && !isMobile
+        ? requestMedia(directory, path).then(media => new URL(`${media.url}${preview ? `&preview=${mimeType?.startsWith("video/") ? 512 : 1024}` : ""}`, location.origin).href)
+        : client.get<Blob>("/read", { params: { directory, path }, responseType: "blob" })
+          .then(({ data }) => URL.createObjectURL(mimeType ? new Blob([data], { type: mimeType }) : data));
       entry = { directory, path, url, users: 0 };
       fileUrls.set(key, entry);
       const current = entry;
@@ -70,10 +125,12 @@ export default function useWorkspaceFiles(directory?: MaybeRefOrGetter<string | 
         if (--current.users) return;
         if (fileUrls.get(key) === current) fileUrls.delete(key);
         // 等待中的读取也要在最后一个使用者离开后释放，不撤销其他节点仍使用的 URL。
-        void current.url.then(url => URL.revokeObjectURL(url), () => {});
+        void current.url.then(url => { if (url.startsWith("blob:")) URL.revokeObjectURL(url); }, () => {});
       },
     };
   }
+
+  function getMediaInfo(path: string) { return requestMedia(getDirectory(), path); }
 
   async function readText(path: string, maxBytes?: number, signal?: AbortSignal) {
     if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 1)) throw new Error("读取字节数必须为正整数");
@@ -153,5 +210,5 @@ export default function useWorkspaceFiles(directory?: MaybeRefOrGetter<string | 
   }
 
   // ACT: 当前目录逐次读取；跨 await 或防抖的操作传入目录字符串，固定本次目标。
-  return { list, read, importImage, acquireUrl, readText, readJson, readTextSnapshot, writeTextSnapshot, write, writeJson, rename, copy, reveal, remove, mkdir };
+  return { list, canvasEntries, read, importImage, acquireUrl, getMediaInfo, readText, readJson, readTextSnapshot, writeTextSnapshot, write, writeJson, rename, copy, reveal, remove, mkdir };
 }

@@ -68,9 +68,10 @@ import { Panel, useVueFlow, type FlowExportObject } from "@vue-flow/core";
 import { ElMessage, ElMessageBox, type DropdownInstance, type FilterNodeMethodFunction, type InputInstance } from "element-plus";
 import { IconArtboard, IconCheck, IconChevronDown, IconChevronRight, IconDots, IconFolder, IconFolderFilled, IconFolderPlus, IconPlus, IconSearch } from "@tabler/icons-vue";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { settingsStorage } from "@/stores/settings";
 import useWorkspaceFiles, { type TextSnapshot } from "@/lib/workspaceFiles";
 import { useTreeExpansion } from "@/lib/useTreeExpansion";
-import { getCanvasAssetDirectories, isCanvasFile } from "@/pages/workspace/canvasFile";
+import { getCanvasAssetDirectories } from "@/pages/workspace/canvasFile";
 
 const props = defineProps<{
   directory?: string;
@@ -220,7 +221,10 @@ watch(() => props.directory, async (directory, _previous, onCleanup) => {
     if (cancelled) return;
     folders.value = entries.folders;
     canvases.value = loaded;
-    if (canvases.value[0]) await applyCanvas(canvases.value[0].id, directory);
+    let previous: unknown;
+    try { previous = JSON.parse(settingsStorage.getItem(`toonflow:lastCanvas:${directory}`) ?? "null"); } catch { previous = undefined; }
+    const first = canvases.value.find(canvas => canvas.id === previous) ?? canvases.value[0];
+    if (first) await applyCanvas(first.id, directory);
   } catch (err) {
     if (!cancelled) {
       loadError.value = errorMessage(err, "读取画布失败");
@@ -306,6 +310,7 @@ async function applyCanvas(canvasId: string, directory: string, signal?: AbortSi
   }
   boundCanvas.value = nextCanvas;
   activeCanvasId.value = nextCanvas.id;
+  settingsStorage.setItem(`toonflow:lastCanvas:${directory}`, JSON.stringify(nextCanvas.id));
   emit("loaded");
   signal?.throwIfAborted();
 }
@@ -431,28 +436,15 @@ async function createCanvasFile(directory: string, name?: string, signal?: Abort
 }
 
 async function listCanvasEntries(directory: string) {
-  const files = useWorkspaceFiles(directory);
-  const { entries } = await files.list();
-  const folders: CanvasEntry[] = [];
-  // 文件接口只返回普通文件和目录，不跟随符号链接；素材和 Agent 目录不参与画布扫描。
-  for (let index = 0; index < entries.length; index++) {
-    checkCanvasDirectory(directory);
-    const entry = entries[index]!;
-    if (entry.type !== "directory" || ["assets", ".agent"].includes(entry.name.toLowerCase())) continue;
-    const children = await files.list(entry.path);
-    folders.push({ ...entry, empty: children.empty });
-    entries.push(...children.entries);
-  }
+  const entries = await useWorkspaceFiles(directory).canvasEntries();
+  checkCanvasDirectory(directory);
+  const folders = entries.filter(entry => entry.type === "directory");
   return { entries, folders: folders.sort((left, right) => left.path.localeCompare(right.path, "zh-CN", { numeric: true })) };
 }
 
 async function listCanvases(directory: string): Promise<{ canvases: Canvas[]; folders: CanvasEntry[] }> {
-  const files = useWorkspaceFiles(directory);
   const { entries, folders } = await listCanvasEntries(directory);
-  const loaded = await Promise.all(entries.filter(entry => entry.type === "file" && /\.json$/i.test(entry.name)).map(async entry => {
-    if (!(await isCanvasFile(files, entry.path))) return null;
-    return { id: entry.path, name: entry.name.slice(0, -5) };
-  }));
+  const loaded = entries.filter(entry => entry.type === "file").map(entry => ({ id: entry.path, name: entry.name }));
   return {
     canvases: loaded.filter(canvas => canvas !== null).sort((left, right) => left.name.localeCompare(right.name, "zh-CN", { numeric: true })),
     folders,

@@ -152,7 +152,7 @@ function open(value: keyof typeof actionLabels) {
   if (value !== "trim") run();
 }
 
-defineExpose({ open, processing });
+defineExpose({ open, processing, visible });
 
 function readDuration(event: Event) {
   const value = (event.currentTarget as HTMLVideoElement).duration;

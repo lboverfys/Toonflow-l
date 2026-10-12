@@ -17,7 +17,7 @@ const stateSchema = z.object({
 });
 const recordSchema = z.object({
   version: z.literal(1), id: taskIdSchema, identity: z.string(), request: videoGenerationSchema,
-  state: stateSchema, createdAt: z.number(), updatedAt: z.number(), lastError: z.string().optional(),
+  state: stateSchema, createdAt: z.number(), updatedAt: z.number(), finishedAt: z.number().optional(), lastError: z.string().optional(),
   result: z.array(z.object({ path: z.string(), mimeType: z.string(), mediaType: z.literal("video") })).optional(),
   download: z.object({ validator: z.string().optional(), total: z.number().int().positive().optional(), source: z.string().optional() }).optional(),
 });
@@ -65,6 +65,7 @@ export async function getVideoTask(cwd: string, outputDirectory: string): Promis
   if (!task) return null;
   return {
     operationId: task.id, providerId: task.request.providerId, modelId: task.request.modelId,
+    startedAt: task.createdAt, endedAt: task.finishedAt ?? (task.result || task.state.phase === "failed" ? task.updatedAt : undefined),
     phase: task.result ? "completed" : task.state.phase, taskId: task.state.taskId,
     progress: task.result ? 100 : task.state.progress, error: task.state.error ?? task.lastError,
     running: active.has(directory), result: task.result, updatedAt: task.updatedAt,
@@ -326,7 +327,11 @@ export async function runVideoTask(
     }
     await writeAtomic(join(directory, "current.json"), JSON.stringify(operationId));
     const task = record;
-    const save = async () => { task.updatedAt = Date.now(); await writeAtomic(recordPath, JSON.stringify(task)); };
+    const save = async () => {
+      task.updatedAt = Date.now();
+      if (task.result || task.state.phase === "failed") task.finishedAt ??= task.updatedAt;
+      await writeAtomic(recordPath, JSON.stringify(task));
+    };
     const requestPath = (await resolveWorkspacePath(cwd, relative(cwd, join(directory, `${operationId}.request.json`)))).path;
     let requestSaved = !!(await stat(requestPath).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; }));
     let downloaded: DownloadedVideoAsset | undefined;

@@ -73,6 +73,7 @@
               <icon-x :size="14" />
             </el-button>
           </div>
+          <el-button v-if="hasMoreHistory" text :loading="loading" @click="emit('moreHistory')">加载更多对话</el-button>
         </div>
       </el-popover>
       <el-button text circle :loading="configLoading" :icon="IconAdjustmentsHorizontal" aria-label="媒体生成控制" title="媒体生成控制" @click="openMediaConfig" />
@@ -101,12 +102,13 @@ import {
 const props = defineProps<{
   name: string;
   history: AgentHistory[];
+  hasMoreHistory?: boolean;
   sessionFile?: string;
   loading: boolean;
   subAgents?: AgentSubAgent[];
   parentFile?: string;
 }>();
-const emit = defineEmits<{ newChat: []; history: []; select: [file: string]; rename: [file: string, name: string]; remove: [file: string]; close: []; openSubAgent: [file: string]; back: [] }>();
+const emit = defineEmits<{ newChat: []; history: []; moreHistory: []; select: [file: string]; rename: [file: string, name: string]; remove: [file: string]; close: []; openSubAgent: [file: string]; back: [] }>();
 const historyVisible = ref(false);
 const subAgentsVisible = ref(false);
 const editingName = ref(false);

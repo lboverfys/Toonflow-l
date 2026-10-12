@@ -14,12 +14,22 @@ import { registerDownloads } from "@/lib/saveFile";
 import { isMobile, isRemoteConnection } from "@/lib/mobile";
 import { getMissingBrowserFeatures } from "@/lib/browserCapabilities";
 import { registerAnonymousData } from "@/lib/anonymousData";
-import { loadSettings, settingsStorage } from "@/stores/settings";
+import { flushSettings, loadSettings, settingsStorage } from "@/stores/settings";
+import { flushWorkspaceSave } from "@/lib/mcpControl";
 import { checkDesktopUpdate } from "@/stores/desktopUpdate";
 import { registerLanguage } from "@/lib/i18n";
 import { locale, translate } from "@toonflow/i18n/vue";
 
 const app = createApp(App);
+window.addEventListener("toonflow:prepare-close", async event => {
+  const requestId = (event as CustomEvent<string>).detail;
+  let error: string | undefined;
+  try { await flushWorkspaceSave(); await flushSettings(); }
+  catch (cause) { error = cause instanceof Error ? cause.message : "保存失败，请重试"; }
+  await fetch("/api/desktop/closePrepared", { method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-desktop": "1" }, body: JSON.stringify({ requestId, error }) });
+});
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flushSettings().catch(error => console.error("设置保存失败：", error)); });
+router.beforeEach(async () => { await flushSettings(); });
 app.provide("nodePreferences", settingsStorage);
 app.onUnmount(registerLanguage());
 const isDesktop = new URLSearchParams(window.location.search).get("desktop") === "1";

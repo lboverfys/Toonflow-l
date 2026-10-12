@@ -182,7 +182,30 @@ async function start() {
     // 页面重载时监听器随旧页面销毁，安装请求等新页面 ready 后再投递。
     Electrobun.events.on(`will-navigate-${mainWindow.webview.id}`, () => { deliverInstall = undefined; });
     let isShowing = false;
+    let pageReady = false;
+    let closeRequest: string | undefined;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    let allowClose = false;
+    mainWindow.on("will-close", event => {
+      if (!pageReady || allowClose) return;
+      (event as { response: { allow: boolean } }).response = { allow: false };
+      if (closeRequest) return;
+      closeRequest = crypto.randomUUID();
+      mainWindow.webview.executeJavascript(`window.dispatchEvent(new CustomEvent("toonflow:prepare-close", { detail: ${JSON.stringify(closeRequest)} }));`);
+      closeTimer = setTimeout(() => {
+        closeRequest = undefined;
+        void Utils.showMessageBox({ type: "error", title: "尚未完成保存", message: "页面未能完成保存，请等待当前操作结束后再次关闭。" });
+      }, 20000);
+    });
     app.locals.desktop = {
+      closePrepared(requestId, error) {
+        if (requestId !== closeRequest) return;
+        clearTimeout(closeTimer);
+        closeRequest = undefined;
+        if (error) { void Utils.showMessageBox({ type: "error", title: "保存失败", message: error }); return; }
+        allowClose = true;
+        mainWindow.close();
+      },
       openUrl,
       showItemInFolder: Utils.showItemInFolder,
       readClipboardText: Utils.clipboardReadText,
@@ -200,6 +223,7 @@ async function start() {
         return path ?? null;
       },
       async ready(failed = false) {
+        pageReady = !failed;
         if (isClosing) return;
         if (!isShowing) {
           if (splash) {
@@ -272,6 +296,7 @@ async function start() {
       mainWindow.on("close", closeIcons);
     }
     mainWindow.on("close", () => {
+      clearTimeout(closeTimer);
       void connection.close().catch(error => console.error("设备连接关闭失败：", error));
       void closeBrowsers().catch(error => console.error("浏览器关闭失败：", error));
       isClosing = true;

@@ -4,6 +4,7 @@ import { shallowReactive, type Component } from "vue";
 type NodeComponent = Exclude<NodeTypesObject[string], string>;
 
 const components = shallowReactive(new Map<string, NodeComponent>());
+const componentUrls = new Map<string, string>();
 const requests = new Map<string, Promise<NodeComponent>>();
 
 export function getNodeIcon(type?: string): Component | undefined {
@@ -16,7 +17,7 @@ export function loadNodeComponent(name: string, url: string, force = false): Pro
   if (pending) return pending;
   const nodeWindow = window as typeof window & { toonflowNodes?: NodeTypesObject };
   const cached = components.get(name) ?? (Object.hasOwn(nodeWindow.toonflowNodes ?? {}, name) ? nodeWindow.toonflowNodes?.[name] : undefined);
-  if (!force && cached && (typeof cached === "object" || typeof cached === "function")) {
+  if (!force && componentUrls.get(name) === url && cached && (typeof cached === "object" || typeof cached === "function")) {
     components.set(name, cached);
     return Promise.resolve(cached);
   }
@@ -28,12 +29,16 @@ export function loadNodeComponent(name: string, url: string, force = false): Pro
     if (!response.ok) throw new Error(`节点脚本加载失败（HTTP ${response.status}）`);
     const code = await response.text();
     if (code.includes("toonflowTiptapHost")) await import("@/lib/tiptapHost");
+    const host = (window as typeof window & { toonflowNodeHost?: { three?: unknown } }).toonflowNodeHost;
+    if (host && !host.three && code.includes("toonflowNodeHost.three")) host.three = await import("three");
     return new Promise<NodeComponent>((resolve, reject) => {
       delete nodeWindow.toonflowNodes?.[name];
       const script = document.createElement("script");
-      script.src = scriptUrl;
+      const objectUrl = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+      script.src = objectUrl;
       script.onload = () => {
         script.remove();
+        URL.revokeObjectURL(objectUrl);
         const component = nodeWindow.toonflowNodes?.[name];
         if (!Object.hasOwn(nodeWindow.toonflowNodes ?? {}, name) || !component || (typeof component !== "object" && typeof component !== "function")) {
           reject(new Error(`节点脚本未导出 ${name} 组件`));
@@ -43,6 +48,7 @@ export function loadNodeComponent(name: string, url: string, force = false): Pro
       };
       script.onerror = () => {
         script.remove();
+        URL.revokeObjectURL(objectUrl);
         delete nodeWindow.toonflowNodes?.[name];
         reject(new Error("节点脚本加载失败"));
       };
@@ -50,6 +56,7 @@ export function loadNodeComponent(name: string, url: string, force = false): Pro
     });
   })().then(component => {
     components.set(name, component);
+    componentUrls.set(name, url);
     return component;
   }).finally(() => requests.delete(name));
   requests.set(name, request);
