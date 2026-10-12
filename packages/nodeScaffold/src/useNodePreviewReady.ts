@@ -2,9 +2,14 @@ import { computed, inject, onScopeDispose, ref, watch, type Ref } from "vue";
 import { useNode, useNodeId } from "@vue-flow/core";
 import type { NodeDocumentContext } from "./nodeDocument";
 
-const previewObserverKey = Symbol.for("toonflow.nodePreviewObserver.v2");
+const previewObserverKey = Symbol.for("toonflow.nodePreviewObserver.v3");
 type PreviewState = { visible: Ref<boolean>; retained: Ref<boolean> };
-type PreviewObserver = { observer: IntersectionObserver; targets: Map<Element, Set<Ref<boolean>>>; states: WeakMap<object, PreviewState> };
+type PreviewObserver = {
+  observer: IntersectionObserver;
+  targets: Map<Element, Map<PreviewState, number>>;
+  states: WeakMap<object, PreviewState>;
+  pending: Map<PreviewState, ReturnType<typeof setTimeout>>;
+};
 
 export function useNodePreviewReady(retain?: Ref<boolean>) {
   const nodeId = useNodeId();
@@ -15,12 +20,28 @@ export function useNodePreviewReady(retain?: Ref<boolean>) {
   const host = globalThis as typeof globalThis & { [previewObserverKey]?: PreviewObserver };
   if (!host[previewObserverKey]) {
     const targets: PreviewObserver["targets"] = new Map();
+    const pending: PreviewObserver["pending"] = new Map();
+    function release(state: PreviewState) {
+      clearTimeout(pending.get(state));
+      pending.delete(state);
+      state.visible.value = false;
+    }
     const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) targets.get(entry.target)?.forEach(value => { value.value = entry.isIntersecting; });
+      for (const entry of entries) for (const state of targets.get(entry.target)?.keys() ?? []) {
+        if (entry.isIntersecting) {
+          clearTimeout(pending.get(state));
+          pending.delete(state);
+          state.visible.value = true;
+        } else if (state.visible.value && !pending.has(state)) {
+          // ACT: 离屏预览最多保留 1.2 秒、32 个节点；来回拖动复用，长距离巡览及时回收。
+          pending.set(state, setTimeout(() => release(state), 1200));
+          if (pending.size > 32) release(pending.keys().next().value!);
+        }
+      }
     }, { rootMargin: "320px" });
-    host[previewObserverKey] = { observer, targets, states: new WeakMap() };
+    host[previewObserverKey] = { observer, targets, states: new WeakMap(), pending };
   }
-  const { observer, targets, states } = host[previewObserverKey];
+  const { observer, targets, states, pending } = host[previewObserverKey];
   let state = states.get(node);
   if (!state) { state = { visible: ref(false), retained: ref(false) }; states.set(node, state); }
   const current = state;
@@ -28,16 +49,21 @@ export function useNodePreviewReady(retain?: Ref<boolean>) {
     watch(retain, value => { current.retained.value = value; }, { immediate: true, flush: "sync" });
     onScopeDispose(() => { current.retained.value = false; });
   }
-  const visible = ref(false);
-  watch(visible, value => { current.visible.value = value; }, { flush: "sync" });
   watch(nodeEl, (element, _previous, onCleanup) => {
     if (!element) return;
-    const subscribers = targets.get(element) ?? new Set<Ref<boolean>>();
-    subscribers.add(visible);
+    const subscribers = targets.get(element) ?? new Map<PreviewState, number>();
+    subscribers.set(current, (subscribers.get(current) ?? 0) + 1);
     targets.set(element, subscribers);
     observer.observe(element);
     onCleanup(() => {
-      subscribers.delete(visible);
+      const count = subscribers.get(current)! - 1;
+      if (count) subscribers.set(current, count);
+      else {
+        subscribers.delete(current);
+        clearTimeout(pending.get(current));
+        pending.delete(current);
+        current.visible.value = false;
+      }
       if (targets.get(element) === subscribers && !subscribers.size) {
         targets.delete(element);
         observer.unobserve(element);

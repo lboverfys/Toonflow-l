@@ -4,6 +4,7 @@
     :topVisible="node.selected"
     topWidth="max-content"
     :downloadUrl="exporting ? '' : previewUrl"
+    :overviewSrc="posterUrl"
     :downloadName="outputFile?.url.split(/[\\/]/).at(-1)"
     :style="{ width: videoWidth ? `${videoWidth + 18}px` : undefined }"
     @fullscreen="player?.enterFullscreen()">

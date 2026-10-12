@@ -5,6 +5,9 @@
     :topVisible="node.selected"
     topWidth="max-content"
     :downloadUrl="previewUrl"
+    :overviewSrc="thumbnailUrl"
+    @overviewLoad="resizeImage"
+    :overviewLabel="imageTask ? taskPhaseLabel : ''"
     :downloadName="outputFile?.url.split(/[\\/]/).at(-1)"
     @fullscreen="previewVisible = true"
     :bottomWidth="660"
@@ -78,31 +81,33 @@
                 :value="JSON.stringify([item.providerId, item.modelId])" />
             </el-option-group>
           </el-select>
-          <generationSettings
-            v-if="editor?.mode !== 'inpaint'"
-            v-model:size="data.size"
-            v-model:ratio="data.ratio"
-            :sizes="sizeOptions"
-            :ratios="ratioOptions"
-            @update:size="rememberPreferences"
-            @update:ratio="rememberPreferences"
-            :disabled="generating || deleting || pendingTask || !selectedModel" />
-          <el-button v-if="editor?.mode === 'inpaint'" class="confirmButton" type="primary" :icon="IconCheck" :loading="editor.busy" :disabled="deleting || uploading || !generationPrompt" @click="confirmInpaint().catch(error => showNodeError(error, '重绘节点创建失败'))">确认</el-button>
-          <el-button
-            v-else
-            class="sendButton"
-            :icon="generating ? IconPlayerStop : IconArrowUp"
-            :disabled="deleting || uploading || taskChecking || (!generating && !pendingTask && (editor?.busy || !generationPrompt.trim() || !selectedModel))"
-            :title="generating ? '停止本地等待' : pendingTask ? '恢复原图片任务' : imageTask?.phase === 'expired' ? '重新生成图片（另行计费）' : '生成图片'"
-            :aria-label="generating ? '停止本地等待' : pendingTask ? '恢复原图片任务' : imageTask?.phase === 'expired' ? '重新生成图片（另行计费）' : '生成图片'"
-            @click="generating ? stopGeneration() : startGeneration().catch((error) => showNodeError(error, '图片生成失败'))" />
+          <div class="generationActions">
+            <generationSettings
+              v-if="editor?.mode !== 'inpaint'"
+              v-model:size="data.size"
+              v-model:ratio="data.ratio"
+              :sizes="sizeOptions"
+              :ratios="ratioOptions"
+              @update:size="rememberPreferences"
+              @update:ratio="rememberPreferences"
+              :disabled="generating || deleting || pendingTask || !selectedModel" />
+            <el-button v-if="editor?.mode === 'inpaint'" class="confirmButton" type="primary" :icon="IconCheck" :loading="editor.busy" :disabled="deleting || uploading || !generationPrompt" @click="confirmInpaint().catch(error => showNodeError(error, '重绘节点创建失败'))">确认</el-button>
+            <el-button
+              v-else
+              class="sendButton"
+              :icon="generating ? IconPlayerStop : IconArrowUp"
+              :disabled="deleting || uploading || taskChecking || (!generating && !pendingTask && (editor?.busy || !generationPrompt.trim() || !selectedModel))"
+              :title="generating ? '停止本地等待' : pendingTask ? '恢复原图片任务' : imageTask?.phase === 'expired' ? '重新生成图片（另行计费）' : '生成图片'"
+              :aria-label="generating ? '停止本地等待' : pendingTask ? '恢复原图片任务' : imageTask?.phase === 'expired' ? '重新生成图片（另行计费）' : '生成图片'"
+              @click="generating ? stopGeneration() : startGeneration().catch((error) => showNodeError(error, '图片生成失败'))">{{ generating ? '停止等待' : pendingTask ? '恢复任务' : '生成' }}</el-button>
+          </div>
         </div>
         <generationTiming :timing="data.generationTiming" :running="generating || !!imageTask?.running" />
         <div v-if="imageTask || taskStatusError" class="taskStatus" role="status" aria-live="polite">
           <div v-if="imageTask">{{ taskPhaseLabel }}</div>
           <div v-if="imageTask">操作编号：{{ imageTask.operationId }}</div>
           <div v-if="imageTask?.taskId">任务编号：{{ imageTask.taskId }}</div>
-          <div v-if="pendingTask && !generating">点击箭头按原参数恢复；不会新建图片。{{ imageTask?.providerId === 'laoliImage' ? '渠道结果缓存为完成后 3 小时，请及时恢复。' : '结果链接有时效，请及时恢复并保存。' }}</div>
+          <div v-if="pendingTask && !generating">点击“恢复任务”按原参数恢复；不会新建图片。{{ imageTask?.providerId === 'laoliImage' ? '渠道结果缓存为完成后 3 小时，请及时恢复。' : '结果链接有时效，请及时恢复并保存。' }}</div>
           <div v-if="imageTask?.result && imageTask.result.length > 1">本次 {{ imageTask.result.length }} 张图片已全部保存，可在「历史记录」中选择当前结果。</div>
           <div v-if="imageTask?.phase === 'expired'">过期不代表失败或退款；再次生成会创建新任务并另行计费。</div>
           <div v-if="imageTask?.error || taskStatusError" class="taskError">{{ taskStatusError || imageTask?.error }}</div>
@@ -600,22 +605,27 @@ nodeTools.register({
   .promptFooter {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: stretch;
     justify-content: flex-start;
-    gap: 12px;
+    gap: 10px;
+
+    .generationActions { display: flex; flex: 0 1 auto; flex-wrap: wrap; margin-left: auto; justify-content: flex-end; align-items: stretch; gap: 8px; }
 
     .modelSelect {
-      flex: 1;
-      min-width: 160px;
+      flex: 1 1 260px;
+      min-width: min(260px, 100%);
 
       &:deep(.el-select__wrapper) {
         gap: 6px;
         min-height: 48px;
+        height: 100%;
         padding: 6px 10px;
         box-shadow: 0 0 0 1px var(--el-border-color-lighter) inset;
         background: var(--el-fill-color-light);
       }
-      :deep(.el-select__selected-item) { position: static; transform: none; white-space: normal; }
+      :deep(.el-select__selection) { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 0; }
+      :deep(.el-select__input-wrapper) { grid-area: 1 / 1; min-width: 0; }
+      :deep(.el-select__placeholder) { grid-area: 1 / 1; position: static; transform: none; width: 100%; white-space: normal; }
       .modelLabel { display: grid; gap: 2px; min-width: 0; line-height: 1.35; }
       .providerName { color: var(--el-text-color-secondary); font-size: 11px; }
       .modelName { overflow-wrap: anywhere; color: var(--el-text-color-primary); font-size: 13px; }
@@ -624,10 +634,11 @@ nodeTools.register({
     .confirmButton { margin-left: auto; }
 
     .sendButton {
-      width: 32px;
-      height: 32px;
-      margin-left: auto;
-      padding: 0;
+      min-width: 88px;
+      min-height: 48px;
+      height: auto;
+      margin: 0;
+      padding: 0 14px;
       --el-button-bg-color: var(--el-text-color-primary);
       --el-button-border-color: transparent;
       --el-button-text-color: var(--el-bg-color);

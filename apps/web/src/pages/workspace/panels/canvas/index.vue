@@ -244,6 +244,13 @@ const assetsVisible = ref(false);
 const assetLibraryRef = ref<InstanceType<typeof assetLibrary>>();
 const edgeDisconnect = ref<{ id: string; x: number; y: number }>();
 const flow = useVueFlow(props.runtimeKey);
+const canvasOverview = ref(false);
+watch(() => flow.viewport.value.zoom, zoom => {
+  if (zoom < 0.35) canvasOverview.value = true;
+  else if (zoom > 0.45) canvasOverview.value = false;
+}, { immediate: true });
+provide("canvasOverview", canvasOverview);
+provide("canvasZoom", zoomCanvas);
 const navigation = useCanvasNavigation(flow, () =>
   project.value?.directory && canvasId.value ? JSON.stringify([project.value.directory, canvasId.value]) : "",
   () => props.active && !props.settingsVisible,
@@ -949,8 +956,43 @@ async function pasteClipboardNode(position: { x: number; y: number }, command?: 
     return false;
   }
 }
+let zoomFrame = 0;
+const zoomSteps: { factor: number; point?: XYPosition }[] = [];
+
+function cancelCanvasZoom() {
+  cancelAnimationFrame(zoomFrame);
+  zoomFrame = 0;
+  zoomSteps.length = 0;
+  gestureScale = undefined;
+}
+
+function flushCanvasZoom() {
+  cancelAnimationFrame(zoomFrame);
+  zoomFrame = 0;
+  const bounds = flow.d3Selection.value?.node()?.getBoundingClientRect();
+  if (!bounds || !props.active || props.settingsVisible || document.fullscreenElement || flow.userSelectionActive.value) {
+    zoomSteps.length = 0;
+    return;
+  }
+  const next = { ...viewport.value };
+  // 同一帧只提交一次变换；逐步保留光标锚点和缩放上下限，不能只取最后一个滚轮事件。
+  for (const { factor, point } of zoomSteps) {
+    const zoom = Math.min(flow.maxZoom.value, Math.max(flow.minZoom.value, next.zoom * factor));
+    const x = point ? point.x - bounds.left : bounds.width / 2;
+    const y = point ? point.y - bounds.top : bounds.height / 2;
+    next.x = x - (x - next.x) * zoom / next.zoom;
+    next.y = y - (y - next.y) * zoom / next.zoom;
+    next.zoom = zoom;
+  }
+  zoomSteps.length = 0;
+  void flow.setViewport(next);
+}
+
+watch([() => props.active, () => props.settingsVisible, canvasId], cancelCanvasZoom, { flush: "sync" });
+onScopeDispose(cancelCanvasZoom);
+
 function zoomCanvas(event: WheelEvent | (Event & { scale: number })) {
-  if (event.type === "gestureend") gestureScale = undefined;
+  if (event.type === "gestureend") { gestureScale = undefined; if (zoomFrame) flushCanvasZoom(); }
   if (!props.active || props.settingsVisible || document.fullscreenElement || flow.userSelectionActive.value) return;
   if (!(event.target instanceof Element) || !event.target.closest(".vue-flow__pane, .vue-flow__node, .vue-flow__edge, .vue-flow__nodesselection")) return;
   let factor: number;
@@ -977,10 +1019,8 @@ function zoomCanvas(event: WheelEvent | (Event & { scale: number })) {
   event.preventDefault();
   event.stopPropagation();
   if (factor === 1) return;
-  const bounds = selection.node()?.getBoundingClientRect();
-  if (!bounds) return;
-  point ??= { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
-  selection.call<[number, [number, number], Event]>(zoom.scaleBy, factor, [point.x - bounds.left, point.y - bounds.top], event);
+  zoomSteps.push({ factor, point });
+  if (!zoomFrame) zoomFrame = requestAnimationFrame(flushCanvasZoom);
 }
 
 function updateCanvasKeys(event: KeyboardEvent) {
@@ -1054,6 +1094,7 @@ function updateCanvasKeys(event: KeyboardEvent) {
 }
 
 function resetCanvasKeys() {
+  cancelCanvasZoom();
   pressedCodes.clear();
   gestureScale = undefined;
   zoomKeyPressed.value = false;

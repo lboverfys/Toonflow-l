@@ -24,6 +24,8 @@ export function useNode<T extends NodeOutputs = NodeOutputs>(options: NodeOption
   const config = computed(() => readonly(getNodeConfig?.(node.type ?? "") ?? {}));
   const retainPreview = ref(false);
   const previewReady = useNodePreviewReady(retainPreview);
+  const canvasOverview = inject<Readonly<Ref<boolean>>>("canvasOverview", ref(false));
+  const previewDetailed = computed(() => !canvasOverview.value || node.selected || retainPreview.value || !!documentContext?.targets.has(id));
   const { updateNodeInternals } = useVueFlow();
   const defaults = getCurrentInstance()?.type as Pick<NodeOptions, "handles" | "icon"> | undefined;
   const handles = ref<NodeHandle[]>(options.handles ?? structuredClone(defaults?.handles ?? []));
@@ -36,6 +38,7 @@ export function useNode<T extends NodeOutputs = NodeOutputs>(options: NodeOption
   const outputs = ref({ ...options.outputs, ...savedOutputs }) as Ref<T>;
   const nodeProps = computed(() => ({
     previewReady: previewReady.value,
+    previewDetailed: previewDetailed.value,
     label: node.data.label ?? options.label,
     icon: options.icon ?? defaults?.icon,
     handles: handles.value,

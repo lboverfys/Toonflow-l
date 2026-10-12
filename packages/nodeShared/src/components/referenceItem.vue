@@ -17,7 +17,7 @@
       aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
       @keydown.alt.left.stop.prevent="moveReference(index, index - 1)"
       @keydown.alt.right.stop.prevent="moveReference(index, index + 1)"
-      @preview="url => emit('preview', item, url)"
+      @preview="(url, originalUrl) => emit('preview', item, url, originalUrl)"
       @remove="emit('remove', item)" />
   </vue-draggable>
 </template>
@@ -28,7 +28,7 @@ import type { NodeInputValue } from "@toonflow/nodes-scaffold/values";
 import referenceCard from "./referenceCard.vue";
 
 const items = defineModel<NodeInputValue[]>({ required: true });
-const emit = defineEmits<{ remove: [item: NodeInputValue]; preview: [item: NodeInputValue, url: string] }>();
+const emit = defineEmits<{ remove: [item: NodeInputValue]; preview: [item: NodeInputValue, url: string, originalUrl: string] }>();
 
 function moveReference(from: number, index: number) {
   const item = items.value[from];

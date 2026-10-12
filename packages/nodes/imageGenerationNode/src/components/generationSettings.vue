@@ -59,7 +59,9 @@ function ratioStyle(value: string) {
 
 .settingsButton {
   flex-shrink: 0;
-  height: 48px;
+  min-height: 48px;
+  height: auto;
+  margin: 0;
   padding: 6px 10px;
   background: var(--el-fill-color-light);
   border: 1px solid var(--el-border-color-lighter);

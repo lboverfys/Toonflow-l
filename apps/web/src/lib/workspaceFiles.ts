@@ -102,10 +102,11 @@ export default function useWorkspaceFiles(directory?: MaybeRefOrGetter<string | 
 
   function acquireUrl(path: string, mimeType?: string, preview = false) {
     const directory = getDirectory();
-    const key = JSON.stringify([directory, path, mimeType, preview]);
+    const signedMedia = /^(image|video|audio)\//.test(mimeType ?? "") && /\.(png|jpe?g|webp|avif|gif|bmp|svg|apng|mp4|m4v|mov|webm|mkv|avi|ogv|mp3|wav|ogg|opus|flac|m4a|aac)$/i.test(path) && !isMobile;
+    const key = JSON.stringify([directory, path, mimeType, signedMedia && preview]);
     let entry = fileUrls.get(key);
     if (!entry) {
-      const url = /^(image|video|audio)\//.test(mimeType ?? "") && /\.(png|jpe?g|webp|avif|gif|bmp|svg|apng|mp4|m4v|mov|webm|mkv|avi|ogv|mp3|wav|ogg|opus|flac|m4a|aac)$/i.test(path) && !isMobile
+      const url = signedMedia
         ? requestMedia(directory, path).then(media => new URL(`${media.url}${preview ? `&preview=${mimeType?.startsWith("video/") ? 512 : 1024}` : ""}`, location.origin).href)
         : client.get<Blob>("/read", { params: { directory, path }, responseType: "blob" })
           .then(({ data }) => URL.createObjectURL(mimeType ? new Blob([data], { type: mimeType }) : data));
