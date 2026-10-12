@@ -143,8 +143,7 @@ export function useCanvasSync(flow: ReturnType<typeof useVueFlow>, binding: () =
       if (history.busy.value) { pendingRemote = true; return; }
       const target = binding();
       if (!target || !baseline || event?.revision === baseline.revision) return;
-      const disk = event?.revision && event.baseRevision === baseline.revision && event.changes
-        ? { canvas: mergeCanvas(baseline.canvas, event.changes).canvas, revision: event.revision } : await readDisk(target);
+      const disk = await readDisk(target);
       checkBinding(target);
       if (disk.revision !== baseline.revision || conflict.value || canvasChanges(baseline.canvas, current()).length) await receive(disk);
     });
@@ -177,7 +176,7 @@ export function useCanvasSync(flow: ReturnType<typeof useVueFlow>, binding: () =
         baseline = { canvas: recovery.base, revision: disk.revision };
         await block(await readDisk(target), restored.conflicts, message);
       } else {
-        // 补齐首次读盘到订阅就绪之间的更新；后续由主机增量推送。
+        // 补齐首次读盘到同步就绪之间的更新。
         const latest = await readDisk(target);
         if (latest.revision !== baseline?.revision) await receive(latest);
       }

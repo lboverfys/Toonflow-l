@@ -7,7 +7,7 @@ import type { CanvasChange, CanvasSnapshot } from "@toonflow/server/canvasMerge"
 
 type WorkspaceEntry = { name: string; path: string; type: "file" | "directory" };
 export type TextSnapshot = { text: string; revision: string; encoding: "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" };
-export type CanvasUpdate = { path?: string; ready?: boolean; heartbeat?: boolean; revision?: string; baseRevision?: string; changes?: CanvasChange[]; author?: string };
+export type CanvasUpdate = { path?: string; ready?: boolean; revision?: string };
 const client = axios.create({ baseURL: "/api/workspaces/files", headers: { "x-toonflow-workspace": "1" } });
 registerApiLanguage(client);
 const fileUrls = new Map<string, { directory: string; path: string; url: Promise<string>; users: number }>();
@@ -84,35 +84,32 @@ export default function useWorkspaceFiles(directory?: MaybeRefOrGetter<string | 
     await client.delete("../canvas/recovery/remove", { data: { directory: getDirectory(), path } });
   }
 
-  async function watchCanvases(onUpdate: (event: CanvasUpdate) => void | Promise<void>, onError: (error: unknown) => void, signal: AbortSignal) {
-    const url = new URL("/api/workspaces/canvas/events", location.origin);
-    url.searchParams.set("directory", getDirectory());
-    window.addEventListener("online", () => { void Promise.resolve().then(() => onUpdate({ ready: true })).catch(onError); }, { signal });
+  async function watchCanvases(onUpdate: (event: CanvasUpdate) => void | Promise<void>, onStatus: (error?: unknown) => void, signal: AbortSignal) {
+    const directory = getDirectory();
+    let cursor: string | undefined;
+    let refresh = false;
+    let wake: (() => void) | undefined;
+    window.addEventListener("online", () => { refresh = true; wake?.(); }, { signal });
     while (!signal.aborted) {
+      if (refresh) { cursor = undefined; refresh = false; }
+      let delay = 1500;
       try {
-        const response = await fetch(url, { signal, headers: { "x-toonflow-workspace": "1", "Accept-Language": document.documentElement.lang }, cache: "no-store" });
-        if (!response.ok || !response.body) throw new Error(response.status === 404 ? "主机暂不支持画布同步，请升级双方应用" : "无法接收主机的画布更新");
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        try {
-          while (!signal.aborted) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            let end: number;
-            while ((end = buffer.indexOf("\n")) >= 0) {
-              const line = buffer.slice(0, end);
-              buffer = buffer.slice(end + 1);
-              if (line) await onUpdate(JSON.parse(line));
-            }
-          }
-        } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-        if (!signal.aborted) throw new Error("画布同步连接已断开，正在重新连接");
-      } catch (error) { if (!signal.aborted) onError(error); }
-      if (!signal.aborted) await new Promise<void>(resolve => {
-        const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
-        const timer = setTimeout(finish, 5000);
+        const { data } = await client.get<{ data: { cursor: string; events: CanvasUpdate[] } }>("../canvas/events", {
+          params: { directory, cursor }, signal, timeout: 8000, headers: { "Cache-Control": "no-cache" },
+        });
+        signal.throwIfAborted();
+        for (const event of data.data.events) { await onUpdate(event); signal.throwIfAborted(); }
+        cursor = data.data.cursor;
+        onStatus();
+      } catch (error) {
+        if (!signal.aborted) onStatus(error);
+        cursor = undefined;
+        delay = 5000;
+      }
+      if (!signal.aborted && !refresh) await new Promise<void>(resolve => {
+        const finish = () => { clearTimeout(timer); wake = undefined; signal.removeEventListener("abort", finish); resolve(); };
+        const timer = setTimeout(finish, delay);
+        wake = finish;
         signal.addEventListener("abort", finish, { once: true });
       });
     }

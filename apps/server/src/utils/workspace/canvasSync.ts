@@ -15,24 +15,36 @@ export const canvasSchema = z.object({ toonflowCanvas: z.literal(true),
 });
 export const changeSchema = z.object({ kind: z.enum(["nodes", "edges"]), id: z.string().min(1).max(500), before: elementSchema.optional(), after: elementSchema.optional() })
   .refine(change => (change.before !== undefined || change.after !== undefined) && (!change.before || change.before.id === change.id) && (!change.after || change.after.id === change.id));
-type CanvasEvent = { path: string; revision?: string; baseRevision?: string; changes?: CanvasChange[]; author?: string };
-const subscribers = new Map<string, Set<(event: CanvasEvent) => void>>();
+type CanvasEvent = { path: string; revision?: string };
+const eventHistory: { sequence: number; directory: string; event: CanvasEvent }[] = [];
+const eventSession = crypto.randomUUID();
+let eventSequence = 0;
 const saves = new Map<string, Promise<unknown>>();
 const normalize = (path: string) => process.platform === "win32" ? path.toLowerCase() : path;
 const hash = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-export function subscribe(directory: string, listener: (event: CanvasEvent) => void) {
+function recordChange(directory: string, event: CanvasEvent) {
+  eventHistory.push({ sequence: ++eventSequence, directory: normalize(directory), event });
+  // ACT: 全进程最多保留 256 条文件变更标记，不缓存画布正文；游标过旧时客户端重新同步打开的画布。
+  if (eventHistory.length > 256) eventHistory.shift();
+}
+
+export function getUpdates(directory: string, cursor?: string) {
+  const sequence = cursor?.startsWith(`${eventSession}:`) ? Number(cursor.slice(eventSession.length + 1)) : -1;
+  const nextCursor = `${eventSession}:${eventSequence}`;
+  if (!Number.isSafeInteger(sequence) || sequence < eventSequence - eventHistory.length || sequence > eventSequence) {
+    return { cursor: nextCursor, events: [{ ready: true }] };
+  }
+  const changes = new Map<string, CanvasEvent>();
   const key = normalize(directory);
-  const listeners = subscribers.get(key) ?? new Set();
-  listeners.add(listener);
-  subscribers.set(key, listeners);
-  return () => { listeners.delete(listener); if (!listeners.size) subscribers.delete(key); };
+  for (const item of eventHistory) if (item.sequence > sequence && item.directory === key) changes.set(normalize(item.event.path), item.event);
+  return { cursor: nextCursor, events: [...changes.values()] };
 }
 
 export function notifyFileChange(directory: string, path: string) {
   const name = relative(directory, path).replaceAll("\\", "/");
   if (!name.endsWith(".json") || name.startsWith(".toonflow/")) return;
-  for (const listener of subscribers.get(normalize(directory)) ?? []) listener({ path: name });
+  recordChange(directory, { path: name });
 }
 
 async function readCanvas(path: string) {
@@ -83,7 +95,7 @@ async function normalizeTaskResults(directory: string, changes: CanvasChange[]) 
   }));
 }
 
-export async function saveCanvas(directory: string, path: string, baseRevision: string, input: CanvasChange[], author: string) {
+export async function saveCanvas(directory: string, path: string, baseRevision: string, input: CanvasChange[]) {
   const resolved = await resolveWorkspacePath(directory, path);
   if (!/\.json$/i.test(path) || resolved.path === directory) throw Object.assign(new Error("请选择画布文件"), { status: 400 });
   const key = normalize(resolved.path);
@@ -115,7 +127,7 @@ export async function saveCanvas(directory: string, path: string, baseRevision: 
         }
         await writeAtomic(resolved.path, bytes);
         revision = hash(bytes);
-        for (const listener of subscribers.get(normalize(directory)) ?? []) listener({ path, revision, baseRevision: disk.revision, changes: accepted, author });
+        recordChange(directory, { path, revision });
       }
       return { conflict: false as const, revision, baseRevision: disk.revision, changes: accepted, ...(baseRevision === disk.revision ? {} : { canvas: result.canvas }) };
     } finally { release(); }
