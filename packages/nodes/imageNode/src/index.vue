@@ -8,7 +8,7 @@
     :downloadUrl="previewUrl"
     :downloadName="outputFile?.url.split(/[\\/]/).at(-1)"
     @fullscreen="previewVisible = true"
-    :style="{ width: previewUrl && imageWidth ? `${imageWidth + 18}px` : undefined }">
+    :style="{ width: imageWidth ? `${imageWidth + 18}px` : undefined }">
     <template v-if="editor?.mode" #top><div ref="paintToolbar" /></template>
     <template #topActions>
       <el-button :icon="IconPanoramaHorizontal" :disabled="uploading || editor?.busy || lighting?.generating || multiAngle?.generating || gridSplit?.splitting || inpaintPrompt?.creating || panorama?.busy || !previewUrl" text title="全景图" aria-label="全景图" @click.stop="panorama?.open($event)">全景图<icon-chevron-down :size="14" /></el-button>
@@ -33,6 +33,7 @@
         v-if="previewUrl"
         ref="editor"
         :src="previewUrl"
+        :previewSrc="thumbnailUrl"
         :toolbarTarget="paintToolbar"
         :disabled="uploading || lighting?.generating || multiAngle?.generating || panorama?.busy"
         alt="节点图片"
@@ -70,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watchEffect } from "vue";
 import { IconPhoto, IconUpload, IconTransfer, IconLayoutGrid, IconBrush, IconPencil, IconSun, IconCameraRotate, IconPanoramaHorizontal, IconChevronDown } from "@tabler/icons-vue";
 import { ElButton, ElImageViewer, ElMessage } from "element-plus";
 import { nodeSkeleton, nodeTools, useNode, z, type NodeHandle } from "@toonflow/nodes-scaffold/runtime";
@@ -90,7 +91,7 @@ defineOptions({
     { id: "image", type: "source", dataType: "IMAGE", label: "图片输出" },
   ] satisfies NodeHandle[],
 });
-const { node, nodeProps, outputs, nodeEvent, files, updateNodeInternals } = useNode({
+const { node, nodeProps, outputs, nodeEvent, files, updateNodeInternals, retainPreview } = useNode({
   label: "图片",
 });
 const fileInput = ref<HTMLInputElement>();
@@ -115,6 +116,8 @@ const previewUrl = files.useFileUrl(
   outputFile,
   (error) => showError(error, "图片读取失败")
 );
+const thumbnailUrl = files.useFileUrl(outputFile, error => showError(error, "图片预览读取失败"), true);
+watchEffect(() => { retainPreview.value = uploading.value || previewVisible.value || !!editor.value?.mode || !!editor.value?.busy || !!lighting.value?.generating || !!multiAngle.value?.generating || !!panorama.value?.busy || !!gridSplit.value?.splitting; });
 
 nodeEvent.on("save", () => {
   if (uploading.value || editor.value?.busy || inpaintPrompt.value?.creating || lighting.value?.generating || multiAngle.value?.generating || panorama.value?.busy) throw new Error("图片处理中，请完成后再切换或刷新节点");

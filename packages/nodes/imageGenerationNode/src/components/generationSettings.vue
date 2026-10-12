@@ -3,7 +3,9 @@
     <template #reference>
       <el-button class="settingsButton" text size="small" :disabled="disabled" aria-label="图片生成设置">
         <span class="ratioShape" :style="ratioStyle(ratio)" aria-hidden="true" />
-        <span>{{ ratio }} · {{ size }} · 1张</span>
+        <span class="settingValue"><small>比例</small>{{ ratio }}</span>
+        <span class="settingValue"><small>画质</small>{{ size }}</span>
+        <span class="settingValue"><small>数量</small>1 张</span>
         <icon-chevron-up :size="14" aria-hidden="true" />
       </el-button>
     </template>
@@ -57,7 +59,12 @@ function ratioStyle(value: string) {
 
 .settingsButton {
   flex-shrink: 0;
-  :deep(> span) { gap: 6px; }
+  height: 48px;
+  padding: 6px 10px;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color-lighter);
+  :deep(> span) { gap: 12px; }
+  .settingValue { display: grid; gap: 3px; text-align: left; line-height: 1.25; font-variant-numeric: tabular-nums; small { font-size: 10px; color: var(--el-text-color-secondary); } }
 }
 
 .generationSettings {

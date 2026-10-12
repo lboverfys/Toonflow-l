@@ -1,6 +1,6 @@
 <template>
   <div class="imageEditor" :class="{ editing: mode }">
-    <img ref="sourceImage" :src="src" :alt="alt" decoding="async" draggable="false" @load="emit('load', $event)" @error="emit('error', $event)" />
+    <img ref="sourceImage" :src="mode || previewFailed ? src : previewSrc || src" :alt="alt" decoding="async" draggable="false" @load="emit('load', $event)" @error="previewSrc && !mode && !previewFailed ? previewFailed = true : emit('error', $event)" />
     <canvas
       v-if="mode"
       ref="paintCanvas"
@@ -62,7 +62,9 @@ import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useImageVariationNode } from "../useImageVariationNode";
 import { buildInpaintPrompt, type InpaintDraftInput } from "../imageInpaint";
 
-const props = defineProps<{ src: string; alt: string; toolbarTarget?: HTMLElement; disabled?: boolean }>();
+const props = defineProps<{ src: string; previewSrc?: string; alt: string; toolbarTarget?: HTMLElement; disabled?: boolean }>();
+const previewFailed = ref(false);
+watch(() => props.previewSrc, () => { previewFailed.value = false; });
 const emit = defineEmits<{ load: [event: Event]; error: [event: Event] }>();
 const { node } = useNode();
 const { addNodes, addEdges, findNode, getNodes, nodeTypes } = useVueFlow();
@@ -121,10 +123,16 @@ async function start(value: "inpaint" | "mark") {
   cancel();
   tool.value = "brush";
   mode.value = value;
-  await nextTick();
-  if (!paintCanvas.value) return;
-  paintCanvas.value.width = image.naturalWidth;
-  paintCanvas.value.height = image.naturalHeight;
+  busy.value = true;
+  const source = props.src;
+  try {
+    await nextTick();
+    await image.decode();
+    if (!paintCanvas.value || props.src !== source || mode.value !== value) return;
+    paintCanvas.value.width = image.naturalWidth;
+    paintCanvas.value.height = image.naturalHeight;
+  } catch (error) { cancel(); throw error; }
+  finally { busy.value = false; }
 }
 
 function getPoint(event: PointerEvent): Point {

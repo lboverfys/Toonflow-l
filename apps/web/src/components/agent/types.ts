@@ -24,6 +24,7 @@ export type AgentMessage = {
 export type AgentHistory = { file: string; name: string; modified: string; messageCount: number };
 
 export type AgentConversation = {
+  before?: string;
   file: string;
   name: string;
   messages: AgentMessage[];

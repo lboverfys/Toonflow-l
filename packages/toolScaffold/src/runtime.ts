@@ -128,6 +128,8 @@ export interface GeneratedMedia {
 }
 
 export interface VideoTaskStatus {
+  startedAt: number;
+  endedAt?: number;
   operationId: string;
   providerId: string;
   modelId: string;
@@ -141,6 +143,8 @@ export interface VideoTaskStatus {
 }
 
 export interface ImageTaskStatus {
+  startedAt: number;
+  endedAt?: number;
   operationId: string;
   providerId: string;
   modelId: string;

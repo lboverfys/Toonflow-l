@@ -82,6 +82,7 @@
         :key="JSON.stringify(['nodeMenu', project?.directory, canvasId])"
         ref="nodeMenuRef"
         :remoteNodes="availableNodes"
+        :prepareNodes="prepareNodeMenu"
         :pasteNode="pasteClipboardNode"
         :uploadFiles="canvasId && project?.directory ? selectFiles : undefined"
         :canUndo="canUndo"
@@ -121,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowReactive, shallowRef, watch } from "vue";
+import { computed, defineAsyncComponent, inject, markRaw, nextTick, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowReactive, shallowRef, watch, type Component } from "vue";
 import axios from "axios";
 import { debounce } from "lodash-es";
 import { ElMessage } from "element-plus";
@@ -131,7 +132,7 @@ import { IconUnlink } from "@tabler/icons-vue";
 import * as vueRuntime from "vue";
 import * as vueFlowRuntime from "@vue-flow/core";
 import * as elementPlusRuntime from "element-plus";
-import * as threeRuntime from "three";
+import type * as threeRuntime from "three";
 import { runAgentLoop } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import "element-plus/dist/index.css";
@@ -196,6 +197,15 @@ const { project } = storeToRefs(useWorkspaceStore());
 const workspaceRefreshing = inject("workspaceRefreshing", ref(false));
 
 const canvasElement = ref<HTMLElement>();
+provide("canvasFocusInsets", () => {
+  const canvas = canvasElement.value?.getBoundingClientRect();
+  const panel = document.getElementById("agentPanel")?.getClientRects()[0];
+  if (!canvas || !panel || panel.right <= canvas.left || panel.left >= canvas.right) return { left: 0, right: 0, top: 64, bottom: 80 };
+  const leftSpace = Math.max(0, panel.left - canvas.left - 20);
+  const rightSpace = Math.max(0, canvas.right - panel.right - 20);
+  return leftSpace >= rightSpace ? { left: 0, right: canvas.width - leftSpace, top: 64, bottom: 80 }
+    : { left: canvas.width - rightSpace, right: 0, top: 64, bottom: 80 };
+});
 const flowData = ref<(Node | Edge)[]>([]);
 const canvasId = ref("");
 const canvasReloading = ref(false);
@@ -284,6 +294,7 @@ let canvasController = new AbortController();
 let workspaceController = new AbortController();
 const createCanvasContext = useCanvasTools({
   availableNodes,
+  ensureNodeType,
   flushSave: flushCanvasSave,
   arrangeCanvas: signal => {
     if (!canvasControlsRef.value) throw new Error("画布尚未就绪");
@@ -557,14 +568,19 @@ let savePaused = false;
 let saveCancelled = false;
 let changedWhilePaused = false;
 let saveRevision = 0;
+let writtenRevision = -1;
 const saveCanvas = debounce((directory: string, fileName: string) => {
-  const flow = toObject();
-  const revision = saveRevision;
+  const requestedRevision = saveRevision;
   // ACT: 同页保存串行取最新修订号；其他客户端已写入时由文件快照接口拒绝覆盖。
   saving = saving.then(async () => {
+    if (requestedRevision <= writtenRevision) return;
     try {
       if (!canvasMenuRef.value) throw new Error("画布尚未就绪");
+      if (directory !== project.value?.directory || fileName !== canvasId.value) throw new Error("画布已切换，无法将当前内容保存到原画布");
+      const flow = toObject();
+      const revision = saveRevision;
       await canvasMenuRef.value.writeCanvasSnapshot(directory, fileName, { nodes: flow.nodes, edges: flow.edges, viewport: flow.viewport });
+      writtenRevision = revision;
       saveError = undefined;
       canvasSaveError.value = "";
       if (revision === saveRevision) canvasDirty.value = false;
@@ -1082,10 +1098,10 @@ onBeforeUnmount(() => {
 });
 
 const nodeWindow = window as typeof window & {
-  toonflowNodeHost?: { vue: typeof vueRuntime; vueFlow: typeof vueFlowRuntime; elementPlus: typeof elementPlusRuntime; three: typeof threeRuntime; ai: { runAgentLoop: typeof runAgentLoop; createAssistantMessageEventStream: typeof createAssistantMessageEventStream } };
+  toonflowNodeHost?: { vue: typeof vueRuntime; vueFlow: typeof vueFlowRuntime; elementPlus: typeof elementPlusRuntime; three?: typeof threeRuntime; ai: { runAgentLoop: typeof runAgentLoop; createAssistantMessageEventStream: typeof createAssistantMessageEventStream } };
   toonflowNodes?: NodeTypesObject;
 };
-nodeWindow.toonflowNodeHost = { vue: vueRuntime, vueFlow: vueFlowRuntime, elementPlus: elementPlusRuntime, three: threeRuntime, ai: { runAgentLoop, createAssistantMessageEventStream } };
+nodeWindow.toonflowNodeHost ??= { vue: vueRuntime, vueFlow: vueFlowRuntime, elementPlus: elementPlusRuntime, ai: { runAgentLoop, createAssistantMessageEventStream } };
 provide("nodeConfig", (nodeType: string) => nodeConfigs.value[nodeType] ?? {});
 provide("workspaceFiles", () => {
   const directory = project.value?.directory;
@@ -1111,7 +1127,7 @@ async function loadNode(name: string, url: string, force = false): Promise<void>
     if (!force) return pending;
     await pending.catch(() => {});
   }
-  if (!force && nodeTypes.value[nodeType] && !nodeErrors.value[nodeType]) return;
+  if (!force && nodeTypes.value[nodeType] && !(nodeTypes.value[nodeType] as { __asyncLoader?: unknown }).__asyncLoader && !nodeErrors.value[nodeType]) return;
   if (force) {
     signal.throwIfAborted();
     // ACT: 复用画布修订号收敛等待期间的编辑；持续修改画布时延后刷新，不额外维护节点修订状态。
@@ -1140,13 +1156,23 @@ async function loadNode(name: string, url: string, force = false): Promise<void>
   return nodeLoad;
 }
 
+async function ensureNodeType(type: string) {
+  const component = nodeTypes.value[type] as { __asyncLoader?: () => Promise<unknown> } | undefined;
+  if (!component) throw new Error("节点类型未启用");
+  await component.__asyncLoader?.();
+}
+
+async function prepareNodeMenu() {
+  await Promise.all(availableNodes.value.map(node => ensureNodeType(node.type)));
+}
+
 async function loadRemoteNodes(reloadName?: string) {
   if (reloadName) nodeReloads.add(reloadName);
   const requestId = ++loadRequest;
   const signal = canvasController.signal;
   nodeListLoading.value = true;
   try {
-    const { data } = await axios.get<{ code: number; data: { name: string; displayName: string; url: string; enabled?: boolean; config?: Record<string, unknown> }[] }>(
+    const { data } = await axios.get<{ code: number; data: { name: string; displayName: string; url: string; revision?: string; enabled?: boolean; config?: Record<string, unknown> }[] }>(
       "/api/nodes/get",
       { headers: { "Cache-Control": "no-cache", "x-toonflow-workspace": "1" } }
     );
@@ -1170,9 +1196,15 @@ async function loadRemoteNodes(reloadName?: string) {
     await Promise.all(
       enabledNodes.map(async (node) => {
         const nodeType = `remote-${node.name}`;
+        const url = node.revision ? `${node.url}&revision=${encodeURIComponent(node.revision)}` : node.url;
         try {
           if (nodeTypes.value[nodeType] && !nodeErrors.value[nodeType] && !reloadNames.has(node.name)) return;
-          await loadNode(node.name, node.url, reloadNames.has(node.name));
+          if (!remoteNodeTypes.value.includes(nodeType) && !reloadNames.has(node.name)) {
+            nodeTypes.value = { ...nodeTypes.value, [nodeType]: markRaw(defineAsyncComponent(async () => {
+              await loadNode(node.name, url);
+              return nodeTypes.value[nodeType] as Component;
+            })) };
+          } else await loadNode(node.name, url, reloadNames.has(node.name));
         } catch (error) {
           console.error("加载远端节点失败", node, error);
           // 保存拒绝时旧组件仍可用，不从节点菜单中移除；脚本加载错误仍排除。

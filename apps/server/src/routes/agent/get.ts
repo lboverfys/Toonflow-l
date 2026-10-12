@@ -5,9 +5,9 @@ import { validateFields } from "@/lib/middleware";
 import { success } from "@/lib/responseFormat";
 
 export default Router().get("/", validateFields({
-  directory: z.string().min(1).max(4096), sessionFile: z.string().regex(/^[\w-]+\.jsonl$/),
+  directory: z.string().min(1).max(4096), sessionFile: z.string().regex(/^[\w-]+\.jsonl$/), page: z.enum(["true"]).optional(), before: z.string().min(1).max(256).optional(),
 }, "query"), async (req, res) => {
   const { directory, sessionFile } = req.query as { directory: string; sessionFile: string };
   const { directory: cwd, path } = await u.workspaceFile.resolveWorkspaceFile(req, directory, `.agent/sessions/${sessionFile}`);
-  res.set("Cache-Control", "no-store").json(success(await u.agent.getAgentSession(cwd, path)));
+  res.set("Cache-Control", "no-store").json(success(req.query.page === "true" ? await u.agent.getAgentSessionPage(cwd, path, req.query.before as string | undefined) : await u.agent.getAgentSession(cwd, path)));
 });

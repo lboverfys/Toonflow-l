@@ -61,7 +61,7 @@ export type NodeAiTool = {
 
 async function readResult<T>(response: Response): Promise<T> {
   const result = await response.json();
-  if (!response.ok || result.code !== 200) throw new Error(result.message || `AI 请求失败（HTTP ${response.status}）`);
+  if (!response.ok || result.code !== 200) throw Object.assign(new Error(result.message || `AI 请求失败（HTTP ${response.status}）`), { status: response.ok ? result.code : response.status });
   return result.data;
 }
 
@@ -69,6 +69,45 @@ async function readResult<T>(response: Response): Promise<T> {
 const modelCacheKey = Symbol.for("toonflow.nodeModels");
 const modelCacheHost = globalThis as typeof globalThis & { [modelCacheKey]?: Map<string, Promise<unknown[]>> };
 const modelCache = modelCacheHost[modelCacheKey] ??= new Map<string, Promise<unknown[]>>();
+type TaskStatus = ImageTaskStatus | VideoTaskStatus | null;
+type TaskRequest = { type: "image" | "video"; outputDirectory: string; promise: Promise<TaskStatus>; resolve(value: TaskStatus): void; reject(error: unknown): void };
+const taskBatchKey = Symbol.for("toonflow.taskStatusRequests");
+const taskHost = globalThis as typeof globalThis & { [taskBatchKey]?: Map<string, Map<string, TaskRequest>> };
+const taskBatches = taskHost[taskBatchKey] ??= new Map<string, Map<string, TaskRequest>>();
+
+async function readTask(type: "image" | "video", input: { directory: string; outputDirectory: string }, signal: AbortSignal) {
+  signal.throwIfAborted();
+  let batch = taskBatches.get(input.directory);
+  if (!batch) {
+    batch = new Map();
+    taskBatches.set(input.directory, batch);
+    const requests = batch;
+    queueMicrotask(async () => {
+      taskBatches.delete(input.directory);
+      const items = [...requests.values()];
+      for (let offset = 0; offset < items.length; offset += 50) {
+        const page = items.slice(offset, offset + 50);
+        try {
+          const result = await readResult<{ type: string; outputDirectory: string; task?: TaskStatus; error?: string }[]>(await fetch("/api/ai/media/tasks", {
+            method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-workspace": "1" },
+            body: JSON.stringify({ directory: input.directory, items: page.map(({ type, outputDirectory }) => ({ type, outputDirectory })) }),
+          }));
+          const values = new Map(result.map(item => [JSON.stringify([item.type, item.outputDirectory]), item]));
+          for (const item of page) {
+            const value = values.get(JSON.stringify([item.type, item.outputDirectory]));
+            if (!value || value.error) item.reject(new Error(value?.error ?? "任务状态缺失"));
+            else item.resolve(value.task ?? null);
+          }
+        } catch (error) { page.forEach(item => item.reject(error)); }
+      }
+    });
+  }
+  const key = JSON.stringify([type, input.outputDirectory]);
+  if (!batch.has(key)) batch.set(key, { type, outputDirectory: input.outputDirectory, ...Promise.withResolvers<TaskStatus>() });
+  const task = await batch.get(key)!.promise;
+  signal.throwIfAborted();
+  return task;
+}
 
 export function invalidateNodeModels(type: "language" | "media") {
   modelCache.delete(type === "language" ? "/api/ai/models" : "/api/ai/media/models");
@@ -174,9 +213,7 @@ export function useNodeAi() {
   }
 
   async function getImageTask(input: { directory: string; outputDirectory: string }, signal?: AbortSignal) {
-    return readResult<ImageTaskStatus | null>(await fetch(`/api/ai/media/imageTask/get?${new URLSearchParams(input)}`, {
-      headers: { "x-toonflow-workspace": "1" }, cache: "no-store", signal: requestSignal(signal),
-    }));
+    return readTask("image", input, requestSignal(signal)) as Promise<ImageTaskStatus | null>;
   }
 
   async function resumeImageTask(input: { directory: string; outputDirectory: string; operationId: string }, signal?: AbortSignal) {
@@ -191,9 +228,7 @@ export function useNodeAi() {
   }
 
   async function getVideoTask(input: { directory: string; outputDirectory: string }, signal?: AbortSignal) {
-    return readResult<VideoTaskStatus | null>(await fetch(`/api/ai/media/videoTask/get?${new URLSearchParams(input)}`, {
-      headers: { "x-toonflow-workspace": "1" }, cache: "no-store", signal: requestSignal(signal),
-    }));
+    return readTask("video", input, requestSignal(signal)) as Promise<VideoTaskStatus | null>;
   }
 
   async function resumeVideoTask(input: { directory: string; outputDirectory: string; operationId: string }, signal?: AbortSignal) {

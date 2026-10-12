@@ -1,4 +1,7 @@
 import * as assets from "@/utils/assets";
+import * as canvasIndex from "@/utils/workspace/canvasIndex";
+import * as mediaAccess from "@/utils/workspace/mediaAccess";
+import * as mediaPreviews from "@/utils/media/previews";
 import * as browser from "@/utils/browser";
 import * as singleAgent from "@/utils/singleAgent";
 import * as desktop from "@/utils/desktop";
@@ -30,6 +33,9 @@ import * as mentionFiles from "@/agent/mentionFiles";
 
 export default {
   assets,
+  canvasIndex,
+  mediaAccess,
+  mediaPreviews,
   browser,
   singleAgent,
   desktop,

@@ -118,11 +118,12 @@
     </div>
     <div class="cardContainer">
       <el-card
+        ref="contentCard"
         class="contentCard"
         :class="{ selected: node.selected }"
         shadow="never"
         :bodyStyle="{ padding: '8px' }"
-        :style="{ minHeight: `${cardHeight}px` }">
+        :style="{ minHeight: `${Math.max(cardHeight, !previewReady ? previewHeight : 0)}px` }">
         <div v-if="loading" class="loadingContent" role="status" aria-label="节点加载中">
           <icon-loader2 class="loadingIcon" :size="24" aria-hidden="true" />
           <span>加载中...</span>
@@ -219,6 +220,11 @@ const handleGroups = computed(() => [
   { type: "source" as const, position: Position.Right, items: props.handles.filter((item) => item.type === "source") },
 ]);
 const cardHeight = computed(() => Math.max(100, ...handleGroups.value.map((group) => (group.items.length + 1) * 44)));
+const contentCard = ref<{ $el: HTMLElement }>();
+const previewHeight = ref(0);
+watch(() => props.previewReady, (ready, previous) => {
+  if (!ready && previous && contentCard.value) previewHeight.value = contentCard.value.$el.offsetHeight;
+}, { flush: "pre" });
 const { id: nodeId, node } = useNode();
 const documentContext = inject<NodeDocumentContext | undefined>("nodeDocument", undefined);
 const documentTarget = computed(() => documentContext?.targets.get(nodeId));
@@ -304,6 +310,7 @@ const connectedHandles = computed<Set<string>>((previous) => {
   return previous?.size === connected.size && [...connected].every((key) => previous.has(key)) ? previous : connected;
 });
 
+const focusInsets = inject("canvasFocusInsets", () => ({ left: 0, right: 0, top: 0, bottom: 0 }));
 async function focusNode(event: MouseEvent) {
   if (documentTarget.value) return;
   const element = event.currentTarget as HTMLElement;
@@ -311,9 +318,10 @@ async function focusNode(event: MouseEvent) {
   const flowElement = vueFlowRef.value;
   if (!flowElement || !element.isConnected) return;
   const flowRect = flowElement.getBoundingClientRect();
-  const agentWidth = Math.max(0, parseFloat(getComputedStyle(flowElement).getPropertyValue("--agentWidth")) || 0);
-  const availableWidth = flowRect.width - agentWidth;
-  if (availableWidth <= 0 || flowRect.height <= 0) return;
+  const insets = focusInsets();
+  const availableWidth = flowRect.width - insets.left - insets.right;
+  const availableHeight = flowRect.height - insets.top - insets.bottom;
+  if (availableWidth <= 0 || availableHeight <= 0) return;
   const rects = [element, ...element.querySelectorAll<HTMLElement>(":scope > .floatingSlot")]
     .filter((item) => item.getClientRects().length)
     .map((item) => item.getBoundingClientRect());
@@ -326,8 +334,10 @@ async function focusNode(event: MouseEvent) {
       width: (Math.max(...rects.map((rect) => rect.right)) - left) / viewport.value.zoom,
       height: (Math.max(...rects.map((rect) => rect.bottom)) - top) / viewport.value.zoom,
     },
-    availableWidth, flowRect.height, minZoom.value, maxZoom.value, 0.2
+    availableWidth, availableHeight, minZoom.value, Math.min(maxZoom.value, 1.2), 0.25
   );
+  targetViewport.x += insets.left;
+  targetViewport.y += insets.top;
   await setViewport(targetViewport, { duration: 300 });
 }
 

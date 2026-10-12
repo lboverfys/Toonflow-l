@@ -103,8 +103,9 @@ import {
   IconLayoutGrid,
 } from "@tabler/icons-vue";
 
-const { remoteNodes = [], pasteNode, uploadFiles, canUndo = false, canRedo = false, selectionBusy = false, batchHistory } = defineProps<{
+const { remoteNodes = [], prepareNodes, pasteNode, uploadFiles, canUndo = false, canRedo = false, selectionBusy = false, batchHistory } = defineProps<{
   remoteNodes?: { type: string; label: string }[];
+  prepareNodes?: () => Promise<void>;
   pasteNode?: (position: { x: number; y: number }) => Promise<boolean>;
   uploadFiles?: (position: { x: number; y: number }) => void;
   canUndo?: boolean;
@@ -207,6 +208,8 @@ flow.onConnectEnd((event) => {
 async function openMenu(event: MouseEvent | TouchEvent, nodesOnly = false, selection: GraphNode[] = [], handle?: DraggedHandle, group: GraphNode[] = []) {
   event.preventDefault();
   event.stopPropagation();
+  try { await prepareNodes?.(); }
+  catch (error) { ElMessage.error(error instanceof Error ? error.message : "节点插件加载失败"); return; }
   emit("history");
   menu.value?.handleClose();
   clearConnection();

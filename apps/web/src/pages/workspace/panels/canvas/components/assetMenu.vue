@@ -9,8 +9,13 @@
             </template>
             <div class="moveDestinations" role="menu" aria-label="移动到目录" @click.stop @keydown.stop>
               <el-button text :icon="IconFolderPlus" :disabled="busy" role="menuitem" @click="createMoveFolder">新建文件夹</el-button>
+              <el-button v-if="moveDirectory !== '.'" text :disabled="busy" @click="loadMoveFolders(moveDirectory.split('/').slice(0, -1).join('/') || '.')">返回上一级</el-button>
               <el-scrollbar maxHeight="260px">
-                <el-button v-for="item in moveFolders" :key="item.path" text :icon="IconFolder" :disabled="busy || destinationDisabled(item.path)" role="menuitem" :title="item.label" @click="moveTo(item.path)">{{ item.label }}</el-button>
+                <div v-for="item in moveFolders" :key="item.path" class="moveFolderRow">
+                  <el-button text :icon="IconFolder" :disabled="busy || destinationDisabled(item.path)" role="menuitem" :title="item.label" @click="moveTo(item.path)">{{ item.label }}</el-button>
+                  <el-button v-if="item.path !== moveDirectory" text :icon="IconChevronRight" :disabled="busy" :aria-label="`打开 ${item.label}`" @click="loadMoveFolders(item.path)" />
+                </div>
+                <el-button v-if="moveOffset !== undefined" text :loading="moveLoading" @click="loadMoveFolders(moveDirectory, true)">加载更多</el-button>
               </el-scrollbar>
             </div>
           </el-popover>
@@ -25,30 +30,41 @@
 
 <script setup lang="ts">
 import { translate } from "@toonflow/i18n/vue";
-import { computed, nextTick, ref, shallowRef } from "vue";
+import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import axios from "axios";
 import saveFile from "@/lib/saveFile";
 import { ElMessage, ElMessageBox, type DropdownInstance } from "element-plus";
 import { IconChevronRight, IconFolder, IconFolderPlus } from "@tabler/icons-vue";
 
 type AssetEntry = { name: string; path: string; type: "file" | "directory"; children?: AssetEntry[] };
-const props = defineProps<{ entries: AssetEntry[] }>();
 const emit = defineEmits<{ changed: [path?: string, target?: string] }>();
 const menu = ref<DropdownInstance>();
 const menuAnchor = shallowRef({ getBoundingClientRect: () => new DOMRect() });
 const activeEntry = shallowRef<AssetEntry>();
 const moveVisible = ref(false);
+const moveDirectory = ref(".");
+const moveEntries = ref<AssetEntry[]>([]);
+const moveOffset = ref<number>();
+const moveLoading = ref(false);
+let moveRequest = 0;
 const busy = ref(false);
 const parentPath = computed(() => activeEntry.value?.path.split("/").slice(0, -1).join("/") || ".");
-const moveFolders = computed(() => {
-  function flatten(items: AssetEntry[]): { label: string; path: string }[] {
-    return items.filter(item => item.type === "directory").flatMap(item => [
-      { label: item.path, path: item.path },
-      ...flatten(item.children ?? []),
-    ]);
-  }
-  return [{ label: translate("素材库根目录"), path: "." }, ...flatten(props.entries)];
-});
+const moveFolders = computed(() => [{ label: moveDirectory.value === "." ? translate("素材库根目录") : moveDirectory.value, path: moveDirectory.value }, ...moveEntries.value.map(entry => ({ label: entry.name, path: entry.path }))]);
+watch(moveVisible, visible => { if (visible) void loadMoveFolders("."); });
+
+async function loadMoveFolders(path: string, more = false) {
+  if (more && moveLoading.value) return;
+  const request = ++moveRequest;
+  moveLoading.value = true;
+  try {
+    const { data } = await axios.get<{ data: { entries: AssetEntry[]; nextOffset?: number } }>("/api/assets/list", { params: { path, directoriesOnly: true, offset: more ? moveOffset.value : 0 } });
+    if (request !== moveRequest || !moveVisible.value) return;
+    moveDirectory.value = path;
+    moveEntries.value = more ? [...moveEntries.value, ...data.data.entries] : data.data.entries;
+    moveOffset.value = data.data.nextOffset;
+  } catch (error) { showError(error); }
+  finally { if (request === moveRequest) moveLoading.value = false; }
+}
 
 function destinationDisabled(path: string) {
   const entry = activeEntry.value;
@@ -175,6 +191,11 @@ defineExpose({ openMenu });
 }
 
 .moveDestinations {
+  .moveFolderRow {
+    display: flex;
+    > .el-button:first-child { flex: 1; min-width: 0; }
+    > .el-button:last-child:not(:first-child) { width: 28px; flex-shrink: 0; justify-content: center; }
+  }
   .el-button {
     display: flex;
     justify-content: flex-start;

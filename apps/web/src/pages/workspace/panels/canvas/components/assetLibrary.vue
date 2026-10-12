@@ -6,11 +6,12 @@
       <el-button class="toolbarButton" text :icon="IconX" title="关闭素材库" aria-label="关闭素材库" @click="visible = false" />
     </div>
     <el-scrollbar class="libraryScroll" maxHeight="min(440px, calc(100dvh - 198px))">
-      <el-tree :key="searchQuery.trim() ? 'search' : 'browse'" ref="assetTree" class="assetTree" :data="displayEntries" nodeKey="path" :props="{ label: 'name' }" :currentNodeKey="folder === '.' ? undefined : folder" :filterNodeMethod="filterEntry" :defaultExpandedKeys="assetExpansion.expandedKeys.value" :autoExpandParent="false" highlightCurrent emptyText="" @nodeExpand="assetExpansion.expand" @nodeCollapse="assetExpansion.collapse" @nodeClick="selectFolder">
+      <el-tree :key="`${treeVersion}:${!!searchQuery.trim()}`" ref="assetTree" class="assetTree" :data="displayEntries" :lazy="!searchQuery.trim()" :load="loadAssetChildren" nodeKey="path" :props="{ label: 'name', isLeaf: 'leaf' }" :currentNodeKey="folder === '.' ? undefined : folder" :filterNodeMethod="filterEntry" :defaultExpandedKeys="assetExpansion.expandedKeys.value" :autoExpandParent="false" highlightCurrent emptyText="" @nodeExpand="assetExpansion.expand" @nodeCollapse="assetExpansion.collapse" @nodeClick="selectFolder">
         <template #default="{ data }">
-          <div class="assetEntry" :title="data.name" :draggable="data.type === 'file'" @dragstart.stop="startAssetDrag($event, data)" @dblclick.stop="openPreview(data)" @contextmenu="openItemMenu($event, data)">
+          <el-button v-if="data.page" text :loading="loadingPages.has(data.path)" @click.stop="loadMore(data)">加载更多</el-button>
+          <div v-else class="assetEntry" :title="data.name" :draggable="data.type === 'file'" @dragstart.stop="startAssetDrag($event, data)" @dblclick.stop="openPreview(data)" @contextmenu="openItemMenu($event, data)">
             <icon-folder-filled v-if="data.type === 'directory'" class="folderIcon" :size="30" />
-            <el-image v-else-if="mediaKind(data) === 'image'" class="assetThumbnail" :src="assetUrl(data.path)" fit="cover" loading="lazy" draggable="false" @click.stop="openPreview(data)">
+            <el-image v-else-if="mediaKind(data) === 'image'" class="assetThumbnail" :src="assetUrl(data.path) + '&preview=512'" fit="cover" loading="lazy" draggable="false" @click.stop="openPreview(data)">
               <template #error><icon-photo :size="22" /></template>
             </el-image>
             <span v-else class="fileIcon">
@@ -25,6 +26,7 @@
           </div>
         </template>
       </el-tree>
+      <el-button v-if="searchCursor" text :loading="searchLoading" @click="searchAssets(true)">加载更多结果</el-button>
     </el-scrollbar>
     <div v-if="previewAsset?.kind === 'audio'" class="audioPreview">
       <div class="audioHeader">
@@ -36,7 +38,7 @@
     </div>
   </el-card>
 
-  <assetMenu v-if="visible" ref="assetMenuRef" :entries="entries" @changed="refreshAssets" />
+  <assetMenu v-if="visible" ref="assetMenuRef" @changed="refreshAssets" />
 
   <el-image-viewer v-if="previewAsset?.kind === 'image'" :urlList="[previewAsset.url]" teleported @close="previewAsset = undefined" />
 
@@ -64,9 +66,10 @@
         </div>
         <div class="locationPath" :title="saveLocationLabel">{{ saveLocationLabel }}</div>
         <el-scrollbar class="saveFolderScroll" maxHeight="220px">
-          <el-tree ref="saveFolderTree" class="saveFolderTree" :data="folders" nodeKey="path" :props="{ label: 'name' }" :currentNodeKey="saveDirectory" :expandOnClickNode="false" :defaultExpandedKeys="saveExpansion.expandedKeys.value" :autoExpandParent="false" highlightCurrent @nodeExpand="saveExpansion.expand" @nodeCollapse="saveExpansion.collapse" @nodeClick="(entry: AssetEntry) => { if (!saving && saveFolderName === undefined) saveDirectory = entry.path; }">
+          <el-tree :key="treeVersion" ref="saveFolderTree" class="saveFolderTree" lazy :load="loadSaveChildren" nodeKey="path" :props="{ label: 'name', isLeaf: 'leaf' }" :currentNodeKey="saveDirectory" :expandOnClickNode="false" :defaultExpandedKeys="saveExpansion.expandedKeys.value" :autoExpandParent="false" highlightCurrent @nodeExpand="saveExpansion.expand" @nodeCollapse="saveExpansion.collapse" @nodeClick="(entry: AssetEntry) => { if (!saving && saveFolderName === undefined && !entry.page) saveDirectory = entry.path; }">
             <template #default="{ data }">
-              <span class="saveFolderEntry"><icon-folder-filled :size="20" /><span>{{ data.name }}</span></span>
+              <el-button v-if="data.page" text :loading="loadingPages.has(data.path)" @click.stop="loadMore(data, true)">加载更多</el-button>
+              <span v-else class="saveFolderEntry"><icon-folder-filled :size="20" /><span>{{ data.name }}</span></span>
             </template>
           </el-tree>
         </el-scrollbar>
@@ -85,9 +88,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import axios from "axios";
-import { ElMessage, type InputInstance, type TreeNodeData } from "element-plus";
+import { ElMessage, type InputInstance, type LoadFunction, type TreeNodeData } from "element-plus";
 import { IconDots, IconEye, IconFile, IconFolderFilled, IconFolderPlus, IconMusic, IconPhoto, IconSearch, IconVideo, IconX } from "@tabler/icons-vue";
 import type { NodeOutput } from "@toonflow/nodes-scaffold/values";
 import { startAssetDrag } from "../canvasDrop";
@@ -95,7 +98,7 @@ import useWorkspaceFiles from "@/lib/workspaceFiles";
 import { useTreeExpansion } from "@/lib/useTreeExpansion";
 import assetMenu from "./assetMenu.vue";
 
-type AssetEntry = { name: string; path: string; type: "file" | "directory"; children?: AssetEntry[]; draft?: boolean };
+type AssetEntry = { name: string; path: string; type: "file" | "directory"; children?: AssetEntry[]; draft?: boolean; leaf?: boolean; page?: { path: string; offset: number } };
 type AssetOutput = { label: string; output: NodeOutput };
 
 const props = defineProps<{ directory?: string }>();
@@ -103,6 +106,13 @@ const visible = defineModel<boolean>({ default: false });
 const saveVisible = ref(false);
 const saving = ref(false);
 const entries = ref<AssetEntry[]>([]);
+const treeVersion = ref(0);
+const loadingPages = reactive(new Set<string>());
+const searchCursor = ref<string>();
+const searchLoading = ref(false);
+const searchResults = ref<AssetEntry[]>([]);
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+let searchRequest = 0;
 const folder = ref(".");
 const assetName = ref("");
 const assetNameInput = ref<InputInstance>();
@@ -123,7 +133,7 @@ const assetMenuRef = ref<InstanceType<typeof assetMenu>>();
 const previewAsset = ref<{ name: string; url: string; kind: "image" | "audio" | "video" }>();
 const previewError = ref("");
 let loadRequest = 0;
-onBeforeUnmount(() => { loadRequest++; });
+onBeforeUnmount(() => { loadRequest++; searchRequest++; clearTimeout(searchTimer); });
 
 function assetUrl(path: string) {
   return `/api/assets/read?path=${encodeURIComponent(path)}`;
@@ -155,34 +165,48 @@ async function refreshAssets(path?: string, target?: string) {
   if (path && (folder.value === path || folder.value.startsWith(path + "/"))) {
     folder.value = target ? target + folder.value.slice(path.length) : ".";
   }
-  try { await loadEntries(); } catch (error) { showError(error); }
+  try { await loadEntries(); if (searchQuery.value.trim()) await searchAssets(); } catch (error) { showError(error); }
 }
-const displayEntries = computed(() => {
-  function withDraft(items: AssetEntry[], parent: string): AssetEntry[] {
-    const children = items.map(item => item.children ? { ...item, children: withDraft(item.children, item.path) } : item);
-    if (newFolderParent.value === parent) children.push({ name: "新建文件夹", path: `${parent}/:newFolder`, type: "directory", draft: true });
-    return children;
-  }
-  return newFolderParent.value === undefined ? entries.value : withDraft(entries.value, ".");
-});
+const displayEntries = computed(() => searchQuery.value.trim() ? searchResults.value : entries.value);
 
 function filterEntry(query: string, entry: TreeNodeData) {
   return !!entry.draft || entry.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
 }
 
-watch([searchQuery, assetTree], async () => { await nextTick(); assetTree.value?.filter(searchQuery.value); });
+watch(searchQuery, () => {
+  clearTimeout(searchTimer);
+  searchRequest++;
+  searchLoading.value = false;
+  searchCursor.value = undefined;
+  if (!searchQuery.value.trim()) { searchResults.value = []; return; }
+  searchTimer = setTimeout(() => { void searchAssets(); }, 250);
+});
 
 async function startFolder() {
   searchQuery.value = "";
-  newFolderParent.value = folder.value;
+  const parent = folder.value;
+  newFolderParent.value = parent;
   newFolderName.value = "新建文件夹";
   await nextTick();
-  assetTree.value?.getNode(folder.value)?.expand();
-  await nextTick();
-  folderInput.value?.select();
+  const tree = assetTree.value;
+  if (!tree) return cancelFolder();
+  const insert = async () => {
+    if (newFolderParent.value !== parent || assetTree.value !== tree) return;
+    tree.append({ name: "新建文件夹", path: `${parent}/:newFolder`, type: "directory", draft: true, leaf: true }, parent === "." ? tree.store.root : parent);
+    await nextTick();
+    folderInput.value?.select();
+  };
+  const node = parent === "." ? undefined : tree.getNode(parent);
+  if (parent !== "." && !node) { cancelFolder(); folder.value = "."; return; }
+  if (node) {
+    assetExpansion.expand(node.data, node);
+    node.expand(() => { void insert(); });
+  } else await insert();
 }
 
 function cancelFolder() {
+  const node = newFolderParent.value === undefined ? undefined : assetTree.value?.getNode(`${newFolderParent.value}/:newFolder`);
+  if (node) assetTree.value?.remove(node);
   newFolderParent.value = undefined;
 }
 
@@ -209,7 +233,6 @@ async function saveFolder() {
 const outputs = ref<AssetOutput[]>([]);
 const selectedOutput = ref(0);
 let sourceDirectory: string | undefined;
-const folders = computed(() => directoryEntries(entries.value));
 const extension = computed(() => {
   const output = outputs.value[selectedOutput.value]?.output;
   if (!output) return "";
@@ -217,18 +240,62 @@ const extension = computed(() => {
   return output.value.url.match(/\.[^./\\]+$/)?.[0] ?? "";
 });
 
-function directoryEntries(items: AssetEntry[]): AssetEntry[] {
-  return items.filter(item => item.type === "directory").map(item => ({ ...item, children: directoryEntries(item.children ?? []) }));
+async function readEntries(path = ".", offset = 0, directoriesOnly = false) {
+  const { data } = await axios.get<{ data: { entries: AssetEntry[]; nextOffset?: number } }>("/api/assets/list", { params: { path, offset, directoriesOnly } });
+  const result = data.data.entries;
+  if (data.data.nextOffset !== undefined) result.push({ name: "加载更多", path: `${path}/:page${data.data.nextOffset}`, type: "file", leaf: true, page: { path, offset: data.data.nextOffset } });
+  return result;
+}
+
+const loadAssetChildren: LoadFunction = async (node, resolve, reject) => {
+  try {
+    if (node.level === 0) { resolve(displayEntries.value); return; }
+    const entry = node.data as AssetEntry;
+    entry.children = await readEntries(entry.path);
+    resolve(entry.children);
+  } catch (error) { reject(); showError(error); }
+};
+const loadSaveChildren: LoadFunction = async (node, resolve, reject) => {
+  try { resolve(node.level ? await readEntries(node.data.path, 0, true) : [{ name: "素材库", path: ".", type: "directory" }]); }
+  catch (error) { reject(); showError(error); }
+};
+
+async function loadMore(entry: AssetEntry, directoriesOnly = false) {
+  if (!entry.page || loadingPages.has(entry.path)) return;
+  loadingPages.add(entry.path);
+  try {
+    const tree = directoriesOnly ? saveFolderTree.value : assetTree.value;
+    const node = tree?.getNode(entry.path);
+    if (!tree || !node) return;
+    const items = await readEntries(entry.page.path, entry.page.offset, directoriesOnly);
+    if (tree !== (directoriesOnly ? saveFolderTree.value : assetTree.value) || tree.getNode(entry.path) !== node) return;
+    for (const item of items) tree.insertBefore(item, node);
+    tree.remove(node);
+  } catch (error) { showError(error); }
+  finally { loadingPages.delete(entry.path); }
+}
+
+async function searchAssets(more = false) {
+  const query = searchQuery.value.trim();
+  if (!query || more && searchLoading.value) return;
+  const request = ++searchRequest;
+  searchLoading.value = true;
+  try {
+    const { data } = await axios.get<{ data: { entries: AssetEntry[]; nextCursor?: string } }>("/api/assets/list", { params: { query, cursor: more ? searchCursor.value : undefined } });
+    if (request !== searchRequest) return;
+    searchResults.value = more ? [...searchResults.value, ...data.data.entries] : data.data.entries;
+    searchCursor.value = data.data.nextCursor;
+  } catch (error) { if (request === searchRequest) showError(error); }
+  finally { if (request === searchRequest) searchLoading.value = false; }
 }
 
 async function loadEntries() {
   const request = ++loadRequest;
   try {
-    const { data } = await axios.get<{ data: { entries: AssetEntry[] } }>("/api/assets/list");
+    const result = await readEntries();
     if (request !== loadRequest) return;
-    entries.value = data.data.entries;
-    await nextTick();
-    if (request === loadRequest) assetTree.value?.filter(searchQuery.value);
+    entries.value = result;
+    treeVersion.value++;
   } catch (error) {
     if (request === loadRequest) throw error;
   }
@@ -239,15 +306,19 @@ function showError(error: unknown) {
 }
 
 watch(visible, opened => {
-  if (opened) loadEntries().catch(showError);
+  if (opened) { loadEntries().catch(showError); if (searchQuery.value.trim()) void searchAssets(); }
   else {
+    loadRequest++;
+    searchRequest++;
+    searchLoading.value = false;
+    clearTimeout(searchTimer);
     cancelFolder();
     previewAsset.value = undefined;
   }
 });
 
 function selectFolder(entry: AssetEntry) {
-  if (entry.draft) return;
+  if (entry.draft || entry.page) return;
   const path = entry.type === "directory" ? entry.path : entry.path.split("/").slice(0, -1).join("/") || ".";
   folder.value = folder.value === path ? "." : path;
 }

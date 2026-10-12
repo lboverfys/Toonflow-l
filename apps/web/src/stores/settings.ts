@@ -11,6 +11,11 @@ export const settings = ref<Record<string, unknown>>({});
 let settingsReady = false;
 let saveQueue = Promise.resolve();
 let applyingSettings = false;
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let firstPendingAt = 0;
+let autoSavePending = false;
+let lastSaveError: unknown;
+let queuedAutoSave: Promise<boolean> | undefined;
 
 export const settingsStorage = {
   getItem(key: string) {
@@ -110,14 +115,21 @@ export async function loadSettings() {
 }
 
 export function saveSettings(update?: (current: Record<string, unknown>) => Record<string, unknown> | undefined) {
+  clearTimeout(saveTimer);
+  saveTimer = undefined;
+  firstPendingAt = 0;
+  autoSavePending = false;
+  if (!update && queuedAutoSave) return queuedAutoSave;
   // ACT: 队列内读取最新配置再计算变更，确认成功后发布；仅协调当前页面的保存。
   const saving = saveQueue.then(async () => {
+    if (!update) queuedAutoSave = undefined;
     const patch = update?.(settings.value);
     if (update && !patch) return false;
     const { data } = await axios.put<{ code: number; data: { customProviders?: CustomProvider[]; mediaProvider?: { id: string }; modelRefreshErrors?: string[] } | null }>(
       "/api/settings/save", { settings: { ...settings.value, ...patch } }, { headers: { "x-toonflow-workspace": "1" } },
     );
     if (data.code !== 200) throw new Error("保存设置失败");
+    lastSaveError = undefined;
     const providers = data.data?.customProviders;
     if ((patch && Object.hasOwn(patch, "customProviders")) || providers) invalidateNodeModels("language");
     if (patch || providers) {
@@ -132,11 +144,23 @@ export function saveSettings(update?: (current: Record<string, unknown>) => Reco
     if (data.data?.modelRefreshErrors?.length) ElMessage.warning(`API Key 已保存，部分模型获取失败：${data.data.modelRefreshErrors.join("；")}`);
     return true;
   });
-  saveQueue = saving.then(() => {}, () => {});
+  saveQueue = saving.then(() => {}, error => { lastSaveError = error; });
+  if (!update) queuedAutoSave = saving;
   return saving;
+}
+
+export async function flushSettings() {
+  if (autoSavePending || lastSaveError) await saveSettings();
+  await saveQueue;
+  if (lastSaveError) throw lastSaveError;
 }
 
 watch(settings, () => {
   if (!settingsReady || applyingSettings) return;
-  void saveSettings().catch(() => { ElMessage.error("设置保存失败，请稍后重试"); });
+  autoSavePending = true;
+  firstPendingAt ||= Date.now();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    void saveSettings().catch(() => { ElMessage.error("设置保存失败，请稍后重试"); });
+  }, Math.max(0, Math.min(300, 2000 - (Date.now() - firstPendingAt))));
 }, { deep: true, flush: "sync" });

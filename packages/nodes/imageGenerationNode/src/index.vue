@@ -8,7 +8,7 @@
     :downloadName="outputFile?.url.split(/[\\/]/).at(-1)"
     @fullscreen="previewVisible = true"
     :bottomWidth="660"
-    :style="{ width: (previewUrl || inpaintGuideUrl) && imageWidth ? `${imageWidth + 18}px` : undefined }">
+    :style="{ width: imageWidth ? `${imageWidth + 18}px` : undefined }">
     <template v-if="editor?.mode" #top><div ref="paintToolbar" /></template>
     <template #topActions>
       <el-button :icon="IconPanoramaHorizontal" :disabled="generating || deleting || uploading || editor?.busy || lighting?.generating || multiAngle?.generating || gridSplit?.splitting || panorama?.busy || !previewUrl" text title="全景图" aria-label="全景图" @click.stop="panorama?.open($event)">全景图<icon-chevron-down :size="14" /></el-button>
@@ -28,6 +28,7 @@
         v-if="previewUrl"
         ref="editor"
         :src="previewUrl"
+        :previewSrc="thumbnailUrl"
         :toolbarTarget="paintToolbar"
         :disabled="generating || deleting || uploading || lighting?.generating || multiAngle?.generating || panorama?.busy"
         alt="生成图片"
@@ -68,6 +69,7 @@
             placement="top-start"
             @visible-change="(visible) => visible && loadModels().catch((error) => showNodeError(error, '模型读取失败'))">
             <template #prefix><icon-sparkles :size="17" /></template>
+            <template #label="{ label }"><span class="modelLabel" :title="`${selectedModel?.providerLabel ?? ''} · ${label}`"><span class="providerName">{{ selectedModel?.providerLabel }}</span><span class="modelName">{{ label }}</span></span></template>
             <el-option-group v-for="provider in modelGroups" :key="provider.id" :label="provider.label">
               <el-option
                 v-for="item in provider.models"
@@ -95,6 +97,7 @@
             :aria-label="generating ? '停止本地等待' : pendingTask ? '恢复原图片任务' : imageTask?.phase === 'expired' ? '重新生成图片（另行计费）' : '生成图片'"
             @click="generating ? stopGeneration() : startGeneration().catch((error) => showNodeError(error, '图片生成失败'))" />
         </div>
+        <generationTiming :timing="data.generationTiming" :running="generating || !!imageTask?.running" />
         <div v-if="imageTask || taskStatusError" class="taskStatus" role="status" aria-live="polite">
           <div v-if="imageTask">{{ taskPhaseLabel }}</div>
           <div v-if="imageTask">操作编号：{{ imageTask.operationId }}</div>
@@ -120,13 +123,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onScopeDispose, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onScopeDispose, ref, watch, watchEffect } from "vue";
 import { ElButton, ElCard, ElSelect, ElOption, ElOptionGroup, ElLoading, ElImageViewer } from "element-plus";
 import { IconCheck, IconPhotoAi, IconSparkles, IconArrowUp, IconPlayerStop, IconTransfer, IconLayoutGrid, IconBrush, IconPencil, IconSun, IconCameraRotate, IconPanoramaHorizontal, IconChevronDown } from "@tabler/icons-vue";
 import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeHandle, type NodeImageRequest, type NodeImageResult, type ImageTaskStatus } from "@toonflow/nodes-scaffold/runtime";
 import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
-import { useNodeGeneration } from "@toonflow/node-shared/useNodeGeneration";
+import { useNodeGeneration, type GenerationTiming } from "@toonflow/node-shared/useNodeGeneration";
+import generationTiming from "@toonflow/node-shared/generationTiming";
 import { useGenerationPreferences } from "@toonflow/node-shared/useGenerationPreferences";
 import { useNodeReferences } from "@toonflow/node-shared/useNodeReferences";
 import promptInput from "@toonflow/node-shared/promptInput";
@@ -149,11 +153,11 @@ defineOptions({
   ] satisfies NodeHandle[],
 });
 const vLoading = ElLoading.directive;
-const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals } = useNode({
+const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals, retainPreview } = useNode({
   label: "图片生成",
 });
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
-const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; inpaintPrompt: string; inpaintPromptModel: PromptModel; model: string; size: string; ratio: string; inpaint?: ImageInpaint; appliedImageTaskId?: string });
+const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; inpaintPrompt: string; inpaintPromptModel: PromptModel; model: string; size: string; ratio: string; inpaint?: ImageInpaint; appliedImageTaskId?: string; generationTiming?: GenerationTiming });
 const rememberPreferences = useGenerationPreferences("image", () => data.value);
 data.value.prompt ??= "";
 data.value.promptModel ??= [];
@@ -232,6 +236,8 @@ const previewUrl = files.useFileUrl(
   outputFile,
   (error) => showNodeError(error, "图片读取失败")
 );
+const thumbnailUrl = files.useFileUrl(outputFile, error => showNodeError(error, "图片预览读取失败"), true);
+watchEffect(() => { retainPreview.value = generating.value || uploading.value || previewVisible.value || !!editor.value?.mode || !!editor.value?.busy || !!lighting.value?.generating || !!multiAngle.value?.generating || !!panorama.value?.busy || !!gridSplit.value?.splitting; });
 
 onMounted(async () => {
   try {
@@ -356,7 +362,7 @@ async function startGeneration() {
       if (!result) throw new Error("供应商未返回图片");
       outputs.value.image = { dataType: "IMAGE", value: { url: result.path, mimeType: result.mimeType } };
       if (input.operationId) data.value.appliedImageTaskId = input.operationId;
-    }))
+    }), { operationId: input.operationId })
     .catch((error) => showNodeError(error, "图片生成失败"))
     .finally(() => {
       generationController = undefined;
@@ -367,10 +373,11 @@ async function startGeneration() {
 }
 
 async function refreshImageTask() {
-  const directory = taskWorkspaceDirectory ||= (await files.getWorkspaceFiles().list()).directory;
+  const directory = taskWorkspaceDirectory ||= files.getWorkspaceDirectory();
   const task = await ai.getImageTask({ directory, outputDirectory: taskOutputDirectory.value });
   if (disposed) return;
   imageTask.value = task;
+  if (task) generationState.syncTask(task);
   taskStatusError.value = "";
 }
 
@@ -411,7 +418,7 @@ async function resumeGeneration() {
     if (!result) throw new Error("重绘未返回图片");
     outputs.value.image = { dataType: "IMAGE", value: { url: result.path, mimeType: result.mimeType } };
     data.value.appliedImageTaskId = task.operationId;
-  }).catch(error => showNodeError(error, "原图片任务恢复中断"))
+  }, { operationId: task.operationId, startedAt: task.startedAt }).catch(error => showNodeError(error, "原图片任务恢复中断"))
     .finally(() => {
       generationController = undefined;
       clearTimeout(taskTimer);
@@ -592,20 +599,26 @@ nodeTools.register({
   .inpaintInfo { margin-bottom: 8px; }
   .promptFooter {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: flex-start;
     gap: 12px;
 
     .modelSelect {
-      width: 190px;
-      min-width: 0;
+      flex: 1;
+      min-width: 160px;
 
       &:deep(.el-select__wrapper) {
         gap: 6px;
-        padding: 0;
-        box-shadow: none;
-        background: transparent;
+        min-height: 48px;
+        padding: 6px 10px;
+        box-shadow: 0 0 0 1px var(--el-border-color-lighter) inset;
+        background: var(--el-fill-color-light);
       }
+      :deep(.el-select__selected-item) { position: static; transform: none; white-space: normal; }
+      .modelLabel { display: grid; gap: 2px; min-width: 0; line-height: 1.35; }
+      .providerName { color: var(--el-text-color-secondary); font-size: 11px; }
+      .modelName { overflow-wrap: anywhere; color: var(--el-text-color-primary); font-size: 13px; }
     }
 
     .confirmButton { margin-left: auto; }

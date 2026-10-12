@@ -14,6 +14,7 @@ type WorkspaceControl = {
   flushSave(): Promise<void>;
 };
 const workspaceControl = shallowRef<WorkspaceControl>();
+export async function flushWorkspaceSave() { await workspaceControl.value?.flushSave(); }
 
 export function registerWorkspaceControl(control: WorkspaceControl) {
   workspaceControl.value = control;

@@ -5,7 +5,7 @@
     topWidth="max-content"
     :downloadUrl="exporting ? '' : previewUrl"
     :downloadName="outputFile?.url.split(/[\\/]/).at(-1)"
-    :style="{ width: previewUrl && videoWidth ? `${videoWidth + 18}px` : undefined }"
+    :style="{ width: videoWidth ? `${videoWidth + 18}px` : undefined }"
     @fullscreen="player?.enterFullscreen()">
     <template #topActions>
       <el-button :icon="IconMusic" text :disabled="!outputFile || uploading || exporting || actions?.processing" @click.stop="actions?.open('extractAudio')">提取音轨</el-button>
@@ -41,6 +41,8 @@
         v-else-if="previewUrl"
         ref="player"
         :src="previewUrl"
+        :previewSrc="posterUrl"
+        :metadata="mediaInfo"
         @loadedmetadata="resizeVideo" />
       <input ref="fileInput" class="fileInput" type="file" accept="video/*" aria-label="选择视频" :disabled="uploading || exporting" @change="uploadVideo" />
       <el-button
@@ -60,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watchEffect } from "vue";
 import { IconVideo, IconUpload, IconTransfer, IconMusic, IconLayersSubtract, IconScissors, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
 import { ElButton, ElMessage, ElProgress, ElDropdown, ElDropdownMenu, ElDropdownItem } from "element-plus";
 import { nodeSkeleton, nodeTools, useNode, z, type NodeHandle } from "@toonflow/nodes-scaffold/runtime";
@@ -72,7 +74,7 @@ defineOptions({
   icon: IconVideo,
   handles: [{ id: "video", type: "source", dataType: "VIDEO", label: "视频输出" }] satisfies NodeHandle[],
 });
-const { node, nodeProps, outputs, nodeEvent, files, updateNodeInternals } = useNode({
+const { node, nodeProps, outputs, nodeEvent, files, updateNodeInternals, retainPreview } = useNode({
   label: "视频",
 });
 const fileInput = ref<HTMLInputElement>();
@@ -88,6 +90,10 @@ const previewUrl = files.useFileUrl(
   outputFile,
   (error) => showError(error, "视频读取失败")
 );
+const posterUrl = files.useFileUrl(outputFile, error => showError(error, "视频封面读取失败"), true);
+const mediaInfo = files.useMediaInfo(outputFile, error => showError(error, "视频信息读取失败"));
+watchEffect(() => { if (mediaInfo.value?.width && mediaInfo.value.height) videoWidth.value = Math.max(180, 240 * mediaInfo.value.width / mediaInfo.value.height); });
+watchEffect(() => { retainPreview.value = uploading.value || !!player.value?.playing || !!player.value?.fullscreen || !!actions.value?.visible || !!actions.value?.processing; });
 
 nodeEvent.on("save", (reason) => {
   if (uploading.value) throw new Error("视频处理中，请完成后再切换或刷新节点");

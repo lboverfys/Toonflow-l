@@ -51,7 +51,7 @@
         aria-controls="agentPanel"
         @click="agentVisible = !agentVisible"></el-button>
     </el-tooltip>
-    <floatingAgent v-model="agentVisible" :inert="refreshing" @resize="agentWidth = $event" />
+    <floatingAgent v-if="agentMounted" v-model="agentVisible" :inert="refreshing" @resize="agentWidth = $event" />
     <settings v-model="settingsVisible" />
   </main>
 </template>
@@ -64,13 +64,18 @@ import { IconLayoutDashboard, IconFileText } from "@tabler/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import settings from "@/components/settings/index.vue";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { flushSettings } from "@/stores/settings";
 import { registerWorkspaceControl, waitForControlValue } from "@/lib/mcpControl";
 import anonymousData from "@/lib/anonymousData";
 import canvasPanel from "./panels/canvas/canvasHost.vue";
 import type { DocumentNodeOptions } from "./panels/canvas/canvasFiles";
 import workspaceMenu from "./components/workspaceMenu.vue";
 import workspacePresence from "./components/workspacePresence.vue";
-import floatingAgent from "./components/floatingAgent.vue";
+const floatingAgent = defineAsyncComponent(() => import("./components/floatingAgent.vue"));
+const agentMounted = ref(false);
+let agentMountTimer: ReturnType<typeof setTimeout> | undefined;
+onMounted(() => { agentMountTimer = setTimeout(() => { agentMounted.value = true; }, 800); });
+onScopeDispose(() => clearTimeout(agentMountTimer));
 
 const documentPanel = defineAsyncComponent(() => import("./panels/document/index.vue"));
 
@@ -151,6 +156,7 @@ async function flushSave() {
   if (refreshing.value) throw new Error("项目正在刷新，请稍后重试");
   await documentPanelRef.value?.flushSave();
   await canvasPanelRef.value?.flushSave();
+  await flushSettings();
 }
 
 async function refreshProject() {
