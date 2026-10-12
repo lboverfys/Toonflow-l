@@ -7,7 +7,7 @@ export const isDesktop = new URLSearchParams(window.location.search).get("deskto
 export const isRemoteConnection = (isMobile || isDesktop) && new URLSearchParams(window.location.search).get("remote") === "1";
 export const isRemoteMobile = isMobile && isRemoteConnection;
 
-type MobileConnection = { mode: "local" | "remote"; name?: string; url?: string; online?: boolean | null; appVersion?: string; remoteAppVersion?: string };
+type MobileConnection = { mode: "local" | "remote"; name?: string; url?: string; online?: boolean | null; appVersion?: string; remoteAppVersion?: string; connections?: { url: string; name: string; appVersion?: string }[] };
 
 export const mobileConnection = ref<MobileConnection>({ mode: isRemoteConnection ? "remote" : "local" });
 export const deviceHubEnabled = ref(false);
@@ -67,8 +67,8 @@ export async function refreshMobileConnection() {
   return connectionRequest;
 }
 
-export async function changeDeviceConnection(action: "connect" | "disconnect", body?: { qrCode: string } | { url: string; code: string }) {
-  if (action === "connect") {
+export async function changeDeviceConnection(action: "connect" | "disconnect" | "reconnect", body?: { qrCode: string } | { url: string; code?: string }) {
+  if (action !== "disconnect") {
     await refreshMobileConnection();
     if (deviceHubEnabled.value) throw new Error("请先在设置 → 设备互联中关闭“允许其他设备连接”");
   }

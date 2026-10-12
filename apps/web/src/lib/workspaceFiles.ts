@@ -3,9 +3,11 @@ import { isMobile, isRemoteConnection } from "./mobile";
 import { toValue, type MaybeRefOrGetter } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { registerApiLanguage } from "@/lib/i18n";
+import type { CanvasChange, CanvasSnapshot } from "@toonflow/server/canvasMerge";
 
 type WorkspaceEntry = { name: string; path: string; type: "file" | "directory" };
 export type TextSnapshot = { text: string; revision: string; encoding: "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" };
+export type CanvasUpdate = { path?: string; ready?: boolean; heartbeat?: boolean; revision?: string; baseRevision?: string; changes?: CanvasChange[]; author?: string };
 const client = axios.create({ baseURL: "/api/workspaces/files", headers: { "x-toonflow-workspace": "1" } });
 registerApiLanguage(client);
 const fileUrls = new Map<string, { directory: string; path: string; url: Promise<string>; users: number }>();
@@ -61,6 +63,59 @@ export default function useWorkspaceFiles(directory?: MaybeRefOrGetter<string | 
     const path = directory === undefined ? workspace?.project?.directory : toValue(directory);
     if (!path) throw new Error("请先选择工作目录");
     return path;
+  }
+
+  async function saveCanvasChanges(path: string, revision: string, changes: CanvasChange[]) {
+    const { data } = await client.post<{ data: { revision: string; baseRevision: string; changes: CanvasChange[]; canvas?: CanvasSnapshot } }>("../canvas/save", { directory: getDirectory(), path, revision, changes });
+    return data.data;
+  }
+
+  async function saveCanvasRecovery(path: string, base: CanvasSnapshot, local: CanvasSnapshot) {
+    const { data } = await client.post<{ data: { path: string } }>("../canvas/recovery/save", { directory: getDirectory(), path, base, local });
+    return data.data.path;
+  }
+
+  async function getCanvasRecovery(path: string) {
+    const { data } = await client.get<{ data: { base: CanvasSnapshot; local: CanvasSnapshot; savedAt: number } | null }>("../canvas/recovery/get", { params: { directory: getDirectory(), path } });
+    return data.data;
+  }
+
+  async function removeCanvasRecovery(path: string) {
+    await client.delete("../canvas/recovery/remove", { data: { directory: getDirectory(), path } });
+  }
+
+  async function watchCanvases(onUpdate: (event: CanvasUpdate) => void | Promise<void>, onError: (error: unknown) => void, signal: AbortSignal) {
+    const url = new URL("/api/workspaces/canvas/events", location.origin);
+    url.searchParams.set("directory", getDirectory());
+    window.addEventListener("online", () => { void Promise.resolve().then(() => onUpdate({ ready: true })).catch(onError); }, { signal });
+    while (!signal.aborted) {
+      try {
+        const response = await fetch(url, { signal, headers: { "x-toonflow-workspace": "1", "Accept-Language": document.documentElement.lang }, cache: "no-store" });
+        if (!response.ok || !response.body) throw new Error(response.status === 404 ? "主机暂不支持画布同步，请升级双方应用" : "无法接收主机的画布更新");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        try {
+          while (!signal.aborted) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let end: number;
+            while ((end = buffer.indexOf("\n")) >= 0) {
+              const line = buffer.slice(0, end);
+              buffer = buffer.slice(end + 1);
+              if (line) await onUpdate(JSON.parse(line));
+            }
+          }
+        } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+        if (!signal.aborted) throw new Error("画布同步连接已断开，正在重新连接");
+      } catch (error) { if (!signal.aborted) onError(error); }
+      if (!signal.aborted) await new Promise<void>(resolve => {
+        const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
+        const timer = setTimeout(finish, 5000);
+        signal.addEventListener("abort", finish, { once: true });
+      });
+    }
   }
 
   async function list(path = "", signal?: AbortSignal) {
@@ -211,5 +266,6 @@ export default function useWorkspaceFiles(directory?: MaybeRefOrGetter<string | 
   }
 
   // ACT: 当前目录逐次读取；跨 await 或防抖的操作传入目录字符串，固定本次目标。
-  return { list, canvasEntries, read, importImage, acquireUrl, getMediaInfo, readText, readJson, readTextSnapshot, writeTextSnapshot, write, writeJson, rename, copy, reveal, remove, mkdir };
+  return { list, canvasEntries, read, importImage, acquireUrl, getMediaInfo, readText, readJson, readTextSnapshot, writeTextSnapshot, write, writeJson, rename, copy, reveal, remove, mkdir,
+    saveCanvasChanges, saveCanvasRecovery, getCanvasRecovery, removeCanvasRecovery, watchCanvases };
 }

@@ -1,0 +1,126 @@
+import { createHash } from "node:crypto";
+import { dirname, relative } from "node:path";
+import { mkdir, readFile, rm, writeAtomic } from "@toonflow/file";
+import { z } from "zod";
+import { lockWorkspaceFiles, resolveWorkspacePath } from "@/utils/workspace/files";
+import { getVideoTask } from "@/utils/media/videoTasks";
+import { getImageTask } from "@/utils/media/imageTasks";
+import { canvasChanges, mergeCanvas, sameCanvasValue, validateCanvas, type CanvasChange, type CanvasSnapshot } from "./canvasMerge";
+
+export const elementSchema = z.looseObject({ id: z.string().min(1).max(500) });
+export const canvasSchema = z.object({ toonflowCanvas: z.literal(true),
+  nodes: z.array(elementSchema.extend({ position: z.object({ x: z.number().finite(), y: z.number().finite() }), data: z.record(z.string(), z.json()).optional() })),
+  edges: z.array(elementSchema.extend({ source: z.string().min(1), target: z.string().min(1) })),
+  viewport: z.object({ x: z.number().finite(), y: z.number().finite(), zoom: z.number().positive() }),
+});
+export const changeSchema = z.object({ kind: z.enum(["nodes", "edges"]), id: z.string().min(1).max(500), before: elementSchema.optional(), after: elementSchema.optional() })
+  .refine(change => (change.before !== undefined || change.after !== undefined) && (!change.before || change.before.id === change.id) && (!change.after || change.after.id === change.id));
+type CanvasEvent = { path: string; revision?: string; baseRevision?: string; changes?: CanvasChange[]; author?: string };
+const subscribers = new Map<string, Set<(event: CanvasEvent) => void>>();
+const saves = new Map<string, Promise<unknown>>();
+const normalize = (path: string) => process.platform === "win32" ? path.toLowerCase() : path;
+const hash = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+export function subscribe(directory: string, listener: (event: CanvasEvent) => void) {
+  const key = normalize(directory);
+  const listeners = subscribers.get(key) ?? new Set();
+  listeners.add(listener);
+  subscribers.set(key, listeners);
+  return () => { listeners.delete(listener); if (!listeners.size) subscribers.delete(key); };
+}
+
+export function notifyFileChange(directory: string, path: string) {
+  const name = relative(directory, path).replaceAll("\\", "/");
+  if (!name.endsWith(".json") || name.startsWith(".toonflow/")) return;
+  for (const listener of subscribers.get(normalize(directory)) ?? []) listener({ path: name });
+}
+
+async function readCanvas(path: string) {
+  const bytes = await readFile(path);
+  const encoding = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le" : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be"
+    : bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? "utf-8-bom" : "utf-8";
+  const canvas = canvasSchema.parse(JSON.parse(new TextDecoder(encoding === "utf-8-bom" ? "utf-8" : encoding, { fatal: true }).decode(bytes))) as CanvasSnapshot;
+  validateCanvas(canvas);
+  return { canvas, revision: hash(bytes), encoding };
+}
+
+async function recoveryPath(directory: string, path: string, author: string) {
+  return (await resolveWorkspacePath(directory, `.toonflow/recovery/${hash(`${normalize(path)}:${author}`)}.json`, true)).path;
+}
+
+export async function saveRecovery(directory: string, path: string, author: string, value: { base: CanvasSnapshot; local: CanvasSnapshot }) {
+  const target = await recoveryPath(directory, path, author);
+  await mkdir(dirname(target), { recursive: true });
+  await writeAtomic(target, JSON.stringify({ path, savedAt: Date.now(), ...value }));
+  return relative(directory, target).replaceAll("\\", "/");
+}
+
+export async function readRecovery(directory: string, path: string, author: string) {
+  const text = await readFile(await recoveryPath(directory, path, author), "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+  return text ? JSON.parse(text) : null;
+}
+
+export async function removeRecovery(directory: string, path: string, author: string) {
+  const target = await recoveryPath(directory, path, author);
+  const content = await readFile(target).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+  if (!content) return;
+  // 处理后保留一份最近的恢复记录，不把被用户舍弃的内容立即删除，也不无限积累历史文件。
+  await writeAtomic(target.replace(/\.json$/, ".archived.json"), content);
+  await rm(target, { force: true });
+}
+
+async function normalizeTaskResults(directory: string, changes: CanvasChange[]) {
+  const tasks = changes.filter(change => change.kind === "nodes" && change.after?.data?.generationTiming?.operationId
+    && !sameCanvasValue(change.before?.data?.generationTiming, change.after.data.generationTiming));
+  for (let offset = 0; offset < tasks.length; offset += 4) await Promise.all(tasks.slice(offset, offset + 4).map(async change => {
+    const node = change.after!;
+    const type = node.type === "remote-videoGenerationNode" ? "video" : node.type === "remote-imageGenerationNode" ? "image" : undefined;
+    if (!type) return;
+    const task = await (type === "video" ? getVideoTask : getImageTask)(directory, `assets/${node.id}${type === "image" && node.data.inpaint ? "/inpaint" : ""}`);
+    if (!task || task.operationId !== node.data.generationTiming.operationId) return;
+    node.data.generationTiming = { operationId: task.operationId, startedAt: task.startedAt, ...(task.endedAt ? { endedAt: task.endedAt } : {}),
+      status: task.phase === "completed" ? "succeeded" : ["failed", "expired"].includes(task.phase) ? "failed" : task.running ? "running" : "interrupted" };
+  }));
+}
+
+export async function saveCanvas(directory: string, path: string, baseRevision: string, input: CanvasChange[], author: string) {
+  const resolved = await resolveWorkspacePath(directory, path);
+  if (!/\.json$/i.test(path) || resolved.path === directory) throw Object.assign(new Error("请选择画布文件"), { status: 400 });
+  const key = normalize(resolved.path);
+  const pending = (saves.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    const changes = structuredClone(input);
+    await normalizeTaskResults(directory, changes);
+    const release = lockWorkspaceFiles([resolved.path]);
+    try {
+      const disk = await readCanvas(resolved.path);
+      const result = mergeCanvas(disk.canvas, changes);
+      if (result.conflicts.length) return { conflict: true as const, conflicts: result.conflicts, canvas: disk.canvas, revision: disk.revision };
+      canvasSchema.parse(result.canvas);
+      try { validateCanvas(result.canvas); }
+      catch (error) {
+        if (baseRevision === disk.revision) throw Object.assign(error as Error, { status: 400 });
+        return { conflict: true as const, conflicts: [], canvas: disk.canvas, revision: disk.revision,
+          message: `${(error as Error).message}。本机修改已保留，可调整后重新合并，或保存副本并采用主机版本。` };
+      }
+      const accepted = canvasChanges(disk.canvas, result.canvas);
+      let revision = disk.revision;
+      if (accepted.length) {
+        const text = `${JSON.stringify(result.canvas, null, 2)}\n`;
+        let bytes = Buffer.from(text);
+        if (disk.encoding === "utf-8-bom") bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes]);
+        else if (disk.encoding !== "utf-8") {
+          bytes = Buffer.from(text, "utf16le");
+          if (disk.encoding === "utf-16be") bytes.swap16();
+          bytes = Buffer.concat([Buffer.from(disk.encoding === "utf-16be" ? [0xfe, 0xff] : [0xff, 0xfe]), bytes]);
+        }
+        await writeAtomic(resolved.path, bytes);
+        revision = hash(bytes);
+        for (const listener of subscribers.get(normalize(directory)) ?? []) listener({ path, revision, baseRevision: disk.revision, changes: accepted, author });
+      }
+      return { conflict: false as const, revision, baseRevision: disk.revision, changes: accepted, ...(baseRevision === disk.revision ? {} : { canvas: result.canvas }) };
+    } finally { release(); }
+  });
+  saves.set(key, pending);
+  try { return await pending; }
+  finally { if (saves.get(key) === pending) saves.delete(key); }
+}

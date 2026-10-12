@@ -15,7 +15,7 @@ export type MobileLinkConfig = {
   port: number;
   publicUrl: string;
   directories: string[];
-  devices: { id: string; name: string; tokenHash: string }[];
+  devices: { id: string; name: string; tokenHash: string; pairedAt?: number }[];
 };
 type Listener = { server: Server; sockets: Map<Socket, Set<string>> };
 type Runtime = {
@@ -73,9 +73,9 @@ export function getMobileLinkStatus(app: Application) {
     .map(entry => `http://${entry.address}:${config.port}`);
   return { initialized: conf.has("mobileLink"), enabled, hubEnabled: config.enabled || enabled, pairingAvailable: enabled && Boolean(runtime.pairing), port: config.port,
     addresses: [...new Set(addresses)], publicUrl: config.publicUrl, directories: config.directories, appVersion: app.locals.appVersion,
-    devices: config.devices.map(({ id, name }) => {
+    devices: config.devices.map(({ id, name, pairedAt }) => {
       const seen = runtime.lastSeen.get(id);
-      return { id, name, online: enabled && seen !== undefined && now - seen.at < 15000, lastSeen: seen?.at, appVersion: seen?.appVersion };
+      return { id, name, pairedAt, online: enabled && seen !== undefined && now - seen.at < 15000, lastSeen: seen?.at, appVersion: seen?.appVersion };
     }) };
 }
 
@@ -250,7 +250,7 @@ export function pairMobileDevice(req: Request, code: string, name: string) {
   runtime.pairing = undefined;
   const deviceToken = randomBytes(32).toString("base64url");
   const config = getMobileLinkConfig();
-  config.devices.push({ id: crypto.randomUUID(), name: name.trim(), tokenHash: digest(deviceToken) });
+  config.devices.push({ id: crypto.randomUUID(), name: name.trim(), tokenHash: digest(deviceToken), pairedAt: Date.now() });
   conf.set("mobileLink", config);
   return { deviceToken, name: hostname(), appVersion: req.app.locals.appVersion };
 }
@@ -261,4 +261,10 @@ export function revokeMobileDevice(app: Application, id: string) {
   const runtime = getRuntime(app);
   runtime.lastSeen.delete(id);
   for (const [socket, devices] of runtime.listener?.sockets ?? []) if (devices.has(id)) socket.destroy();
+}
+
+export function renameMobileDevice(id: string, name: string) {
+  const config = getMobileLinkConfig();
+  if (!config.devices.some(device => device.id === id)) throw Object.assign(new Error("设备授权已不存在"), { status: 404 });
+  conf.set("mobileLink", { ...config, devices: config.devices.map(device => device.id === id ? { ...device, name: name.trim() } : device) });
 }

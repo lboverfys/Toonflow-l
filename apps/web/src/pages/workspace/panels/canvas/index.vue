@@ -118,6 +118,8 @@
         <icon-unlink :size="16" />
       </el-button>
     </teleport>
+    <canvasConflict v-if="canvasSync.conflict.value" v-model="canvasSync.dialogVisible.value" :path="canvasId" :conflict="canvasSync.conflict.value"
+      :recoveryPath="canvasSync.recoveryPath.value" :recoveryError="canvasSync.recoveryError.value" :busy="canvasSync.busy.value" :resolve="canvasSync.resolve" />
   </div>
 </template>
 
@@ -156,6 +158,10 @@ import { useCanvasTools } from "./useCanvasTools";
 import type { CanvasContext } from "@toonflow/tool-canvas/runtime";
 import { loadNodeComponent } from "./loadNodeComponent";
 import { useCanvasHistory } from "./useCanvasHistory";
+import { useCanvasSync } from "./useCanvasSync";
+import canvasConflict from "./components/canvasConflict.vue";
+import type { CanvasSnapshot } from "@toonflow/server/canvasMerge";
+import type { CanvasUpdate } from "@/lib/workspaceFiles";
 import { useCanvasNavigation } from "./useCanvasNavigation";
 import { copyNodeToClipboard, copyNodesToClipboard, nodeClipboardCommand, readClipboardNodes } from "./nodeClipboard";
 import { readClipboardFiles, readClipboardText, writeClipboardImage } from "@/lib/clipboard";
@@ -285,6 +291,16 @@ const canvasHistory = useCanvasHistory(flow, () =>
   project.value?.directory && canvasId.value ? JSON.stringify([project.value.directory, canvasId.value]) : ""
 );
 const { canUndo, canRedo } = canvasHistory;
+const canvasSync = useCanvasSync(flow, () => project.value?.directory && canvasId.value ? { directory: project.value.directory, path: canvasId.value } : undefined,
+  canvasHistory, disk => {
+    canvasMenuRef.value?.updateCanvasSnapshot(disk);
+    canvasDirty.value = canvasSync.isDirty();
+    if (canvasDirty.value) scheduleCanvasSave();
+  });
+watch([canvasSync.conflict, canvasSync.recoveryError], ([conflict, recoveryError]) => {
+  if (conflict || recoveryError) canvasSaveError.value = `${canvasId.value}：${recoveryError || conflict?.message}`;
+  else { canvasSaveError.value = ""; saveError = undefined; }
+});
 provide("batchCanvasHistory", canvasHistory.batch);
 const getNodeTools = useNodeToolsContext();
 const { addNodes, addEdges, removeEdges, findEdge, findNode, toObject, viewport, screenToFlowCoordinate } = flow;
@@ -322,6 +338,7 @@ const canvasReady = computed(() => !!canvasId.value && !nodeListLoading.value &&
 provide("canvas", getCanvasContext);
 defineExpose({ canvasId, canvasReady, getCanvasContext, readDocumentNode, saveDocumentNode, mountDocumentNode, observeDocumentNode, prepareCanvasDelete, flushSave: flushCanvasSave, cancelSave: cancelCanvasSave,
   prepareRefresh, refreshCanvas, refreshCanvasList: (beforeApply?: () => void) => canvasMenuRef.value?.refreshCanvasList(beforeApply),
+  receiveCanvasUpdate: (event?: CanvasUpdate) => canvasSync.sync(event), showSaveConflict: () => { canvasSync.dialogVisible.value = true; },
   get revision() { return saveRevision; },
   syncCanvasPath: (previous: string, target: string) => canvasMenuRef.value?.syncCanvasPath(previous, target),
   getMentionNodes: () => flow.nodes.value, findMentionNode: flow.findNode,
@@ -578,37 +595,33 @@ let saveRevision = 0;
 let writtenRevision = -1;
 const saveCanvas = debounce((directory: string, fileName: string) => {
   const requestedRevision = saveRevision;
-  // ACT: 同页保存串行取最新修订号；其他客户端已写入时由文件快照接口拒绝覆盖。
+  // 同页保存串行取最新修改，主机按节点与字段合并其他成员的更新。
   saving = saving.then(async () => {
     if (requestedRevision <= writtenRevision) return;
     try {
       if (!canvasMenuRef.value) throw new Error("画布尚未就绪");
       if (directory !== project.value?.directory || fileName !== canvasId.value) throw new Error("画布已切换，无法将当前内容保存到原画布");
-      const flow = toObject();
       const revision = saveRevision;
-      await canvasMenuRef.value.writeCanvasSnapshot(directory, fileName, { nodes: flow.nodes, edges: flow.edges, viewport: flow.viewport });
+      await canvasSync.save();
       writtenRevision = revision;
       saveError = undefined;
       canvasSaveError.value = "";
-      if (revision === saveRevision) canvasDirty.value = false;
+      canvasDirty.value = canvasSync.isDirty();
     } catch (err) {
+      const previousError = canvasSaveError.value;
       saveError = err;
       canvasSaveError.value = axios.isAxiosError<{ message?: string }>(err) ? err.response?.data.message || err.message : err instanceof Error ? err.message : "画布保存失败";
-      ElMessage.error(
-        axios.isAxiosError<{ message?: string }>(err)
-          ? err.response?.data.message || "画布保存失败"
-          : err instanceof Error
-          ? err.message
-          : "画布保存失败"
-      );
+      if (!canvasSync.conflict.value && canvasSaveError.value !== previousError) ElMessage.error({ message: canvasSaveError.value, grouping: true });
     }
   });
 }, 500);
 
 function scheduleCanvasSave() {
+  if (canvasSync.applying.value) return;
   if (saveCancelled || !project.value?.directory || !canvasId.value) return;
   canvasDirty.value = true;
   saveRevision++;
+  if (canvasSync.conflict.value) { canvasSync.scheduleBackup(); return; }
   if (savePaused) {
     changedWhilePaused = true;
     return;
@@ -618,6 +631,7 @@ function scheduleCanvasSave() {
 }
 
 function scheduleCanvasChange() {
+  if (canvasSync.applying.value) return;
   scheduleCanvasSave();
   canvasHistory.record();
 }
@@ -633,8 +647,9 @@ const nodeRuntimeFields = new Set([
   "resizing",
   "dragging",
   "events",
+  "initialized",
 ]);
-const edgeRuntimeFields = new Set(["data", "selected", "sourceNode", "targetNode", "sourceX", "sourceY", "targetX", "targetY", "events"]);
+const edgeRuntimeFields = new Set(["data", "selected", "sourceNode", "targetNode", "sourceX", "sourceY", "targetX", "targetY", "events", "initialized"]);
 // ACT: 仅增删、替换元素时扫描列表；位移与 data 各自监听，单个节点变化不遍历其余节点。
 watch(
   () => [...flow.nodes.value, ...flow.edges.value],
@@ -687,7 +702,8 @@ watch(() => [viewport.value.x, viewport.value.y, viewport.value.zoom], () => {
 }, { flush: "post" });
 onScopeDispose(() => rememberViewport.flush());
 
-function resetSavedState() {
+function resetSavedState(disk: { canvas: CanvasSnapshot; revision: string }) {
+  canvasSync.initialize(disk);
   canvasDirty.value = false;
   canvasSaveError.value = "";
   saveError = undefined;
@@ -696,20 +712,12 @@ function resetSavedState() {
 
 async function prepareRefresh() {
   if (!canvasReady.value && canvasId.value) throw new Error("画布正在加载，请稍后刷新");
-  await Promise.all(flow.nodes.value.map(node => useNodeEvent(node.id, flow).emit("save", "reload")));
+  await canvasSync.sync();
   await flushCanvasSave();
 }
 
 async function refreshCanvas() {
   await prepareRefresh();
-  await flushCanvasSave(async () => {
-    const revision = saveRevision;
-    await canvasMenuRef.value?.refreshCanvas(async () => {
-      await Promise.all(flow.nodes.value.map(node => useNodeEvent(node.id, flow).emit("save", "reload")));
-      await nextTick();
-      if (revision !== saveRevision) throw new Error("刷新期间画布发生了变化，已保留当前修改，请稍后再试");
-    });
-  });
 }
 
 watch(
@@ -754,10 +762,12 @@ function flushCanvasSave(action?: () => Promise<void>): Promise<void> {
 
 async function saveCanvasState(action?: () => Promise<void>) {
   if (saveCancelled) throw new Error("画布保存已取消");
+  if (canvasSync.conflict.value) { await canvasSync.flushRecovery(); throw new Error(canvasSync.conflict.value.message); }
   await Promise.all(flow.getNodes.value.map((node) => useNodeEvent(node.id, flow).emit("save")));
   await nextTick();
   if (saveCancelled) throw new Error("画布保存已取消");
-  if (saveError && project.value?.directory && canvasId.value) saveCanvas(project.value.directory, canvasId.value);
+  if (canvasSync.isDirty()) scheduleCanvasSave();
+  else if (saveError && project.value?.directory && canvasId.value) saveCanvas(project.value.directory, canvasId.value);
   if (action) savePaused = true;
   try {
     let revision: number;
