@@ -45,13 +45,12 @@ watch(() => workspaceStore.project?.directory, (directory, _previous, onCleanup)
   const controller = new AbortController();
   onCleanup(() => controller.abort());
   void useWorkspaceFiles(directory).watchCanvases(async event => {
-    if (event.heartbeat) return;
     const path = event.path ? canonicalCanvasPath(event.path) : undefined;
     const panels = [...instances.values()].filter(panel => panel.canvasReady && panel.canvasId && (!path || panel.canvasId === path));
     const results = await Promise.allSettled(panels.map(panel => panel.receiveCanvasUpdate(event.ready ? undefined : event)));
     const failure = results.find(result => result.status === "rejected");
-    syncError.value = failure?.status === "rejected" ? String(failure.reason?.message ?? failure.reason) : "";
-  }, error => { syncError.value = error instanceof Error ? error.message : "画布同步暂时中断"; }, controller.signal);
+    if (failure?.status === "rejected") throw failure.reason;
+  }, error => { syncError.value = error === undefined ? "" : error instanceof Error ? error.message : "画布同步暂时中断"; }, controller.signal);
 }, { immediate: true });
 const canvases = shallowRef<{ id: string; name: string }[]>([]);
 let fileActionBusy = false;
