@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import type { ChildProcess } from "node:child_process";
 import puppeteer, { type Browser, type BrowserContext, type CDPSession, type ElementHandle, type KeyInput, type Page, type Protocol, type SerializedAXNode } from "puppeteer-core";
 import type { ToolDefinition } from "@toonflow/tools-scaffold/runtime";
+import { resolveWebAddresses } from "@toonflow/tools-scaffold/network";
 import { browserActionSchema, browserConfigSchema, browserInputSchema, type BrowserAction, type BrowserSessionState, type BrowserStreamEvent } from "./protocol";
 
 type ToolResult = Awaited<ReturnType<ToolDefinition["execute"]>>;
@@ -14,6 +15,7 @@ type Subscriber = { listener: (event: BrowserStreamEvent) => void; frame?: Frame
 type BrowserSession = {
   cwd: string;
   ownerKey: string;
+  allowPrivateNetwork: boolean;
   browser: Browser;
   context: BrowserContext;
   state: BrowserSessionState;
@@ -110,7 +112,36 @@ export function createBrowserRuntime() {
   const processes = new Set<ChildProcess>();
   const sessions = new Map<string, BrowserSession>();
   const owners = new Map<string, Promise<BrowserSession>>();
+  const idleTimers = new Map<Browser, ReturnType<typeof setTimeout>>();
+  const pendingSessions = new Map<Browser, number>();
   let shuttingDown = false;
+
+  function scheduleBrowserClose(browser: Browser) {
+    clearTimeout(idleTimers.get(browser));
+    idleTimers.delete(browser);
+    if (shuttingDown || !browser.connected || pendingSessions.has(browser) || [...sessions.values()].some(session => session.browser === browser)) return;
+    // ACT: 最后一个会话关闭后保留一分钟，允许连续新建对话复用；到期只关闭本运行时启动的浏览器。
+    const timer = setTimeout(() => {
+      idleTimers.delete(browser);
+      if (pendingSessions.has(browser) || [...sessions.values()].some(session => session.browser === browser)) return;
+      for (const [path, pending] of browsers) {
+        void pending.then(async current => {
+          if (current !== browser || browsers.get(path) !== pending) return;
+          if (pendingSessions.has(browser) || [...sessions.values()].some(session => session.browser === browser)) return;
+          browsers.delete(path);
+          await closeBrowser(browser);
+        }).catch(error => console.error("空闲浏览器关闭失败：", error));
+      }
+    }, 60_000);
+    timer.unref();
+    idleTimers.set(browser, timer);
+  }
+
+  async function closeBrowser(browser: Browser) {
+    const timer = setTimeout(() => { browser.process()?.kill("SIGKILL"); }, 3000);
+    try { await browser.close(); }
+    finally { clearTimeout(timer); }
+  }
 
   process.once("exit", () => {
     for (const child of processes) if (child.exitCode === null && !child.killed) child.kill("SIGKILL");
@@ -249,6 +280,7 @@ export function createBrowserRuntime() {
       await stopStream(session);
       session.tabs.clear();
       session.pages.clear();
+      scheduleBrowserClose(session.browser);
     })();
     return session.closing;
   }
@@ -287,6 +319,7 @@ export function createBrowserRuntime() {
       page.setDefaultNavigationTimeout(20000);
       await page.setUserAgent(userAgents.get(session.browser)!);
       await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
+      await page.setBypassServiceWorker(true);
       await page.setRequestInterception(true);
       page.on("request", request => {
         if (request.isInterceptResolutionHandled()) return;
@@ -296,7 +329,15 @@ export function createBrowserRuntime() {
           void page.close().catch(() => {});
           return;
         }
-        void request.continue().catch(() => {});
+        void (async () => {
+          const url = new URL(request.url());
+          // ACT: 覆盖页面、子资源与 XHR；Chromium 仍自行解析连接，DNS 重绑定及浏览器旁路协议需系统网络隔离。
+          if (!session.allowPrivateNetwork && ["http:", "https:"].includes(url.protocol)) await resolveWebAddresses(url);
+          if (!request.isInterceptResolutionHandled()) await request.continue();
+        })().catch(async error => {
+          if (!request.isInterceptResolutionHandled()) await request.abort("blockedbyclient").catch(() => {});
+          if (!session.closed) emit(session, { type: "error", message: error instanceof Error ? error.message : "网页请求已被阻止" });
+        });
       });
       page.on("framenavigated", frame => {
         if (session.state.tabId === tab.id) clearRefs(session);
@@ -346,7 +387,9 @@ export function createBrowserRuntime() {
           child.once("exit", () => processes.delete(child));
         }
         browser.once("disconnected", () => {
-          browsers.delete(executablePath);
+          if (browsers.get(executablePath) === pending) browsers.delete(executablePath);
+          clearTimeout(idleTimers.get(browser));
+          idleTimers.delete(browser);
           for (const session of sessions.values()) if (session.browser === browser) void closeSession(session).catch(() => {});
         });
         try { userAgents.set(browser, await readUserAgent(browser)); }
@@ -359,38 +402,48 @@ export function createBrowserRuntime() {
     return pending;
   }
 
-  async function createSession(cwd: string, ownerKey: string, executablePath: string, signal: AbortSignal) {
+  async function createSession(cwd: string, ownerKey: string, executablePath: string, allowPrivateNetwork: boolean, signal: AbortSignal) {
     signal.throwIfAborted();
     const executable = await findExecutable(executablePath);
     signal.throwIfAborted();
     const browser = await getBrowser(executable);
-    signal.throwIfAborted();
-    if (shuttingDown) throw new Error("浏览器运行时正在关闭");
-    const context = await browser.createBrowserContext();
-    if (signal.aborted || shuttingDown) {
-      await context.close().catch(() => {});
-      signal.throwIfAborted();
-      throw new Error("浏览器运行时正在关闭");
-    }
-    const session: BrowserSession = {
-      cwd, ownerKey, browser, context,
-      state: { browserSessionId: crypto.randomUUID(), tabId: "", url: "about:blank", title: "", canGoBack: false, canGoForward: false, status: "running" },
-      tabs: new Map(), pages: new Map(), refs: new Map(), snapshot: [], snapshotVersion: 0,
-      queue: Promise.resolve(), subscribers: new Set(), streamQueue: Promise.resolve(), closed: false,
-    };
-    sessions.set(session.state.browserSessionId, session);
-    context.on("targetcreated", target => {
-      if (target.type() === "page") void target.page().then(page => page ? watchPage(session, page) : undefined).catch(() => {});
-    });
+    clearTimeout(idleTimers.get(browser));
+    idleTimers.delete(browser);
+    pendingSessions.set(browser, (pendingSessions.get(browser) ?? 0) + 1);
     try {
       signal.throwIfAborted();
-      const tab = await watchPage(session, await context.newPage());
-      signal.throwIfAborted();
-      await activateTab(session, tab);
-      return session;
-    } catch (error) {
-      await closeSession(session);
-      throw error;
+      if (shuttingDown) throw new Error("浏览器运行时正在关闭");
+      const context = await browser.createBrowserContext();
+      if (signal.aborted || shuttingDown) {
+        await context.close().catch(() => {});
+        signal.throwIfAborted();
+        throw new Error("浏览器运行时正在关闭");
+      }
+      const session: BrowserSession = {
+        cwd, ownerKey, browser, context, allowPrivateNetwork,
+        state: { browserSessionId: crypto.randomUUID(), tabId: "", url: "about:blank", title: "", canGoBack: false, canGoForward: false, status: "running" },
+        tabs: new Map(), pages: new Map(), refs: new Map(), snapshot: [], snapshotVersion: 0,
+        queue: Promise.resolve(), subscribers: new Set(), streamQueue: Promise.resolve(), closed: false,
+      };
+      sessions.set(session.state.browserSessionId, session);
+      context.on("targetcreated", target => {
+        if (target.type() === "page") void target.page().then(page => page ? watchPage(session, page) : undefined).catch(() => {});
+      });
+      try {
+        signal.throwIfAborted();
+        const tab = await watchPage(session, await context.newPage());
+        signal.throwIfAborted();
+        await activateTab(session, tab);
+        return session;
+      } catch (error) {
+        await closeSession(session);
+        throw error;
+      }
+    } finally {
+      const remaining = pendingSessions.get(browser)! - 1;
+      if (remaining) pendingSessions.set(browser, remaining);
+      else pendingSessions.delete(browser);
+      scheduleBrowserClose(browser);
     }
   }
 
@@ -536,7 +589,7 @@ export function createBrowserRuntime() {
             let pending = owners.get(ownerKey);
             if (!pending) {
               if (action.action !== "open") throw new Error("请先调用 open 打开浏览器");
-              pending = createSession(directory, ownerKey, settings.executablePath, requestSignal);
+              pending = createSession(directory, ownerKey, settings.executablePath, settings.allowPrivateNetwork, requestSignal);
               owners.set(ownerKey, pending);
               void pending.catch(() => { if (owners.get(ownerKey) === pending) owners.delete(ownerKey); });
             }
@@ -545,7 +598,11 @@ export function createBrowserRuntime() {
           }
           if (requestSignal.aborted) { await closeSession(session); requestSignal.throwIfAborted(); }
           const current = session;
-          const result = current.queue.then(() => perform(current, action, requestSignal, onUpdate));
+          const result = current.queue.then(async () => {
+            current.allowPrivateNetwork = settings.allowPrivateNetwork;
+            if (!settings.allowPrivateNetwork && "url" in action && action.url) await resolveWebAddresses(new URL(action.url), requestSignal);
+            return perform(current, action, requestSignal, onUpdate);
+          });
           current.queue = result.then(() => {}, () => {});
           return result;
         })();
@@ -698,14 +755,13 @@ export function createBrowserRuntime() {
     },
     async closeAll() {
       shuttingDown = true;
+      for (const timer of idleTimers.values()) clearTimeout(timer);
+      idleTimers.clear();
       const closingSessions = Promise.allSettled([...sessions.values()].map(session => closeSession(session)));
       const opened = await Promise.allSettled(browsers.values());
       await Promise.allSettled(opened.map(async result => {
         if (result.status !== "fulfilled") return;
-        const browser = result.value;
-        const closing = browser.close();
-        const timer = setTimeout(() => { browser.process()?.kill("SIGKILL"); }, 3000);
-        try { await closing; } finally { clearTimeout(timer); }
+        await closeBrowser(result.value);
       }));
       await closingSessions;
       browsers.clear();

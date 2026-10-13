@@ -15,44 +15,43 @@
     @drop="dropFiles">
     <vue-flow
       :id="runtimeKey"
-      :only-render-visible-elements="false"
-      :nodes-draggable="true"
-      :node-types="nodeTypes"
+      :onlyRenderVisibleElements="false"
+      :nodesDraggable="true"
+      :nodeTypes="nodeTypes"
       :edgeTypes="edgeTypes"
-      :snap-to-grid="snapEnabled"
-      :snap-grid="[16, 16]"
+      :snapToGrid="snapEnabled"
+      :snapGrid="[16, 16]"
       :minZoom="0.02"
-      :max-zoom="8"
-      :nodes-connectable="true"
-      :connection-mode="ConnectionMode.Strict"
-      :nodes-focusable="false"
-      :edges-focusable="false"
-      :edges-updatable="false"
-      :elevate-nodes-on-select="true"
-      :elevate-edges-on-select="false"
-      :disable-keyboard-a11y="true"
+      :maxZoom="8"
+      :nodesConnectable="true"
+      :connectionMode="ConnectionMode.Strict"
+      :nodesFocusable="false"
+      :edgesFocusable="false"
+      :edgesUpdatable="false"
+      :elevateNodesOnSelect="true"
+      :elevateEdgesOnSelect="false"
+      :disableKeyboardA11y="true"
       :selectNodesOnDrag="false"
-      :auto-pan-on-node-drag="false"
-      :auto-pan-on-connect="false"
-      :zoom-on-double-click="false"
+      :autoPanOnNodeDrag="false"
+      :autoPanOnConnect="false"
+      :zoomOnDoubleClick="false"
       :zoomOnScroll="false"
       :zoomOnPinch="active && !settingsVisible"
       :panOnScroll="active && !settingsVisible"
       :panOnScrollSpeed="1"
       :panOnDrag="handMode || isMobile ? true : [1]"
       :panOnScrollMode="PanOnScrollMode.Free"
-      :delete-key-code="null"
+      :deleteKeyCode="null"
       :selectionKeyCode="!handMode && !isMobile"
       :selectionMode="SelectionMode.Partial"
-      :multi-selection-key-code="null"
+      :multiSelectionKeyCode="null"
       :zoomActivationKeyCode="zoomKeyPressed ? true : null"
       :panActivationKeyCode="panKeyPressed ? true : null"
-      v-model="flowData"
       @connect="addEdges"
       @edgeClick="showEdgeDisconnect"
       @paneClick="edgeDisconnect = undefined"
       @moveStart="edgeDisconnect = undefined"
-      :default-edge-options="defaultEdgeOptions">
+      :defaultEdgeOptions="defaultEdgeOptions">
       <template v-for="type in remoteNodeTypes" :key="type" #[`node-${type}`]="nodeProps">
         <remoteNode
           v-if="!canvasReloading"
@@ -61,7 +60,7 @@
           :error="nodeErrors[type]"
           :loading="nodeLoads.has(type) || (nodeListLoading && !nodeTypes[type] && !nodeErrors[type])" />
       </template>
-      <background :gap="16" pattern-color="var(--el-border-color)" />
+      <background :gap="16" patternColor="var(--el-border-color)" />
       <canvasMenu ref="canvasMenuRef" v-model:canvasId="canvasId" :directory="project?.directory" :initialCanvasId="initialCanvasId" :activateCanvas="activateCanvas" :flushSave="flushCanvases ?? flushCanvasSave" @loaded="resetSavedState" @reload="canvasReloading = $event">
         <assetLibrary ref="assetLibraryRef" v-model="assetsVisible" :directory="project?.directory" />
       </canvasMenu>
@@ -124,19 +123,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, inject, markRaw, nextTick, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowReactive, shallowRef, watch, type Component } from "vue";
+import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowRef, watch } from "vue";
 import axios from "axios";
 import { debounce } from "lodash-es";
 import { ElMessage } from "element-plus";
 import { isMobile } from "@/lib/mobile";
 import { storeToRefs } from "pinia";
 import { IconUnlink } from "@tabler/icons-vue";
-import * as vueRuntime from "vue";
-import * as vueFlowRuntime from "@vue-flow/core";
-import * as elementPlusRuntime from "element-plus";
-import type * as threeRuntime from "three";
-import { runAgentLoop } from "@earendil-works/pi-agent-core";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import "element-plus/dist/index.css";
 import {
   VueFlow,
@@ -150,15 +143,16 @@ import {
   type Edge,
   type GraphEdge,
   type EdgeMouseEvent,
-  type NodeTypesObject,
   type XYPosition,
 } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { useCanvasTools } from "./useCanvasTools";
 import type { CanvasContext } from "@toonflow/tool-canvas/runtime";
-import { loadNodeComponent } from "./loadNodeComponent";
 import { useCanvasHistory } from "./useCanvasHistory";
 import { useCanvasSync } from "./useCanvasSync";
+import { useCanvasSave } from "./useCanvasSave";
+import { useDocumentNodes } from "./useDocumentNodes";
+import { useRemoteNodes } from "./useRemoteNodes";
 import canvasConflict from "./components/canvasConflict.vue";
 import type { CanvasSnapshot } from "@toonflow/server/canvasMerge";
 import type { CanvasUpdate } from "@/lib/workspaceFiles";
@@ -170,16 +164,13 @@ import remoteNode from "./components/remoteNode.vue";
 import canvasMenu from "./components/canvasMenu.vue";
 import canvasControls from "./components/canvasControls.vue";
 import assetLibrary from "./components/assetLibrary.vue";
-import groupNode from "./components/groupNode.vue";
 import viewportEdge from "./components/viewportEdge.vue";
 import selectionToolbar from "./components/selectionToolbar.vue";
 import nodeSearch from "./components/nodeSearch.vue";
 import { finishGroupDrag, getSelectionTree } from "./selectionNodes";
 import type { NodeOutput } from "@toonflow/nodes-scaffold/values";
-import type { NodeConnectionFeedback, NodeHandle } from "@toonflow/nodes-scaffold/connection";
+import type { NodeConnectionFeedback } from "@toonflow/nodes-scaffold/connection";
 import { useNodeEvent } from "@toonflow/nodes-scaffold/nodeEvent";
-import type { NodeDocumentContext, NodeDocumentState } from "@toonflow/nodes-scaffold/nodeDocument";
-import { useNodeToolsContext } from "@toonflow/nodes-scaffold/nodeTools";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { generalSettings } from "@/stores/settings";
 import { getShortcutBindings, shortcutLabel, shortcutMatches, shortcutPressed } from "@/lib/canvasShortcuts";
@@ -212,7 +203,6 @@ provide("canvasFocusInsets", () => {
   return leftSpace >= rightSpace ? { left: 0, right: canvas.width - leftSpace, top: 64, bottom: 80 }
     : { left: canvas.width - rightSpace, right: 0, top: 64, bottom: 80 };
 });
-const flowData = ref<(Node | Edge)[]>([]);
 const canvasId = ref("");
 const canvasReloading = ref(false);
 const nodeMenuRef = ref<InstanceType<typeof nodeMenu>>();
@@ -220,19 +210,7 @@ const canvasMenuRef = ref<InstanceType<typeof canvasMenu>>();
 const canvasControlsRef = ref<InstanceType<typeof canvasControls>>();
 const selectionToolbarRef = ref<InstanceType<typeof selectionToolbar>>();
 const nodeSearchRef = ref<InstanceType<typeof nodeSearch>>();
-const nodeTypes = shallowRef<NodeTypesObject>({ canvasGroup: markRaw(groupNode) });
 const edgeTypes = markRaw({ "simple-bezier": markRaw(viewportEdge) });
-const nodeConfigs = shallowRef<Record<string, Record<string, unknown>>>({});
-const nodeOptions = ref<{ type: string; label: string }[]>([]);
-const nodeLoads = shallowReactive(new Map<string, Promise<void>>());
-const nodeReloads = new Set<string>();
-const nodeErrors = ref<Record<string, string>>({});
-const availableNodes = computed(() => nodeOptions.value.filter(node => nodeTypes.value[node.type] && !nodeErrors.value[node.type]));
-const nodeListLoading = ref(true);
-const remoteNodeTypes = computed(() => [
-  ...new Set((flowData.value as { type?: string }[]).map((item) => item.type).filter((type): type is string => !!type?.startsWith("remote-"))),
-]);
-let loadRequest = 0;
 const snapEnabled = ref(false);
 const zoomKeyPressed = ref(false);
 const panKeyPressed = ref(false);
@@ -250,6 +228,9 @@ const assetsVisible = ref(false);
 const assetLibraryRef = ref<InstanceType<typeof assetLibrary>>();
 const edgeDisconnect = ref<{ id: string; x: number; y: number }>();
 const flow = useVueFlow(props.runtimeKey);
+const { nodeTypes, nodeLoads, nodeErrors, nodeListLoading, remoteNodeTypes, availableNodes, ensureNodeType, prepareNodeMenu } = useRemoteNodes(flow, {
+  signal: () => canvasController.signal, revision: () => canvasSave.revision,
+});
 const canvasOverview = ref(false);
 watch(() => flow.viewport.value.zoom, zoom => {
   if (zoom < 0.35) canvasOverview.value = true;
@@ -261,12 +242,8 @@ const navigation = useCanvasNavigation(flow, () =>
   project.value?.directory && canvasId.value ? JSON.stringify([project.value.directory, canvasId.value]) : "",
   () => props.active && !props.settingsVisible,
 );
-const nodeDocument: NodeDocumentContext = { targets: shallowReactive(new Map()), mounts: new Map(), states: shallowReactive(new Map()) };
 const canvasDirty = ref(false);
 const canvasSaveError = ref("");
-const documentObservers = new Set<() => void>();
-onScopeDispose(() => { for (const release of documentObservers) release(); });
-provide("nodeDocument", nodeDocument);
 onScopeDispose(anonymousData.observeCanvas(() => props.active && canvasId.value
   ? { nodes: flow.nodes.value, edgeCount: flow.edges.value.length }
   : undefined));
@@ -292,17 +269,20 @@ const canvasHistory = useCanvasHistory(flow, () =>
 );
 const { canUndo, canRedo } = canvasHistory;
 const canvasSync = useCanvasSync(flow, () => project.value?.directory && canvasId.value ? { directory: project.value.directory, path: canvasId.value } : undefined,
-  canvasHistory, disk => {
+  canvasHistory, (disk, dirty) => {
     canvasMenuRef.value?.updateCanvasSnapshot(disk);
-    canvasDirty.value = canvasSync.isDirty();
+    canvasDirty.value = dirty;
     if (canvasDirty.value) scheduleCanvasSave();
   });
+const canvasSave = useCanvasSave(flow, canvasSync, {
+  directory: () => project.value?.directory, path: () => canvasId.value, ready: () => !!canvasMenuRef.value, dirty: canvasDirty, error: canvasSaveError,
+});
+const { scheduleCanvasSave, resetSavedState, flushCanvasSave, cancelCanvasSave } = canvasSave;
 watch([canvasSync.conflict, canvasSync.recoveryError], ([conflict, recoveryError]) => {
   if (conflict || recoveryError) canvasSaveError.value = `${canvasId.value}：${recoveryError || conflict?.message}`;
-  else { canvasSaveError.value = ""; saveError = undefined; }
+  else { canvasSaveError.value = ""; canvasSave.clearError(); }
 });
 provide("batchCanvasHistory", canvasHistory.batch);
-const getNodeTools = useNodeToolsContext();
 const { addNodes, addEdges, removeEdges, findEdge, findNode, toObject, viewport, screenToFlowCoordinate } = flow;
 provide("copyNodeToClipboard", async (node: Parameters<typeof copyNodeToClipboard>[0]) => {
   const directory = project.value?.directory;
@@ -336,14 +316,19 @@ function getCanvasContext() {
 }
 const canvasReady = computed(() => !!canvasId.value && !nodeListLoading.value && nodeLoads.size === 0);
 provide("canvas", getCanvasContext);
+const { readDocumentNode, saveDocumentNode, mountDocumentNode, observeDocumentNode } = useDocumentNodes({
+  directory: () => project.value?.directory, canvasId, findNode, canvasDirty, canvasSaveError, nodeErrors, flushCanvasSave,
+  signal: () => canvasController.signal,
+  syncDocumentNode: (...args) => canvasMenuRef.value?.syncDocumentNode(...args),
+});
 defineExpose({ canvasId, canvasReady, getCanvasContext, readDocumentNode, saveDocumentNode, mountDocumentNode, observeDocumentNode, prepareCanvasDelete, flushSave: flushCanvasSave, cancelSave: cancelCanvasSave,
   prepareRefresh, refreshCanvas, refreshCanvasList: (beforeApply?: () => void) => canvasMenuRef.value?.refreshCanvasList(beforeApply),
   receiveCanvasUpdate: (event?: CanvasUpdate) => canvasSync.sync(event), showSaveConflict: () => { canvasSync.dialogVisible.value = true; },
-  get revision() { return saveRevision; },
+  get revision() { return canvasSave.revision; },
   syncCanvasPath: (previous: string, target: string) => canvasMenuRef.value?.syncCanvasPath(previous, target),
   getMentionNodes: () => flow.nodes.value, findMentionNode: flow.findNode,
   getRetainedNodes: canvasHistory.getRetainedNodes,
-  get saveBusy() { return savePaused; }, get loadError() { return canvasMenuRef.value?.loadError ?? ""; }, saveError: canvasSaveError,
+  get saveBusy() { return canvasSave.paused; }, get loadError() { return canvasMenuRef.value?.loadError ?? ""; }, saveError: canvasSaveError,
 });
 
 async function prepareCanvasDelete() {
@@ -370,150 +355,6 @@ async function prepareCanvasDelete() {
   if (flow.getNodes.value.length !== nodes.length || nodes.some(node => flow.findNode(node.id) !== node)) {
     throw new Error("画布节点已变化，请重新删除");
   }
-}
-
-type DocumentNodeData = { label?: string; handles?: NodeHandle[]; outputs?: Record<string, NodeOutput | undefined>; textPath?: string };
-
-function checkDocumentDirectory(directory: string) {
-  if (!directory || directory !== project.value?.directory) throw new Error("工作目录已切换，请重新打开节点");
-}
-
-function observeDocumentNode(directory: string, canvasPath: string, nodeId: string, onState: (state: NodeDocumentState) => void) {
-  checkDocumentDirectory(directory);
-  if (canvasId.value !== canvasPath || !findNode(nodeId)) throw new Error("节点不存在，请刷新文件树");
-  const stop = watch((): NodeDocumentState => {
-    const node = findNode(nodeId);
-    const state = nodeDocument.states.get(nodeId);
-    return { dirty: !!node && (canvasDirty.value || !!state?.dirty),
-      error: state?.error || canvasSaveError.value || (node && nodeErrors.value[node.type]) || "", deleted: !node };
-  }, onState, { immediate: true, flush: "sync" });
-  const release = () => { stop(); documentObservers.delete(dispose); };
-  const dispose = () => { onState({ dirty: false, error: "", deleted: true }); release(); };
-  documentObservers.add(dispose);
-  return {
-    release,
-    async flushSave() {
-      checkDocumentDirectory(directory);
-      if (!findNode(nodeId)) throw new Error("节点已删除，请刷新文件树");
-      await flushCanvasSave();
-    },
-  };
-}
-
-async function mountDocumentNode(directory: string, canvasPath: string, nodeId: string, target: HTMLElement) {
-  checkDocumentDirectory(directory);
-  if (canvasId.value !== canvasPath) throw new Error("画布已切换，请重新打开节点");
-  await nextTick();
-  checkDocumentDirectory(directory);
-  const node = findNode(nodeId);
-  if (!node) throw new Error("节点已删除，请刷新文件树");
-  if (nodeErrors.value[node.type]) throw new Error(nodeErrors.value[node.type]);
-  const mount = nodeDocument.mounts.get(nodeId);
-  if (!mount) throw new Error("当前节点未提供文档视图，请确认节点正常加载并更新节点插件");
-  const release = mount(target);
-  try {
-    await nextTick();
-    checkDocumentDirectory(directory);
-    if (!target.isConnected || !target.querySelector(".documentNode")) throw new Error("节点文档视图加载失败，请重新打开节点");
-    return release;
-  } catch (error) {
-    release();
-    throw error;
-  }
-}
-
-function documentHandles(node: Node<DocumentNodeData>) {
-  const handles = node.data?.handles;
-  if (Array.isArray(handles) && handles.length) {
-    return handles.filter(
-      (handle) =>
-        handle &&
-        typeof handle.id === "string" &&
-        handle.type === "source" &&
-        (Array.isArray(handle.dataType) ? handle.dataType.includes("STRING") : handle.dataType === "STRING")
-    );
-  }
-  return Object.entries(node.data?.outputs ?? {}).flatMap(([id, output]) => (output?.dataType === "STRING" ? [{ id, label: id }] : []));
-}
-
-async function readDocumentCanvas(directory: string, canvasPath: string, nodeId: string) {
-  checkDocumentDirectory(directory);
-  const files = useWorkspaceFiles(directory);
-  const canvas = await files.readJson<{ toonflowCanvas?: boolean; nodes?: Node<DocumentNodeData>[] }>(canvasPath);
-  checkDocumentDirectory(directory);
-  if (canvas?.toonflowCanvas !== true || !Array.isArray(canvas.nodes)) throw new Error("文件不是有效画布");
-  const node = canvas.nodes.find((item) => item && item.id === nodeId);
-  if (!node) throw new Error("节点已删除，请刷新文件树");
-  if (node.data !== undefined && (!node.data || typeof node.data !== "object" || Array.isArray(node.data))) throw new Error("节点数据无效");
-  const liveNode = canvasId.value === canvasPath ? findNode(nodeId) : undefined;
-  if (canvasId.value === canvasPath && !liveNode) throw new Error("节点已删除，请刷新文件树");
-  const textPath = node.data?.textPath;
-  if (
-    textPath !== undefined &&
-    (typeof textPath !== "string" ||
-      !textPath.trim() ||
-      /^(?:[a-z][a-z\d+.-]*:|[\\/])/i.test(textPath) ||
-      textPath.includes("\0") ||
-      textPath.split(/[\\/]/).includes(".."))
-  )
-    throw new Error("文本文件路径必须位于工作区内");
-  return { files, canvas, node, liveNode, textPath };
-}
-
-async function readDocumentNode(directory: string, canvasPath: string, nodeId: string) {
-  checkDocumentDirectory(directory);
-  await flushCanvasSave();
-  const { files, node, liveNode, textPath } = await readDocumentCanvas(directory, canvasPath, nodeId);
-  const source = liveNode ?? node;
-  const handles = documentHandles(source);
-  const storedText = textPath === undefined ? undefined : await files.readText(textPath);
-  checkDocumentDirectory(directory);
-  return {
-    label: typeof source.data?.label === "string" ? source.data.label : nodeId,
-    outputs: handles.map((handle) => {
-      const output = source.data?.outputs?.[handle.id];
-      return {
-        id: handle.id,
-        label: handle.label || handle.id,
-        text: output?.dataType === "STRING" && typeof output.value === "string" ? output.value : storedText ?? "",
-      };
-    }),
-  };
-}
-
-async function saveDocumentNode(directory: string, canvasPath: string, nodeId: string, handleId: string, text: string, expectedText?: string) {
-  checkDocumentDirectory(directory);
-  await flushCanvasSave(async () => {
-    const { files, canvas, node, liveNode, textPath } = await readDocumentCanvas(directory, canvasPath, nodeId);
-    if (!documentHandles(liveNode ?? node).some((handle) => handle.id === handleId)) throw new Error("文本输出已删除，请重新打开节点");
-    if (expectedText !== undefined) {
-      const output = (liveNode ?? node).data?.outputs?.[handleId];
-      const currentText = output?.dataType === "STRING" && typeof output.value === "string" ? output.value : textPath === undefined ? "" : await files.readText(textPath);
-      if (currentText !== expectedText) throw new Error("文档内容已变化，请重新读取后编辑");
-    }
-    if (liveNode?.type === "remote-textNode") {
-      await getNodeTools().call({ nodeId, name: "node:setText", args: { text } }, canvasController.signal);
-      checkDocumentDirectory(directory);
-      // 节点工具已同步输出并排队保存；等待期间用户可能继续编辑，不能再写入旧文本快照。
-      return;
-    }
-    if (liveNode && canvasId.value === canvasPath && findNode(nodeId) === liveNode) {
-      const output = liveNode.data.outputs?.[handleId];
-      if (output?.dataType === "STRING") output.value = text;
-      else if (textPath === undefined) (liveNode.data.outputs ??= {})[handleId] = { dataType: "STRING", value: text };
-    }
-    canvasMenuRef.value?.syncDocumentNode(canvasPath, nodeId, handleId, text, textPath === undefined);
-    if (textPath !== undefined) {
-      await files.write(textPath, text);
-    } else {
-      const data = (node.data ??= {});
-      const output = data.outputs?.[handleId];
-      if (output?.dataType === "STRING") output.value = text;
-      else (data.outputs ??= {})[handleId] = { dataType: "STRING", value: text };
-      await files.writeJson(canvasPath, canvas);
-    }
-    checkDocumentDirectory(directory);
-  });
 }
 
 function showEdgeDisconnect({ event, edge }: EdgeMouseEvent) {
@@ -583,51 +424,6 @@ async function changeHistory(direction: "undo" | "redo") {
         : "恢复画布失败"
     );
   }
-}
-
-let saving = Promise.resolve();
-let flushing = Promise.resolve();
-let saveError: unknown;
-let savePaused = false;
-let saveCancelled = false;
-let changedWhilePaused = false;
-let saveRevision = 0;
-let writtenRevision = -1;
-const saveCanvas = debounce((directory: string, fileName: string) => {
-  const requestedRevision = saveRevision;
-  // 同页保存串行取最新修改，主机按节点与字段合并其他成员的更新。
-  saving = saving.then(async () => {
-    if (requestedRevision <= writtenRevision) return;
-    try {
-      if (!canvasMenuRef.value) throw new Error("画布尚未就绪");
-      if (directory !== project.value?.directory || fileName !== canvasId.value) throw new Error("画布已切换，无法将当前内容保存到原画布");
-      const revision = saveRevision;
-      await canvasSync.save();
-      writtenRevision = revision;
-      saveError = undefined;
-      canvasSaveError.value = "";
-      canvasDirty.value = canvasSync.isDirty();
-    } catch (err) {
-      const previousError = canvasSaveError.value;
-      saveError = err;
-      canvasSaveError.value = axios.isAxiosError<{ message?: string }>(err) ? err.response?.data.message || err.message : err instanceof Error ? err.message : "画布保存失败";
-      if (!canvasSync.conflict.value && canvasSaveError.value !== previousError) ElMessage.error({ message: canvasSaveError.value, grouping: true });
-    }
-  });
-}, 500);
-
-function scheduleCanvasSave() {
-  if (canvasSync.applying.value) return;
-  if (saveCancelled || !project.value?.directory || !canvasId.value) return;
-  canvasDirty.value = true;
-  saveRevision++;
-  if (canvasSync.conflict.value) { canvasSync.scheduleBackup(); return; }
-  if (savePaused) {
-    changedWhilePaused = true;
-    return;
-  }
-  const directory = project.value?.directory;
-  if (directory && canvasId.value) saveCanvas(directory, canvasId.value);
 }
 
 function scheduleCanvasChange() {
@@ -702,14 +498,6 @@ watch(() => [viewport.value.x, viewport.value.y, viewport.value.zoom], () => {
 }, { flush: "post" });
 onScopeDispose(() => rememberViewport.flush());
 
-function resetSavedState(disk: { canvas: CanvasSnapshot; revision: string }) {
-  canvasSync.initialize(disk);
-  canvasDirty.value = false;
-  canvasSaveError.value = "";
-  saveError = undefined;
-  changedWhilePaused = false;
-}
-
 async function prepareRefresh() {
   if (!canvasReady.value && canvasId.value) throw new Error("画布正在加载，请稍后刷新");
   await canvasSync.sync();
@@ -736,7 +524,7 @@ watch(
       canvasController.abort(new Error("画布已重新加载，本次画布调用已停止"));
       canvasController = new AbortController();
     }
-    if (!savePaused) saveCanvas.flush();
+    if (!canvasSave.paused) canvasSave.flush();
   },
   { flush: "sync" }
 );
@@ -750,58 +538,6 @@ watch(() => props.active, (active) => {
   resetCanvasKeys();
 }, { flush: "sync" });
 
-function flushCanvasSave(action?: () => Promise<void>): Promise<void> {
-  // ACT: 完整保存及其文件操作串行执行，重命名暂停期间的显式保存也必须等待。
-  const next = flushing.then(() => saveCanvasState(action)).then(() => { canvasSaveError.value = ""; }, error => {
-    canvasSaveError.value = axios.isAxiosError<{ message?: string }>(error) ? error.response?.data.message || error.message : error instanceof Error ? error.message : "画布保存失败";
-    throw error;
-  });
-  flushing = next.catch(() => {});
-  return next;
-}
-
-async function saveCanvasState(action?: () => Promise<void>) {
-  if (saveCancelled) throw new Error("画布保存已取消");
-  if (canvasSync.conflict.value) { await canvasSync.flushRecovery(); throw new Error(canvasSync.conflict.value.message); }
-  await Promise.all(flow.getNodes.value.map((node) => useNodeEvent(node.id, flow).emit("save")));
-  await nextTick();
-  if (saveCancelled) throw new Error("画布保存已取消");
-  if (canvasSync.isDirty()) scheduleCanvasSave();
-  else if (saveError && project.value?.directory && canvasId.value) saveCanvas(project.value.directory, canvasId.value);
-  if (action) savePaused = true;
-  try {
-    let revision: number;
-    do {
-      if (saveCancelled) throw new Error("画布保存已取消");
-      revision = saveRevision;
-      if (changedWhilePaused && project.value?.directory && canvasId.value) {
-        saveCanvas(project.value.directory, canvasId.value);
-        changedWhilePaused = false;
-      }
-      saveCanvas.flush();
-      await saving;
-      if (saveError) throw saveError;
-      // 画布写入期间节点可能完成生成，等新增落盘后重新保存变化。
-      await Promise.all(flow.getNodes.value.map((node) => useNodeEvent(node.id, flow).emit("save")));
-      await nextTick();
-    } while (revision !== saveRevision);
-    if (saveCancelled) throw new Error("画布保存已取消");
-    await action?.();
-  } finally {
-    if (action && !saveCancelled) {
-      savePaused = false;
-      if (changedWhilePaused && project.value?.directory && canvasId.value) saveCanvas(project.value.directory, canvasId.value);
-      changedWhilePaused = false;
-    }
-  }
-}
-
-function cancelCanvasSave() {
-  saveCancelled = true;
-  savePaused = true;
-  changedWhilePaused = false;
-  saveCanvas.cancel();
-}
 function canUseCanvasClipboard(event: Event) {
   const target = event.target;
   return props.active && !event.defaultPrevented && !props.settingsVisible && !!canvasId.value && !!project.value?.directory
@@ -1113,47 +849,29 @@ function resetCanvasKeys() {
 
 watch([() => props.settingsVisible, () => generalSettings.value.canvasShortcuts], resetCanvasKeys, { deep: true, flush: "sync" });
 
-function refreshInstalled(event: WindowEventMap["toonflow:plugin-installed"]) {
-  if (event.detail.type === "node") void loadRemoteNodes(event.detail.name);
-}
-
-const refreshNodeConfig = () => { void loadRemoteNodes(); };
-
 onMounted(() => {
   // 在捕获阶段同步修饰键，避免节点编辑器截断 keydown/keyup 后缩放状态丢失或卡住。
   window.addEventListener("keydown", updateCanvasKeys, true);
   window.addEventListener("keyup", updateCanvasKeys, true);
   window.addEventListener("blur", resetCanvasKeys);
-  window.addEventListener("toonflow:plugin-installed", refreshInstalled);
-  window.addEventListener("toonflow:node-config-updated", refreshNodeConfig);
   document.addEventListener("paste", pasteNode);
   document.addEventListener("copy", copyNode);
   document.addEventListener("beforecopy", beforeClipboard);
   document.addEventListener("beforepaste", beforeClipboard);
-  void loadRemoteNodes();
 });
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", updateCanvasKeys, true);
   window.removeEventListener("keyup", updateCanvasKeys, true);
   window.removeEventListener("blur", resetCanvasKeys);
-  window.removeEventListener("toonflow:plugin-installed", refreshInstalled);
-  window.removeEventListener("toonflow:node-config-updated", refreshNodeConfig);
   document.removeEventListener("paste", pasteNode);
   document.removeEventListener("copy", copyNode);
   document.removeEventListener("beforecopy", beforeClipboard);
   document.removeEventListener("beforepaste", beforeClipboard);
   workspaceController.abort(new Error("工作区已关闭"));
   canvasController.abort(new Error("画布已关闭"));
-  saveCanvas.flush();
-  loadRequest++;
+  canvasSave.flush();
 });
 
-const nodeWindow = window as typeof window & {
-  toonflowNodeHost?: { vue: typeof vueRuntime; vueFlow: typeof vueFlowRuntime; elementPlus: typeof elementPlusRuntime; three?: typeof threeRuntime; ai: { runAgentLoop: typeof runAgentLoop; createAssistantMessageEventStream: typeof createAssistantMessageEventStream } };
-  toonflowNodes?: NodeTypesObject;
-};
-nodeWindow.toonflowNodeHost ??= { vue: vueRuntime, vueFlow: vueFlowRuntime, elementPlus: elementPlusRuntime, ai: { runAgentLoop, createAssistantMessageEventStream } };
-provide("nodeConfig", (nodeType: string) => nodeConfigs.value[nodeType] ?? {});
 provide("workspaceFiles", () => {
   const directory = project.value?.directory;
   if (!directory) throw new Error("请先选择工作目录");
@@ -1164,117 +882,6 @@ provide("workspaceDirectory", () => {
   if (!directory) throw new Error("请先选择工作目录");
   return directory;
 });
-provide("reloadRemoteNode", (type: string) => {
-  const name = type.replace(/^remote-/, "");
-  if (!type.startsWith("remote-") || !/^[a-z][a-zA-Z0-9]*$/.test(name)) throw new Error("节点类型无效");
-  return loadNode(name, `/api/nodes/files?name=${name}`, true);
-});
-
-async function loadNode(name: string, url: string, force = false): Promise<void> {
-  const nodeType = `remote-${name}`;
-  const signal = canvasController.signal;
-  const pending = nodeLoads.get(nodeType);
-  if (pending) {
-    if (!force) return pending;
-    await pending.catch(() => {});
-  }
-  if (!force && nodeTypes.value[nodeType] && !(nodeTypes.value[nodeType] as { __asyncLoader?: unknown }).__asyncLoader && !nodeErrors.value[nodeType]) return;
-  if (force) {
-    signal.throwIfAborted();
-    // ACT: 复用画布修订号收敛等待期间的编辑；持续修改画布时延后刷新，不额外维护节点修订状态。
-    let revision: number;
-    do {
-      revision = saveRevision;
-      await Promise.all(flow.getNodes.value.filter(node => node.type === nodeType).map(node => useNodeEvent(node.id, flow).emit("save", "reload")));
-      await nextTick();
-      signal.throwIfAborted();
-    } while (revision !== saveRevision);
-    const loading = nodeLoads.get(nodeType);
-    if (loading) return loading;
-  }
-  delete nodeErrors.value[nodeType];
-  const nodeLoad = loadNodeComponent(name, url, force)
-    .then((remoteNode) => {
-      // 同类型节点共享组件，运行错误由每个节点自己的边界显示。
-      nodeTypes.value = { ...nodeTypes.value, [nodeType]: markRaw(remoteNode) };
-    })
-    .catch((error) => {
-      nodeErrors.value[nodeType] = error instanceof Error ? error.message : String(error);
-      throw error;
-    })
-    .finally(() => nodeLoads.delete(nodeType));
-  nodeLoads.set(nodeType, nodeLoad);
-  return nodeLoad;
-}
-
-async function ensureNodeType(type: string) {
-  const component = nodeTypes.value[type] as { __asyncLoader?: () => Promise<unknown> } | undefined;
-  if (!component) throw new Error("节点类型未启用");
-  await component.__asyncLoader?.();
-}
-
-async function prepareNodeMenu() {
-  await Promise.all(availableNodes.value.map(node => ensureNodeType(node.type)));
-}
-
-async function loadRemoteNodes(reloadName?: string) {
-  if (reloadName) nodeReloads.add(reloadName);
-  const requestId = ++loadRequest;
-  const signal = canvasController.signal;
-  nodeListLoading.value = true;
-  try {
-    const { data } = await axios.get<{ code: number; data: { name: string; displayName: string; url: string; revision?: string; enabled?: boolean; config?: Record<string, unknown> }[] }>(
-      "/api/nodes/get",
-      { headers: { "Cache-Control": "no-cache", "x-toonflow-workspace": "1" } }
-    );
-    if (requestId !== loadRequest) return;
-    if (data.code !== 200 || !Array.isArray(data.data)) throw new Error("节点列表格式错误");
-    const nodes = data.data.filter(node => {
-      if (!node || typeof node.name !== "string" || !/^[a-z][a-zA-Z0-9]*$/.test(node.name) || node.url !== `/api/nodes/files?name=${node.name}`) {
-        console.error("节点地址无效", node);
-        return false;
-      }
-      return true;
-    });
-    nodeConfigs.value = Object.fromEntries(nodes.map(node => [`remote-${node.name}`, node.config ?? {}]));
-    const enabledNodes = nodes.filter(node => node.enabled !== false);
-    // 节点各自加载完成后即可出现在菜单中，不等待其他节点的脚本。
-    nodeOptions.value = enabledNodes.map(node => ({ type: `remote-${node.name}`, label: node.displayName }))
-      .sort((left, right) => left.type.localeCompare(right.type));
-    // ACT: 安装事件合并到最新列表请求，避免连续更新不同节点时丢失较早的刷新名称。
-    const reloadNames = new Set(nodeReloads);
-    nodeReloads.clear();
-    await Promise.all(
-      enabledNodes.map(async (node) => {
-        const nodeType = `remote-${node.name}`;
-        const url = node.revision ? `${node.url}&revision=${encodeURIComponent(node.revision)}` : node.url;
-        try {
-          if (nodeTypes.value[nodeType] && !nodeErrors.value[nodeType] && !reloadNames.has(node.name)) return;
-          if (!remoteNodeTypes.value.includes(nodeType) && !reloadNames.has(node.name)) {
-            nodeTypes.value = { ...nodeTypes.value, [nodeType]: markRaw(defineAsyncComponent(async () => {
-              await loadNode(node.name, url);
-              return nodeTypes.value[nodeType] as Component;
-            })) };
-          } else await loadNode(node.name, url, reloadNames.has(node.name));
-        } catch (error) {
-          console.error("加载远端节点失败", node, error);
-          // 保存拒绝时旧组件仍可用，不从节点菜单中移除；脚本加载错误仍排除。
-          if (nodeTypes.value[nodeType] && !nodeErrors.value[nodeType]) {
-            if (reloadNames.has(node.name) && !signal.aborted) ElMessage.warning({
-              message: `${node.displayName}已安装，但当前节点无法刷新。请等待任务结束后，点击节点右上角的刷新按钮。`,
-              grouping: true,
-            });
-          }
-        }
-      })
-    );
-  } catch (error) {
-    if (requestId === loadRequest) console.error("获取远端节点列表失败", error);
-  } finally {
-    if (requestId === loadRequest) nodeListLoading.value = false;
-  }
-}
-
 const defaultEdgeOptions = markRaw({
   type: "simple-bezier",
   animated: false,

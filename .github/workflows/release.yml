@@ -72,7 +72,7 @@ jobs:
           }
           JS
       - name: 下载各平台产物
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: toonflow-${{ needs.build.outputs.version }}-*
           path: artifacts
@@ -124,7 +124,7 @@ jobs:
           ].join("\n"));
           JS
       - name: 发布安装包及更新文件
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: v${{ needs.build.outputs.version }}
           target_commitish: ${{ needs.build.outputs.commit }}
@@ -134,7 +134,7 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: artifacts/*
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       - name: 上传到更新托管网站

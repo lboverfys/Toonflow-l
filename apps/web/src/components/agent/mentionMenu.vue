@@ -57,7 +57,7 @@ const listId = useId();
 const scopes = [{ id: "current", get name() { return translate("当前画布"); } }, { id: "other", get name() { return translate("其他画布"); } }, { id: "assets", get name() { return translate("全局素材"); } }] as const;
 type MentionScope = typeof scopes[number]["id"];
 type MentionRow = { id: string; name: string; kind: "canvas" | "node" | "output" | "file" | "directory"; available: boolean; description: string; dataType?: string; thumbnail?: { url: string; mimeType: string }; outputCount: number };
-const typeLabels: Record<string, string> = { STRING: "文本", INT: "整数", FLOAT: "数字", BOOLEAN: "布尔值", IMAGE: "图片", MASK: "遮罩", VIDEO: "视频", AUDIO: "音频", FILE: "文件" };
+const typeLabels: Record<string, string> = { STRING: "文本", INT: "整数", FLOAT: "数字", BOOLEAN: "布尔值", IMAGE: "图片", MASK: "遮罩", VIDEO: "视频 · 仅引用文件", AUDIO: "音频", FILE: "文件" };
 const scope = ref<MentionScope>("current");
 const buttonVisible = ref(false);
 const visible = computed(() => props.active && !props.disabled && (buttonVisible.value || props.query !== undefined));

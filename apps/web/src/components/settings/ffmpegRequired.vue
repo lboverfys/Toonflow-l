@@ -6,10 +6,11 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from "vue";
+import { defineAsyncComponent, onBeforeUnmount, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { isMobile, isRemoteMobile } from "@/lib/mobile";
-import ffmpeg from "./panels/pluginMarket/ffmpeg.vue";
+
+const ffmpeg = defineAsyncComponent(() => import("./panels/pluginMarket/ffmpeg.vue"));
 
 const visible = ref(false);
 let pending = false;

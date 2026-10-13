@@ -52,13 +52,25 @@ bun apps/mobile/scripts/verify.ts
 
 `bun apps/mobile/scripts/verify.ts` 需在 Bun 1.4.2 或更新版本运行，与 APK 的运行时保持一致（1.3.14 存在消费请求体后丢失断连通知的问题）。它显式启动真实构建产物，在临时数据目录验证能力预检、正式页面、鉴权、内置资源、工作区边界、扫码配对、重启隔离、远程上传与 Range、POST 流式取消、离线恢复和手机导出。检查不连接模型供应商，不读取已有用户数据，也不自动绑定到构建；它不能代替 Android 相机、X5 下载及系统文件选择器的设备验收。
 
-输出：`build/mobile/toonflowMobile.apk`。包名为 `com.toonflow.mobile`，最低 Android 8 / API 26，目标 API 34。本地和 CI 共用仓库内公开的默认签名 `native/defaultSigning.keystore`，别名为 `androiddebugkey`，密码均为 `android`。沿用此前本地默认签名，不再每次生成密钥，后续版本可直接覆盖安装并保留应用数据。
+输出：`build/mobile/toonflowMobile.apk`。包名为 `com.toonflow.mobile`，最低 Android 8 / API 26，目标 API 34。调试构建使用仓库内公开的默认签名 `native/defaultSigning.keystore`，别名为 `androiddebugkey`，密码均为 `android`。发布构建必须使用独立密钥与从默认签名生成的 lineage；缺少任一凭据会停止，不会退回公开签名。
 
 版本默认沿用 `electrobun.config.ts` 的 `app.version`，可通过 `appVersion` 指定 `X.Y.Z`。Android `versionCode` 按 `X × 1000000 + Y × 1000 + Z` 生成，Y、Z 不超过 999，结果须在 1–2100000000 内；更新时使用更高版本号。
 
 ## GitHub Actions
 
-在 Actions 中选择 **Debug build → Run workflow**，将 `target` 设为 `androidArm64` 可单独构建 ARM64 APK，选择 `all` 会同时构建桌面与 Android。版本留空时使用所选标签或项目配置。Android 默认生成 debug 包，可在本次运行的 Artifacts 或 Summary 中下载。开启 `androidRelease` 会关闭 `debuggable` 并去掉文件名中的 `-debug` 后缀，两种模式使用相同默认签名，无需配置 Android Secrets。
+在 Actions 中选择 **Debug build → Run workflow**，将 `target` 设为 `androidArm64` 可单独构建 ARM64 APK，选择 `all` 会同时构建桌面与 Android。版本留空时使用所选标签或项目配置。Android 默认生成 debug 包，可在本次运行的 Artifacts 或 Summary 中下载。开启 `androidRelease` 会关闭 `debuggable` 并去掉文件名中的 `-debug` 后缀，发布模式需要下列 Android Secrets；密钥文件仅写入运行器临时目录，构建后删除。
+
+| Secret | 内容 |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | 新发布 keystore 的 Base64。 |
+| `ANDROID_LINEAGE_BASE64` | 使用 `apksigner rotate` 从默认证书到新证书生成的 lineage 的 Base64。 |
+| `ANDROID_KEY_ALIAS` | 新密钥的别名。 |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore 密码。 |
+| `ANDROID_KEY_PASSWORD` | 私钥密码。 |
+
+本机发布通过 `ANDROID_RELEASE_KEYSTORE`、`ANDROID_SIGNING_LINEAGE` 指定文件路径，并设置上述别名与两个密码变量。密码通过 apksigner 的环境变量接口读取，不出现在命令参数中。
+
+Android 9（API 28）及以上通过 v3 lineage 轮换为新证书，覆盖安装保留数据。Android 8（API 26–27）仍使用公开的旧证书兼容覆盖安装，不能消除伪造安装包风险；需要彻底更换信任链时，应先备份数据再卸载旧版并安装仅使用新证书的版本。正式发布前必须在真实设备上验证覆盖安装及证书信息。
 
 现有 **Release Toonflow** 工作流在推送 `vX.Y.Z` 标签或手动发布时，会并行构建桌面与 Android，全部成功后将 `toonflow-X.Y.Z-android-arm64.apk` 附加到同一个 GitHub Release。Android APK 暂不上传到桌面更新托管接口，应用内「前往 GitHub 更新」会打开最新发布页。
 

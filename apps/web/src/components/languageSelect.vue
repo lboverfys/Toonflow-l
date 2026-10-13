@@ -10,7 +10,7 @@
     :showArrow="false"
     :offset="10"
     :popperStyle="{ maxWidth: 'calc(100vw - 32px)', padding: '12px', borderRadius: '14px' }"
-    @after-enter="popoverPanel?.focusSelected()">
+    @afterEnter="popoverPanel?.focusSelected()">
     <template #reference>
       <button ref="triggerButton" class="languageTrigger" type="button" :aria-label="translate('语言')" @keydown.esc.stop.prevent="closePopover">
         <icon-world v-if="uiSettings.language === 'system'" :size="20" aria-hidden="true" />
@@ -67,7 +67,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
 import { IconCheck, IconChevronDown, IconDeviceDesktop, IconLanguage, IconWorld, IconX } from "@tabler/icons-vue";
-import { detectLocale, isRtlLocale, supportedLocales, type Locale } from "@toonflow/i18n";
+import { detectLocale, isRtlLocale, supportedLocales, type Locale } from "@toonflow/i18n/core";
 import { locale, translate } from "@toonflow/i18n/vue";
 import { uiSettings, updateUiSettings } from "@/stores/settings";
 import languageFlags from "@/assets/languageFlags.svg?url";

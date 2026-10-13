@@ -2,7 +2,7 @@ import axios from "axios";
 import { t, translate } from "@toonflow/i18n/vue";
 import { h } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
+import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeModels";
 import type { PluginInstallRequest, PluginInstallType } from "@toonflow/server/desktop";
 
 declare global {

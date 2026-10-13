@@ -3,7 +3,7 @@ import { onScopeDispose, shallowRef, watch, type WatchSource } from "vue";
 import { useRouter } from "vue-router";
 import type { NodeToolInfo } from "@toonflow/tools-scaffold/runtime";
 import { getCanvasCallTimeout } from "@toonflow/tool-canvas/runtime";
-import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
+import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeModels";
 import { saveSettings, settings } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 

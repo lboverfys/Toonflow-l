@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import u from "@/utils";
-import { validateFields } from "@/lib/middleware";
+import { localOnly, validateFields } from "@/lib/middleware";
 
-export default Router().post("/", validateFields({
+export default Router().post("/", localOnly("请在桌面端或服务器本机管理供应商"), validateFields({
   ...u.providerDebug.providerDebugSchema,
   request: z.record(z.string(), z.json()),
 }), async (req, res) => {

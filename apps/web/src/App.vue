@@ -1,58 +1,46 @@
 <template>
   <el-config-provider :locale="elementLocale">
-    <config-provider :globalConfig="tdesignLocale">
-      <router-view v-slot="{ Component: currentComponent }">
-        <transition name="el-fade-in">
-          <component :is="currentComponent" />
-        </transition>
-      </router-view>
-      <ffmpegRequired />
-      <updateBox
-        v-if="updateBoxBuild && !installFailure"
-        v-model="updateBoxVisible"
-        :version="updateBoxBuild.version"
-        :buildCode="updateBoxBuild.hash"
-        @opened="rememberUpdateBox"
-        @close="rememberUpdateBox" />
-      <el-dialog v-if="installFailure" v-model="installFailureVisible" title="更新未成功" width="min(520px, 92vw)" alignCenter appendToBody :closeOnClickModal="false">
-        <div v-if="installFailure" class="installFailureContent">
-          <p class="failureMessage">{{ installFailure.message }}</p>
-          <dl class="failureVersions">
-            <div>
-              <dt>当前运行版本</dt>
-              <dd><strong>{{ installFailure.currentVersion ? `v${installFailure.currentVersion}` : "未知版本" }}</strong><code>{{ installFailure.currentHash || "构建标识未知" }}</code></dd>
-            </div>
-            <div>
-              <dt>本次更新目标</dt>
-              <dd><strong>{{ installFailure.targetVersion ? `v${installFailure.targetVersion}` : "未知版本" }}</strong><code>{{ installFailure.targetHash || "构建标识未知" }}</code></dd>
-            </div>
-          </dl>
-          <p class="failureHint">请前往 GitHub 最新发布页，选择适合当前系统的完整安装包，关闭客户端后重新安装。</p>
-        </div>
-        <template #footer>
-          <el-button @click="installFailureVisible = false">稍后</el-button>
-          <el-button tag="a" type="primary" :href="installFailure.downloadUrl" target="_blank" rel="noopener noreferrer">前往下载页</el-button>
-        </template>
-      </el-dialog>
-    </config-provider>
+    <router-view v-slot="{ Component: currentComponent }">
+      <transition name="el-fade-in">
+        <component :is="currentComponent" />
+      </transition>
+    </router-view>
+    <ffmpegRequired />
+    <updateBox
+      v-if="updateBoxBuild && !installFailure"
+      v-model="updateBoxVisible"
+      :version="updateBoxBuild.version"
+      :buildCode="updateBoxBuild.hash"
+      @opened="rememberUpdateBox"
+      @close="rememberUpdateBox" />
+    <el-dialog v-if="installFailure" v-model="installFailureVisible" title="更新未成功" width="min(520px, 92vw)" alignCenter appendToBody :closeOnClickModal="false">
+      <div v-if="installFailure" class="installFailureContent">
+        <p class="failureMessage">{{ installFailure.message }}</p>
+        <dl class="failureVersions">
+          <div>
+            <dt>当前运行版本</dt>
+            <dd><strong>{{ installFailure.currentVersion ? `v${installFailure.currentVersion}` : "未知版本" }}</strong><code>{{ installFailure.currentHash || "构建标识未知" }}</code></dd>
+          </div>
+          <div>
+            <dt>本次更新目标</dt>
+            <dd><strong>{{ installFailure.targetVersion ? `v${installFailure.targetVersion}` : "未知版本" }}</strong><code>{{ installFailure.targetHash || "构建标识未知" }}</code></dd>
+          </div>
+        </dl>
+        <p class="failureHint">请前往 GitHub 最新发布页，选择适合当前系统的完整安装包，关闭客户端后重新安装。</p>
+      </div>
+      <template #footer>
+        <el-button @click="installFailureVisible = false">稍后</el-button>
+        <el-button tag="a" type="primary" :href="installFailure.downloadUrl" target="_blank" rel="noopener noreferrer">前往下载页</el-button>
+      </template>
+    </el-dialog>
   </el-config-provider>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch, watchEffect } from "vue";
 import { ElMessage, useZIndex } from "element-plus";
-import { elementLocales } from "@toonflow/i18n/elementPlus";
-import { ConfigProvider, type GlobalConfigProvider } from "tdesign-vue-next";
-import tdesignZhCn from "tdesign-vue-next/es/locale/zh_CN";
-import tdesignZhTw from "tdesign-vue-next/es/locale/zh_TW";
-import tdesignEn from "tdesign-vue-next/es/locale/en_US";
-import tdesignJa from "tdesign-vue-next/es/locale/ja_JP";
-import tdesignRu from "tdesign-vue-next/es/locale/ru_RU";
-import tdesignKo from "tdesign-vue-next/es/locale/ko_KR";
-import tdesignAr from "tdesign-vue-next/es/locale/ar_KW";
-import { locale } from "@toonflow/i18n/vue";
 import type { updateSnapshot } from "@toonflow/server/desktop";
-import { chatLocale } from "@/lib/i18n";
+import { elementLocale } from "@/lib/i18n";
 import { isMobile } from "@/lib/mobile";
 import { saveSettings, settings, uiSettings } from "@/stores/settings";
 import { desktopUpdateSnapshot, stopDesktopUpdateObservation } from "@/stores/desktopUpdate";
@@ -62,15 +50,6 @@ import updateBox from "@/components/updateBox.vue";
 import "element-plus/theme-chalk/dark/css-vars.css";
 
 useMcpControl();
-
-// ACT: TDesign 缺少的语言使用英语基底，聊天控件由应用字典补齐。
-const tdesignLocales = {
-  "zh-CN": tdesignZhCn, "zh-TW": tdesignZhTw, en: tdesignEn, ja: tdesignJa, ru: tdesignRu, vi: tdesignEn, th: tdesignEn, ko: tdesignKo, hi: tdesignEn,
-  id: tdesignEn, ms: tdesignEn, fil: tdesignEn, bn: tdesignEn, ur: tdesignEn, ta: tdesignEn, te: tdesignEn, mr: tdesignEn, pa: tdesignEn, ar: tdesignAr, fa: tdesignEn, tr: tdesignEn,
-};
-const elementLocale = computed(() => elementLocales[locale.value]);
-// ACT: TDesign 自带语言包声明为 readonly，而 ConfigProvider 的只读使用接口声明为可写。
-const tdesignLocale = computed(() => ({ ...tdesignLocales[locale.value], chat: chatLocale.value }) as unknown as GlobalConfigProvider);
 
 const updateBoxVisible = ref(false);
 const updateBoxBuild = shallowRef<{ version: string; hash: string }>();

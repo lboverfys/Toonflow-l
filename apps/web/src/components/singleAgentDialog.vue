@@ -1,4 +1,5 @@
 <template>
+  <tdesignProvider>
   <el-dialog
     v-model="visible"
     class="singleAgentDialog"
@@ -51,6 +52,7 @@
     </div>
     <template v-if="slots.footer" #footer><slot name="footer" v-bind="slotContext" /></template>
   </el-dialog>
+  </tdesignProvider>
 </template>
 
 <script lang="ts">
@@ -64,6 +66,7 @@ export type SingleAgentDialogResult = SingleAgentResult & { messages: AgentMessa
 </script>
 
 <script setup lang="ts">
+import tdesignProvider from "@/components/tdesignProvider.vue";
 import axios from "axios";
 import { translate } from "@toonflow/i18n/vue";
 import { computed, nextTick, onBeforeUnmount, reactive, ref, useSlots, watch } from "vue";

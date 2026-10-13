@@ -40,15 +40,26 @@ type SingleSession = {
   tools: ToolDefinition[];
   active?: RunState;
   closed: boolean;
+  lastUsedAt: number;
   closing?: Promise<void>;
 };
 
 // ACT: 临时对话只保存在当前进程内，关闭后销毁；多进程部署需共享会话及回调通道。
 const sessions = new Map<string, SingleSession>();
+// ACT: 临时弹窗空闲 30 分钟后回收；运行中的回复不受时限影响，常驻任务应使用工作区对话。
+const sessionIdleTimeout = 30 * 60_000;
+setInterval(() => {
+  for (const session of sessions.values()) {
+    if (!session.active && !session.closing && Date.now() - session.lastUsedAt > sessionIdleTimeout) {
+      void close(session.id).catch(error => console.error("临时会话清理失败：", error));
+    }
+  }
+}, 60_000).unref();
 
 function getSession(sessionId: string) {
   const session = sessions.get(sessionId);
-  if (!session || session.closed) throw Object.assign(new Error("临时对话不存在或已关闭"), { status: 404 });
+  if (!session || session.closed) throw Object.assign(new Error("临时对话不存在或已关闭，请重新打开对话"), { status: 404 });
+  session.lastUsedAt = Date.now();
   return session;
 }
 
@@ -112,7 +123,7 @@ export async function create(options: {
   const cwd = options.directory ?? join(dirname(conf.path), "singleAgent", id);
   const session: SingleSession = {
     id, cwd, workspaceAvailable: !!options.directory, history: SessionManager.inMemory(cwd),
-    systemPrompt: options.systemPrompt ?? "", tools: [], closed: false,
+    systemPrompt: options.systemPrompt ?? "", tools: [], closed: false, lastUsedAt: Date.now(),
   };
   sessions.set(id, session);
   try {
@@ -288,6 +299,7 @@ export async function run(options: {
       }
     } finally {
       state.active = undefined;
+      state.lastUsedAt = Date.now();
       try { setStatus(active, "idle"); send({ type: "done" }); }
       finally { active.finished.resolve(); }
     }

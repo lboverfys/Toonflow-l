@@ -10,95 +10,29 @@
  */
 
 type MediaType = "image" | "video" | "audio";
+type Context = ProviderContext<{ apiKey?: string; minimaxApiKey?: string }>;
+const referenceByteLimit = 64 * 1024 * 1024;
 
-type ProviderFormRule = {
-  type: string;
-  field: string;
-  title: string;
-  value: unknown;
-  props?: Record<string, unknown>;
-};
-
-type ProviderModel = {
-  id: string;
-  label: string;
-  type: "text" | "image" | "video" | "audio";
-  mode?: (string | string[])[];
-  audio?: "optional" | boolean;
-  imageSizes?: string[];
-  imageRatios?: string[];
-  durationResolutionMap?: { duration: number[]; resolution: string[] }[];
-};
-
-type MediaInput =
-  | { type: "url"; url: string; mimeType?: string }
-  | { type: "base64"; data: string; mimeType: string }
-  | { type: "binary"; data: Uint8Array; mimeType: string };
-
-type MediaAsset = MediaInput & { mediaType: MediaType };
-
-type ImageRequest = {
-  model: string;
-  prompt: string;
-  images?: MediaInput[];
-  mask?: MediaInput;
-  n?: number;
-  ratio?: string;
-  size?: string;
-  quality?: string;
-  outputFormat?: string;
-  other?: Record<string, unknown>;
-};
-
-type VideoRequest = {
-  model: string;
-  prompt: string;
-  mode?: string | string[];
-  images?: MediaInput[];
-  videos?: MediaInput[];
-  audios?: MediaInput[];
-  firstFrame?: MediaInput;
-  lastFrame?: MediaInput;
-  duration?: number;
-  ratio?: string;
-  resolution?: string;
-  generateAudio?: boolean;
-  watermark?: boolean;
-  other?: Record<string, unknown>;
-};
-
-type Context = {
-  config: { apiKey?: string; minimaxApiKey?: string };
-  signal?: AbortSignal;
-  tool: {
-    fetch: typeof fetch;
-    errorMessage(value: unknown): string;
-    audio: {
-      convert(input: Uint8Array, options: { format: "wav" | "mp3" }): Promise<{ data: Uint8Array; mimeType: string }>;
-    };
-  };
-};
-
-const API_BASE = "https://api.modelverse.cn";
+const apiBase = "https://api.modelverse.cn";
 /** MiniMax H3 视频工作台（优云智算）的接口地址。 */
-const H3_BASE = "https://cp.compshare.cn";
+const h3Base = "https://cp.compshare.cn";
 /** MiniMax H3 任务轮询间隔（文档建议 3 秒一次）。 */
-const H3_POLL_INTERVAL = 3000;
+const h3PollInterval = 3000;
 /** MiniMax H3 任务总等待上限（毫秒）。 */
-const H3_TOTAL_TIMEOUT = 1800000;
+const h3TotalTimeout = 1800000;
 
-const IMAGE_RATIOS = ["1:1", "3:2", "2:3", "4:3", "3:4", "4:5", "5:4", "16:9", "9:16", "21:9"];
+const imageRatios = ["1:1", "3:2", "2:3", "4:3", "3:4", "4:5", "5:4", "16:9", "9:16", "21:9"];
 
 /** 图片生成总超时（毫秒）。 */
-const IMAGE_TIMEOUT = 300000;
+const imageTimeout = 300000;
 /** 视频提交请求超时（毫秒）。 */
-const SUBMIT_TIMEOUT = 120000;
+const submitTimeout = 120000;
 /** 单个状态查询请求超时（毫秒）。 */
-const STATUS_TIMEOUT = 60000;
+const statusTimeout = 60000;
 /** 视频任务总等待上限（毫秒）。 */
-const VIDEO_TOTAL_TIMEOUT = 1800000;
+const videoTotalTimeout = 1800000;
 /** 状态轮询间隔（毫秒）。 */
-const POLL_INTERVAL = 5000;
+const pollInterval = 5000;
 
 /**
  * gpt-image-2 尺寸归一化表：界面选「比例 + 1K/2K/4K」，这里换算成平台支持的像素尺寸。
@@ -106,7 +40,7 @@ const POLL_INTERVAL = 5000;
  * 若超过平台限制（长边 ≤ 3840、像素 655360~8294400、宽高比 ≤ 3:1），再按比例收一档。
  * 例：4K 的 1:1 收为 2880x2880，21:9 收为 3808x1632。
  */
-const GPT_IMAGE_SIZE_MAP: Record<string, Record<string, string>> = {
+const gptImageSizeMap: Record<string, Record<string, string>> = {
   "1K": {
     "1:1": "1024x1024",
     "3:2": "1248x832",
@@ -201,41 +135,6 @@ function authHeaders(apiKey: string): Record<string, string> {
   };
 }
 
-/**
- * 合并超时与外部取消信号。宿主提供 AbortSignal，
- * 但这里不依赖 AbortSignal.any，避免不同运行时的差异。
- */
-function createSignal(context: Context, timeoutMs: number): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const external = context.signal;
-  if (!external) {
-    return timeoutSignal;
-  }
-  const controller = new AbortController();
-  const abort = (): void => {
-    if (!controller.signal.aborted) {
-      controller.abort();
-    }
-  };
-  if (timeoutSignal.aborted || external.aborted) {
-    abort();
-    return controller.signal;
-  }
-  const onTimeout = (): void => abort();
-  const onExternal = (): void => abort();
-  timeoutSignal.addEventListener("abort", onTimeout, { once: true });
-  external.addEventListener("abort", onExternal, { once: true });
-  controller.signal.addEventListener(
-    "abort",
-    () => {
-      timeoutSignal.removeEventListener("abort", onTimeout);
-      external.removeEventListener("abort", onExternal);
-    },
-    { once: true },
-  );
-  return controller.signal;
-}
-
 async function readErrorBody(response: { status: number; text(): Promise<string> }, tool: Context["tool"]): Promise<RequestError> {
   let raw = "";
   try {
@@ -287,6 +186,7 @@ async function requestJson(
   init: { method: string; headers: Record<string, string>; body?: RequestInit["body"]; signal: AbortSignal },
 ): Promise<Record<string, unknown>> {
   const response = await context.tool.fetch(url, {
+    redirect: "error",
     method: init.method,
     headers: init.headers,
     body: init.body,
@@ -360,15 +260,10 @@ function guessAudioMimeFromUrl(url: string): string {
 
 function decodeBase64(data: string): Uint8Array {
   const cleaned = data.replace(/\s/g, "");
-  if (!cleaned || !/^[A-Za-z0-9+/]+={0,2}$/.test(cleaned)) {
+  if (!cleaned || !/^[A-Za-z0-9+/]+={0,2}$/.test(cleaned) || cleaned.length % 4 === 1 || (cleaned.includes("=") && cleaned.length % 4 !== 0)) {
     throw new Error("参考素材的 Base64 数据无效，无法上传给 ModelVerse");
   }
-  const binary = atob(cleaned);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
+  return Buffer.from(cleaned, "base64");
 }
 
 function splitBase64(data: string): { mimeType: string; payload: string } {
@@ -381,11 +276,16 @@ function splitBase64(data: string): { mimeType: string; payload: string } {
 }
 
 function bytesToBase64(data: Uint8Array): string {
-  let binary = "";
-  for (let index = 0; index < data.length; index += 1) {
-    binary += String.fromCharCode(data[index]);
-  }
-  return btoa(binary);
+  return Buffer.from(data).toString("base64");
+}
+
+function wait(milliseconds: number, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(signal?.reason); };
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, milliseconds);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 /** 把任何来源的素材统一成可上传字节。 */
@@ -396,24 +296,46 @@ async function toBinaryBytes(
   fallbackMime: string,
 ): Promise<{ data: Uint8Array; mimeType: string }> {
   if (input.type === "binary") {
+    if (input.data.byteLength > referenceByteLimit) throw new Error("参考素材不能超过 64 MB");
     return { data: input.data, mimeType: input.mimeType || fallbackMime };
   }
   if (input.type === "base64") {
     const split = splitBase64(input.data);
-    return { data: decodeBase64(split.payload), mimeType: input.mimeType || split.mimeType || fallbackMime };
+    if (split.payload.replace(/\s/g, "").length > Math.ceil(referenceByteLimit / 3) * 4) throw new Error("参考素材不能超过 64 MB");
+    const data = decodeBase64(split.payload);
+    if (data.byteLength > referenceByteLimit) throw new Error("参考素材不能超过 64 MB");
+    return { data, mimeType: input.mimeType || split.mimeType || fallbackMime };
   }
   const url = ensureHttpUrl(input.url);
   if (!url) {
     throw new Error("参考素材地址无效，只支持 HTTP(S) 地址或素材数据");
   }
-  const response = await context.tool.fetch(url, { signal: createSignal(context, timeoutMs) });
+  const response = await context.tool.fetch(url, { redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) {
     throw new Error("读取参考素材失败，HTTP " + response.status);
   }
-  const buffer = await response.arrayBuffer();
+  if (Number(response.headers.get("content-length")) > referenceByteLimit) {
+    await response.body?.cancel();
+    throw new Error("参考素材不能超过 64 MB");
+  }
+  const chunks: Uint8Array[] = [];
+  const reader = response.body?.getReader();
+  let size = 0;
+  try {
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > referenceByteLimit) throw new Error("参考素材不能超过 64 MB");
+      chunks.push(value);
+    }
+  } finally {
+    await reader?.cancel().catch(() => {});
+    reader?.releaseLock();
+  }
   const contentType = response.headers.get("content-type");
   const mimeType = input.mimeType || (contentType ? contentType.split(";")[0].trim() : "") || guessMimeFromUrl(url, fallbackMime);
-  return { data: new Uint8Array(buffer), mimeType };
+  return { data: Buffer.concat(chunks, size), mimeType };
 }
 
 /** 参考图统一成 URL 或 Data URL（文档要求 data:image/xxx;base64,... 且格式小写）。 */
@@ -442,59 +364,12 @@ async function toAudioUrl(context: Context, input: MediaInput): Promise<string> 
     }
     return url;
   }
-  const source = await toBinaryBytes(context, input, SUBMIT_TIMEOUT, "audio/mpeg");
+  const source = await toBinaryBytes(context, input, submitTimeout, "audio/mpeg");
   const declared = (source.mimeType || "audio/mpeg").toLowerCase().split(";")[0].trim();
   return "data:" + declared + ";base64," + bytesToBase64(source.data);
 }
 
-/** 极简 multipart/form-data 构造，避免依赖宿主不保证存在的 FormData / File。 */
-class MultipartBody {
-  readonly boundary: string;
-  private chunks: Uint8Array[] = [];
-  private finished = false;
-
-  constructor(boundary: string) {
-    this.boundary = boundary;
-  }
-
-  appendField(name: string, value: string): void {
-    this.pushText("--" + this.boundary + "\r\n");
-    this.pushText('Content-Disposition: form-data; name="' + name + '"\r\n\r\n');
-    this.pushText(value + "\r\n");
-  }
-
-  appendFile(name: string, filename: string, mimeType: string, data: Uint8Array): void {
-    this.pushText("--" + this.boundary + "\r\n");
-    this.pushText('Content-Disposition: form-data; name="' + name + '"; filename="' + filename + '"\r\n');
-    this.pushText("Content-Type: " + mimeType + "\r\n\r\n");
-    this.chunks.push(data);
-    this.pushText("\r\n");
-  }
-
-  finish(): Uint8Array<ArrayBuffer> {
-    if (!this.finished) {
-      this.pushText("--" + this.boundary + "--\r\n");
-      this.finished = true;
-    }
-    let total = 0;
-    for (const chunk of this.chunks) {
-      total += chunk.length;
-    }
-    const output = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of this.chunks) {
-      output.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return output;
-  }
-
-  private pushText(text: string): void {
-    this.chunks.push(new TextEncoder().encode(text));
-  }
-}
-
-const MEDIA_EXTENSIONS: Record<string, string> = {
+const mediaExtensions: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/webp": "webp",
@@ -503,7 +378,7 @@ const MEDIA_EXTENSIONS: Record<string, string> = {
 };
 
 function extensionFor(mimeType: string, fallback: string): string {
-  const value = MEDIA_EXTENSIONS[mimeType.toLowerCase()];
+  const value = mediaExtensions[mimeType.toLowerCase()];
   return value ? value : fallback;
 }
 
@@ -561,10 +436,10 @@ function resolveGptImageSize(rawSize: string, rawRatio: string): string {
   }
   const tier = isTier ? tierKey : "1K";
   const ratioKey = effectiveRatio || "1:1";
-  if (IMAGE_RATIOS.indexOf(ratioKey) === -1) {
-    throw new Error("这类模型支持的画面比例为：" + IMAGE_RATIOS.join("、"));
+  if (imageRatios.indexOf(ratioKey) === -1) {
+    throw new Error("这类模型支持的画面比例为：" + imageRatios.join("、"));
   }
-  return GPT_IMAGE_SIZE_MAP[tier][ratioKey];
+  return gptImageSizeMap[tier][ratioKey];
 }
 
 /** Qwen 图片接口的尺寸格式是「宽*高」。 */
@@ -587,10 +462,10 @@ function resolveQwenSize(rawSize: string, rawRatio: string): string {
   if (!ratioKey) {
     return "";
   }
-  if (IMAGE_RATIOS.indexOf(ratioKey) === -1) {
-    throw new Error("这类模型支持的画面比例为：" + IMAGE_RATIOS.join("、"));
+  if (imageRatios.indexOf(ratioKey) === -1) {
+    throw new Error("这类模型支持的画面比例为：" + imageRatios.join("、"));
   }
-  return GPT_IMAGE_SIZE_MAP["1K"][ratioKey].replace("x", "*");
+  return gptImageSizeMap["1K"][ratioKey].replace("x", "*");
 }
 
 function ensureNoUnsupportedImageOptions(protocol: string, request: ImageRequest): void {
@@ -740,8 +615,8 @@ async function generateGeminiImage(context: Context, request: ImageRequest, apiK
   if (size && ["512", "1K", "2K", "4K"].indexOf(size) === -1) {
     throw new Error("这类模型的清晰度只支持 512、1K、2K、4K");
   }
-  if (ratio && IMAGE_RATIOS.indexOf(ratio) === -1) {
-    throw new Error("这类模型支持的画面比例为：" + IMAGE_RATIOS.join("、"));
+  if (ratio && imageRatios.indexOf(ratio) === -1) {
+    throw new Error("这类模型支持的画面比例为：" + imageRatios.join("、"));
   }
   const images = request.images ?? [];
   if (images.length > 0 || request.mask) {
@@ -758,14 +633,14 @@ async function generateGeminiImage(context: Context, request: ImageRequest, apiK
   if (Object.keys(imageConfig).length > 0) {
     generationConfig.imageConfig = imageConfig;
   }
-  const payload = await requestJson(context, API_BASE + "/v1beta/models/" + request.model + ":generateContent", {
+  const payload = await requestJson(context, apiBase + "/v1beta/models/" + request.model + ":generateContent", {
     method: "POST",
     headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig,
     }),
-    signal: createSignal(context, IMAGE_TIMEOUT),
+    signal: AbortSignal.timeout(imageTimeout),
   });
   return collectGeminiImageAssets(payload);
 }
@@ -811,26 +686,26 @@ async function generateGptImage(context: Context, request: ImageRequest, apiKey:
   fields.push(["quality", quality]);
   fields.push(["output_format", outputFormat]);
 
-  const signal = createSignal(context, IMAGE_TIMEOUT);
+  const signal = AbortSignal.timeout(imageTimeout);
   let payload: Record<string, unknown>;
   if (images.length === 1) {
-    const main = await toBinaryBytes(context, images[0], IMAGE_TIMEOUT, "image/png");
-    const body = new MultipartBody("----modelverse" + Date.now().toString(16) + Math.random().toString(16).slice(2, 10));
-    body.appendFile("image", "reference." + extensionFor(main.mimeType, "png"), main.mimeType, main.data);
+    const main = await toBinaryBytes(context, images[0], imageTimeout, "image/png");
+    const body = new FormData();
+    body.append("image", new Blob([new Uint8Array(main.data)], { type: main.mimeType }), "reference." + extensionFor(main.mimeType, "png"));
     if (request.mask) {
-      const mask = await toBinaryBytes(context, request.mask, IMAGE_TIMEOUT, "image/png");
-      body.appendFile("mask", "mask." + extensionFor(mask.mimeType, "png"), mask.mimeType, mask.data);
+      const mask = await toBinaryBytes(context, request.mask, imageTimeout, "image/png");
+      body.append("mask", new Blob([new Uint8Array(mask.data)], { type: mask.mimeType }), "mask." + extensionFor(mask.mimeType, "png"));
     }
     for (const field of fields) {
-      body.appendField(field[0], field[1]);
+      body.append(field[0], field[1]);
     }
-    const response = await context.tool.fetch(API_BASE + "/v1/images/edits", {
+    const response = await context.tool.fetch(apiBase + "/v1/images/edits", {
+      redirect: "error",
       method: "POST",
       headers: {
         Authorization: "Bearer " + apiKey,
-        "Content-Type": "multipart/form-data; boundary=" + body.boundary,
       },
-      body: body.finish(),
+      body,
       signal,
     });
     if (!response.ok) {
@@ -847,7 +722,7 @@ async function generateGptImage(context: Context, request: ImageRequest, apiKey:
     }
     bodyObject.quality = quality;
     bodyObject.output_format = outputFormat;
-    payload = await requestJson(context, API_BASE + "/v1/images/generations", {
+    payload = await requestJson(context, apiBase + "/v1/images/generations", {
       method: "POST",
       headers: authHeaders(apiKey),
       body: JSON.stringify(bodyObject),
@@ -879,7 +754,7 @@ function normalizeSeedreamSize(size: string): string {
  * 平台的图片接口只认 size，不能单独传比例，所以只要选了比例，就换成这里对应的宽高像素值提交（方式 2），
  * 否则比例会被平台忽略、出图和所选比例不符。
  */
-const SEEDREAM_RATIO_TABLES: { pattern: RegExp; defaultTier: string; tiers: Record<string, Record<string, string>> }[] = [
+const seedreamRatioTables: { pattern: RegExp; defaultTier: string; tiers: Record<string, Record<string, string>> }[] = [
   {
     // Seedream 5.0 pro（doubao-seedream-5-0-pro-260628）：档位 1K、1.5K、2K，默认 2K
     pattern: /seedream-5-0-pro/,
@@ -1020,9 +895,9 @@ const SEEDREAM_RATIO_TABLES: { pattern: RegExp; defaultTier: string; tiers: Reco
   },
 ];
 
-function seedreamRatioTableOf(model: string): (typeof SEEDREAM_RATIO_TABLES)[number] | undefined {
+function seedreamRatioTableOf(model: string): (typeof seedreamRatioTables)[number] | undefined {
   const lower = model.toLowerCase();
-  for (const entry of SEEDREAM_RATIO_TABLES) {
+  for (const entry of seedreamRatioTables) {
     if (entry.pattern.test(lower)) {
       return entry;
     }
@@ -1031,7 +906,7 @@ function seedreamRatioTableOf(model: string): (typeof SEEDREAM_RATIO_TABLES)[num
 }
 
 /** 像素值落在哪个档位：按各档 1:1 的像素总量取最接近的一档。 */
-function closestSeedreamTier(entry: (typeof SEEDREAM_RATIO_TABLES)[number], width: number, height: number): string {
+function closestSeedreamTier(entry: (typeof seedreamRatioTables)[number], width: number, height: number): string {
   const target = width * height;
   let best = entry.defaultTier;
   let bestGap = Number.POSITIVE_INFINITY;
@@ -1140,11 +1015,11 @@ async function generateOpenAiImage(context: Context, request: ImageRequest, apiK
     bodyObject.response_format = "url";
     bodyObject.watermark = false;
   }
-  const payload = await requestJson(context, API_BASE + "/v1/images/generations", {
+  const payload = await requestJson(context, apiBase + "/v1/images/generations", {
     method: "POST",
     headers: authHeaders(apiKey),
     body: JSON.stringify(bodyObject),
-    signal: createSignal(context, IMAGE_TIMEOUT),
+    signal: AbortSignal.timeout(imageTimeout),
   });
   return collectImageAssets(payload, "image/png");
 }
@@ -1176,11 +1051,11 @@ async function generateQwen3Image(context: Context, request: ImageRequest, apiKe
     bodyObject.images = images.map((image) => toImageUrl(image, "image/png"));
   }
   bodyObject.watermark = false;
-  const payload = await requestJson(context, API_BASE + "/v1/images/generations", {
+  const payload = await requestJson(context, apiBase + "/v1/images/generations", {
     method: "POST",
     headers: authHeaders(apiKey),
     body: JSON.stringify(bodyObject),
-    signal: createSignal(context, IMAGE_TIMEOUT),
+    signal: AbortSignal.timeout(imageTimeout),
   });
   return collectImageAssets(payload, "image/png");
 }
@@ -1264,7 +1139,7 @@ async function buildHailuoBody(context: Context, request: VideoRequest): Promise
   const mode = normalizeMode(request.mode);
   const input: Record<string, unknown> = { prompt: request.prompt.trim() };
   if (mode !== "text" && request.firstFrame) {
-    const frame = await toBinaryBytes(context, request.firstFrame, SUBMIT_TIMEOUT, "image/jpeg");
+    const frame = await toBinaryBytes(context, request.firstFrame, submitTimeout, "image/jpeg");
     input.first_frame_image = "data:" + frame.mimeType + ";base64," + bytesToBase64(frame.data);
   } else if (mode !== "text") {
     throw new Error("这种模式需要一张首帧图片");
@@ -1423,11 +1298,11 @@ type TaskHandle = {
 
 /** 提交通用异步任务（图片任务与视频任务共用）。 */
 async function submitTask(context: Context, body: unknown, apiKey: string): Promise<TaskHandle> {
-  const payload = await requestJson(context, API_BASE + "/v1/tasks/submit", {
+  const payload = await requestJson(context, apiBase + "/v1/tasks/submit", {
     method: "POST",
     headers: authHeaders(apiKey),
     body: JSON.stringify(body),
-    signal: createSignal(context, SUBMIT_TIMEOUT),
+    signal: AbortSignal.timeout(submitTimeout),
   });
   const output = payload.output && typeof payload.output === "object" ? (payload.output as Record<string, unknown>) : undefined;
   const taskId = output && typeof output.task_id === "string" ? output.task_id : "";
@@ -1447,10 +1322,10 @@ async function waitForTask(context: Context, handle: TaskHandle, totalTimeout: n
     if (Date.now() >= deadline) {
       throw new Error("等待生成结果超时，可以稍后重新发起");
     }
-    const statusPayload = await requestJson(context, API_BASE + "/v1/tasks/status?task_id=" + encodeURIComponent(handle.taskId), {
+    const statusPayload = await requestJson(context, apiBase + "/v1/tasks/status?task_id=" + encodeURIComponent(handle.taskId), {
       method: "GET",
       headers: authHeaders(handle.apiKey),
-      signal: createSignal(context, STATUS_TIMEOUT),
+      signal: AbortSignal.timeout(statusTimeout),
     });
     const output = statusPayload.output && typeof statusPayload.output === "object" ? (statusPayload.output as Record<string, unknown>) : undefined;
     const status = output && typeof output.task_status === "string" ? output.task_status : "";
@@ -1474,23 +1349,13 @@ async function waitForTask(context: Context, handle: TaskHandle, totalTimeout: n
     }
     // 除上述终态外都按「还在处理中」继续轮询（例如平台新增的 moderating 之类状态），
     // 避免因为状态名不认识就提前报错；真正的失败仍由 Failure/Expired 分支处理。
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, POLL_INTERVAL);
-      context.signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          resolve();
-        },
-        { once: true },
-      );
-    });
+    await wait(pollInterval, context.signal);
   }
 }
 
 async function runVideoTask(context: Context, request: VideoRequest, apiKey: string, skeleton: VideoSkeleton): Promise<MediaAsset[]> {
   const handle = await submitTask(context, { model: request.model, input: skeleton.input, parameters: skeleton.parameters }, apiKey);
-  const urls = await waitForTask(context, handle, VIDEO_TOTAL_TIMEOUT);
+  const urls = await waitForTask(context, handle, videoTotalTimeout);
   return urls.map((url) => ({ mediaType: "video" as MediaType, type: "url" as const, url, mimeType: "" }));
 }
 
@@ -1604,17 +1469,17 @@ async function generateH3Video(context: Context, request: VideoRequest, apiKey: 
     body.aigc_watermark = true;
   }
 
-  const submitPayload = await requestJson(context, H3_BASE + "/minimax/v2/video_generation", {
+  const submitPayload = await requestJson(context, h3Base + "/minimax/v2/video_generation", {
     method: "POST",
     headers: authHeaders(apiKey),
     body: JSON.stringify(body),
-    signal: createSignal(context, SUBMIT_TIMEOUT),
+    signal: AbortSignal.timeout(submitTimeout),
   });
   const taskId = typeof submitPayload.task_id === "string" ? submitPayload.task_id : "";
   if (!taskId) {
     throw new Error("提交 MiniMax H3 任务失败：接口未返回任务编号");
   }
-  const deadline = Date.now() + H3_TOTAL_TIMEOUT;
+  const deadline = Date.now() + h3TotalTimeout;
   while (true) {
     if (context.signal?.aborted) {
       throw new Error("已取消等待视频生成结果，远端任务可能仍在运行");
@@ -1622,24 +1487,14 @@ async function generateH3Video(context: Context, request: VideoRequest, apiKey: 
     if (Date.now() >= deadline) {
       throw new Error("等待 MiniMax H3 视频结果超时，可以稍后重新发起");
     }
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, H3_POLL_INTERVAL);
-      context.signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          resolve();
-        },
-        { once: true },
-      );
-    });
+    await wait(h3PollInterval, context.signal);
     if (context.signal?.aborted) {
       throw new Error("已取消等待视频生成结果，远端任务可能仍在运行");
     }
-    const statusPayload = await requestJson(context, H3_BASE + "/minimax/v2/query/video_generation/" + encodeURIComponent(taskId), {
+    const statusPayload = await requestJson(context, h3Base + "/minimax/v2/query/video_generation/" + encodeURIComponent(taskId), {
       method: "GET",
       headers: authHeaders(apiKey),
-      signal: createSignal(context, STATUS_TIMEOUT),
+      signal: AbortSignal.timeout(statusTimeout),
     });
     const task = statusPayload.task && typeof statusPayload.task === "object" ? (statusPayload.task as Record<string, unknown>) : undefined;
     const status = task && typeof task.status === "string" ? task.status : "";

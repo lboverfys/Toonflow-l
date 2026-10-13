@@ -487,6 +487,8 @@ const apiKey = computed(() => String(config.value.apiKey ?? ""));
 
 ## 依赖和样式边界
 
+- `zod` 通过 external 复用 `window.toonflowNodeHost.zod`，宿主按需提供锁文件中的同一版本。新节点在缺少该能力的旧宿主上会明确提示升级；旧节点仍可在新宿主运行。请先更新宿主再安装新构建的节点。Three.js 子路径仍由各插件按需打包。
+
 - `vue` 和 `@vue-flow/core` 是节点的 peer dependency，UMD 直接使用宿主提供的 `window.toonflowNodeHost.vue`、`.vueFlow`；节点内不创建 Vue app，`useVueFlow()` 继承所在画布。
 - `element-plus` 同样声明为 peer dependency，复用 `window.toonflowNodeHost.elementPlus`。组件从根入口按需导入，例如 `import { ElButton } from "element-plus"`，模板使用 `<el-button>`；不要导入 `element-plus/es/...` 或其 CSS。宿主统一加载 Element Plus 组件与样式，节点产物不重复打包。
 - `three` 核心通过 external 复用 `window.toonflowNodeHost.three`，宿主提供完整 API。节点继续声明与宿主一致的 `three` 版本（当前 `0.184.0`），正常使用 `import { WebGLRenderer, Vector3 } from "three"`，无需直接访问全局对象。`three/addons/*`、`three/examples/jsm/*` 扩展仍按需打入节点，扩展内部的 `three` 引用同样复用宿主核心；不要从 `three/src/*` 深层导入核心。节点 UMD 与宿主需要使用配套版本。

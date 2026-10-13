@@ -39,7 +39,6 @@
     "@toonflow/tool-media-generation": "workspace:*",
     "@toonflow/tools-scaffold": "workspace:*",
     "conf": "^15.1.0",
-    "cors": "^2.8.6",
     "express": "^5.2.1",
     "fast-glob": "^3.3.3",
     "fflate": "^0.8.3",
@@ -49,7 +48,6 @@
     "@toonflow/i18n": "workspace:*"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/morgan": "^1.9.10"
   }

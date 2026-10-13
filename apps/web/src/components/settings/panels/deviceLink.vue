@@ -32,7 +32,7 @@
         </div>
         <div class="pairingPanel">
           <div v-if="pairing" class="pairingCode">
-            <q-r-code :value="pairing.qrCode" :size="176" type="svg" color="#18181b" bgColor="#ffffff" />
+            <tdesignProvider><q-r-code :value="pairing.qrCode" :size="176" type="svg" color="#18181b" bgColor="#ffffff" /></tdesignProvider>
           </div>
           <p v-else-if="generating" class="description" role="status">正在准备二维码…</p>
           <el-alert v-else-if="pairingNotice" :title="pairingNotice" :type="pairedSuccessfully && pairedDevice?.online ? 'success' : 'info'" :closable="false" showIcon />
@@ -124,6 +124,7 @@
 </template>
 
 <script setup lang="ts">
+import tdesignProvider from "@/components/tdesignProvider.vue";
 import axios from "axios";
 import { msg, translate, type MessageDescriptor } from "@toonflow/i18n/vue";
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";

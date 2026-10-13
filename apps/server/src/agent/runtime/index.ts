@@ -195,7 +195,7 @@ export async function run(
       return stream;
     };
 
-    // ACT: 提及图片和视频复用媒体协议转换，会话只保存工作区快照路径。
+    // ACT: 视频提及只传快照路径，供本地工具处理；主动上传的视频附件才传给模型分析。
     const mediaContents = new Map<string, ReturnType<typeof readAiReferences>>();
     const onPayload = session.agent.onPayload;
     session.agent.onPayload = async (payload, requestModel) => {
@@ -208,8 +208,8 @@ export async function run(
         if (!parsed.success) continue;
         const references: Parameters<typeof readAiReferences>[1] = [
           ...parsed.data.attachments.filter(item => item.mimeType.startsWith("video/")).map(item => ({ dataType: "VIDEO" as const, value: { url: item.path, mimeType: item.mimeType } })),
-          ...(parsed.data.mentions ?? []).filter(item => ["IMAGE", "MASK", "VIDEO"].includes(item.dataType)).map(item => ({
-            dataType: item.dataType === "VIDEO" ? "VIDEO" as const : "IMAGE" as const, value: item.value as { url: string; mimeType: string },
+          ...(parsed.data.mentions ?? []).filter(item => ["IMAGE", "MASK"].includes(item.dataType)).map(item => ({
+            dataType: "IMAGE" as const, value: item.value as { url: string; mimeType: string },
           })),
         ];
         const message = history.getEntry(parsed.data.messageId);

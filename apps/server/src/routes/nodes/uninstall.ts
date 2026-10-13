@@ -3,12 +3,12 @@ import { lstat, unlink } from "@toonflow/file";
 import { dirname, resolve } from "node:path";
 import { Router } from "express";
 import { z } from "zod";
-import { validateFields } from "@/lib/middleware";
+import { localOnly, validateFields } from "@/lib/middleware";
 import { error, success } from "@/lib/responseFormat";
 
 const router = Router();
 
-export default router.delete("/", validateFields({ name: z.string().regex(/^[a-z][a-zA-Z0-9]*$/) }), async (req, res) => {
+export default router.delete("/", localOnly("请在桌面端或服务器本机管理节点配置"), validateFields({ name: z.string().regex(/^[a-z][a-zA-Z0-9]*$/) }), async (req, res) => {
   const nodesDirectory = resolve(dirname(u.conf.path), "nodes");
   const filePath = resolve(nodesDirectory, `${req.body.name}.umd.js`);
   const markerPath = resolve(nodesDirectory, `${req.body.name}.disabled`);

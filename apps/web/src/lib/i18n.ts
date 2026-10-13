@@ -1,29 +1,36 @@
 import axios, { type AxiosInstance } from "axios";
-import { computed, watch } from "vue";
-import { detectLocale, isRtlLocale } from "@toonflow/i18n";
+import { computed, shallowRef, watch } from "vue";
+import { detectLocale, isRtlLocale, type Locale } from "@toonflow/i18n/core";
+import { loadLocale } from "@toonflow/i18n/loadLocale";
+import { loadElementLocale } from "@toonflow/i18n/elementPlus";
 import { locale, setLocale, translate } from "@toonflow/i18n/vue";
 import { uiSettings } from "@/stores/settings";
 import type { LocaleConfig } from "vue-stream-markdown";
-import "dayjs/locale/zh-cn";
-import "dayjs/locale/zh-tw";
-import "dayjs/locale/ja";
-import "dayjs/locale/ru";
-import "dayjs/locale/vi";
-import "dayjs/locale/th";
-import "dayjs/locale/ko";
-import "dayjs/locale/hi";
-import "dayjs/locale/id";
-import "dayjs/locale/ms";
-import "dayjs/locale/tl-ph";
-import "dayjs/locale/bn";
-import "dayjs/locale/ur";
-import "dayjs/locale/ta";
-import "dayjs/locale/te";
-import "dayjs/locale/mr";
-import "dayjs/locale/pa-in";
-import "dayjs/locale/ar";
-import "dayjs/locale/fa";
-import "dayjs/locale/tr";
+
+const dayjsLocales = {
+  "zh-CN": () => import("dayjs/locale/zh-cn"),
+  "zh-TW": () => import("dayjs/locale/zh-tw"),
+  "en": () => import("dayjs/locale/en"),
+  "ja": () => import("dayjs/locale/ja"),
+  "ru": () => import("dayjs/locale/ru"),
+  "vi": () => import("dayjs/locale/vi"),
+  "th": () => import("dayjs/locale/th"),
+  "ko": () => import("dayjs/locale/ko"),
+  "hi": () => import("dayjs/locale/hi"),
+  "id": () => import("dayjs/locale/id"),
+  "ms": () => import("dayjs/locale/ms"),
+  "fil": () => import("dayjs/locale/tl-ph"),
+  "bn": () => import("dayjs/locale/bn"),
+  "ur": () => import("dayjs/locale/ur"),
+  "ta": () => import("dayjs/locale/ta"),
+  "te": () => import("dayjs/locale/te"),
+  "mr": () => import("dayjs/locale/mr"),
+  "pa": () => import("dayjs/locale/pa-in"),
+  "ar": () => import("dayjs/locale/ar"),
+  "fa": () => import("dayjs/locale/fa"),
+  "tr": () => import("dayjs/locale/tr"),
+} satisfies Record<Locale, () => Promise<unknown>>;
+export const elementLocale = shallowRef<Awaited<ReturnType<typeof loadElementLocale>>>();
 
 export function registerApiLanguage(client: AxiosInstance) {
   const interceptor = client.interceptors.request.use(config => {
@@ -36,7 +43,24 @@ export function registerApiLanguage(client: AxiosInstance) {
 }
 
 export function registerLanguage() {
-  const applyLanguage = () => setLocale(uiSettings.value.language === "system" ? detectLocale(navigator.languages) : uiSettings.value.language);
+  let revision = 0;
+  let pending = Promise.resolve();
+  const applyLanguage = () => {
+    const request = ++revision;
+    const language = uiSettings.value.language === "system" ? detectLocale(navigator.languages) : uiSettings.value.language;
+    pending = Promise.all([loadLocale(language), loadElementLocale(language), dayjsLocales[language]()]).then(([, element]) => {
+      if (request !== revision) return;
+      elementLocale.value = element;
+      setLocale(language);
+    }).catch(async error => {
+      if (request !== revision) return;
+      console.error("语言资源加载失败，回退中文：", error);
+      const element = await loadElementLocale("zh-CN").catch(error => { console.error("组件语言资源加载失败：", error); return undefined; });
+      if (request !== revision) return;
+      elementLocale.value = element;
+      setLocale("zh-CN");
+    });
+  };
   const stopSettings = watch(() => uiSettings.value.language, applyLanguage, { immediate: true, flush: "sync" });
   const stopDocument = watch(locale, value => {
     document.documentElement.lang = value;
@@ -44,11 +68,18 @@ export function registerLanguage() {
   }, { immediate: true });
   const stopRequests = registerApiLanguage(axios);
   window.addEventListener("languagechange", applyLanguage);
-  return () => {
-    stopSettings();
-    stopDocument();
-    stopRequests();
-    window.removeEventListener("languagechange", applyLanguage);
+  return {
+    async ready() {
+      let current: Promise<void>;
+      do { current = pending; await current; } while (current !== pending);
+    },
+    stop() {
+      revision++;
+      stopSettings();
+      stopDocument();
+      stopRequests();
+      window.removeEventListener("languagechange", applyLanguage);
+    },
   };
 }
 

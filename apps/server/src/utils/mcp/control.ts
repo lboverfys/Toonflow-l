@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getCanvasCallTimeout } from "@toonflow/tool-canvas/runtime";
 import conf from "@/utils/conf";
 import { isMobileLinkRequest } from "@/utils/mobileLink";
+import { isLocalHost } from "@/lib/desktop";
 
 export const controlStateSchema = z.object({
   directory: z.string().max(4096).nullable(),
@@ -21,19 +22,23 @@ type ControlResult = { result?: unknown; error?: string };
 type Connection = { id: string; state: ControlState; revision: number; response: Response; pending?: { id: string; finish(result: ControlResult): void } };
 // ACT: 控制连接只属于当前单进程，重连重新注册，不持久化运行中的命令。
 const connections = new Map<string, Connection>();
+let settingsCache: Readonly<{ enabled: boolean; token: string; port: number }> | undefined;
+conf.onDidChange("settings", () => { settingsCache = undefined; });
 
 export function getMcpSettings() {
+  if (settingsCache) return settingsCache;
   const value = conf.get("settings", {}).mcp as { enabled?: unknown; token?: unknown; port?: unknown } | undefined;
-  return {
+  return settingsCache = Object.freeze({
     enabled: value?.enabled === true,
     token: typeof value?.token === "string" ? value.token : "",
     port: typeof value?.port === "number" && Number.isInteger(value.port) && value.port >= 1 && value.port <= 65535 ? value.port : 10588,
-  };
+  });
 }
 
 function allowedHost(req: Request) {
   const local = process.env.toonflowDesktop === "1" || (process.env.NODE_ENV === "dev" && ["win32", "darwin"].includes(process.platform));
-  return isMobileLinkRequest(req) || !local || ["localhost", "127.0.0.1", "[::1]"].includes(req.hostname);
+  // ACT: 远程服务允许登记域名；MCP 保留按 Host 比较来源而不比较代理前后协议的规则。
+  return isMobileLinkRequest(req) || !local || isLocalHost(req);
 }
 
 export function getAppOrigin(req: Request) {
