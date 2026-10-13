@@ -24,6 +24,10 @@ interface ProviderModel {
   videoRatios?: string[];
   /** 仅接受公网图片链接的渠道，使用节点的链接输入。 */
   referenceImageInput?: "url";
+  /** 参考音频须由宿主上传为公网链接。 */
+  referenceAudioInput?: "url";
+  supportsSeed?: boolean;
+  minReferenceImages?: number;
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
   /** 此模型必须使用宿主的持久化操作记录。 */
   taskRecovery?: boolean;
@@ -197,6 +201,7 @@ interface ImageRequest extends MediaRequest {
 
 interface VideoRequest extends MediaRequest {
   prompt: string;
+  seed?: number;
   /** 当前生成模式；参考模式数组声明各类参考媒体数量上限。 */
   mode?: VideoMode;
   /** 参考图；首尾帧通过 firstFrame、lastFrame 单独传入。 */

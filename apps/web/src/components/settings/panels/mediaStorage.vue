@@ -1,8 +1,8 @@
 <template>
   <div class="mediaStorage">
-    <p class="description">使用阿里云 OSS 存放视频参考图。启用后，将本地图片连到 VidGate 视频节点，点击生成即可自动上传；已有的 HTTPS 图片链接仍可直接使用。</p>
+    <p class="description">使用阿里云 OSS 存放视频参考素材。启用后，所选模型需要公网链接的本地图片和音频会在生成时自动上传；已有的 HTTPS 图片链接仍可直接使用。</p>
     <el-form labelPosition="top" :disabled="saving" @submit.prevent="save">
-      <el-form-item label="自动上传本地参考图">
+      <el-form-item label="自动上传本地参考素材">
         <el-switch v-model="form.enabled" aria-label="启用阿里云 OSS 自动上传" />
       </el-form-item>
       <div class="fieldGrid">
@@ -22,7 +22,7 @@
       </el-form-item>
       <el-form-item label="AccessKey Secret">
         <el-input v-model="form.accessKeySecret" type="password" showPassword autocomplete="new-password" aria-label="OSS AccessKey Secret" />
-        <p class="fieldHint">填写仅授权该素材目录的 RAM 用户密钥。密钥保存在此应用的数据目录，由本地后端上传图片；VidGate 只收到限时下载链接。</p>
+        <p class="fieldHint">填写仅授权该素材目录的 RAM 用户密钥。密钥保存在此应用的数据目录，由本地后端上传素材；视频供应商只收到限时下载链接。</p>
       </el-form-item>
       <div class="fieldGrid">
         <el-form-item label="素材目录">
@@ -32,7 +32,7 @@
           <el-input-number v-model="form.urlExpiryHours" :min="1" :max="168" :precision="0" controlsPosition="right" aria-label="OSS 链接有效期（小时）" />
         </el-form-item>
       </div>
-      <p class="description">有效期必须覆盖视频排队和生成时间，默认 24 小时。仅上传本次引用的图片，保持图片顺序；VidGate 的本地图片和手填链接合计最多 9 张。本地上传支持 PNG、JPEG、WebP，单张最多 20 MiB、合计最多 50 MiB，原图不压缩。</p>
+      <p class="description">有效期必须覆盖视频排队和生成时间，默认 24 小时。仅上传本次引用的本地图片与音频，保持各类素材的引用顺序，引用数量以所选模型能力为准。图片支持 PNG、JPEG、WebP；音频支持 MP3、WAV、FLAC、MP4。单个本地素材最多 20 MiB，同次上传图片与音频合计最多 50 MiB，素材不压缩。</p>
       <el-alert v-if="error" :title="error" type="error" :closable="false" showIcon role="alert" />
       <div class="actions">
         <el-button type="primary" nativeType="submit" :loading="saving" :disabled="!dirty">保存设置</el-button>
@@ -44,9 +44,9 @@
         <ol>
           <li>在阿里云 OSS 创建专用 Bucket，选择标准存储，访问权限设为私有。</li>
           <li>创建专用 RAM 用户，为此 Bucket 的素材目录授予 oss:PutObject 和 oss:GetObject 权限，再填写其 AccessKey。</li>
-          <li>在 OSS 控制台给该素材目录配置生命周期清理。清理期限应大于链接有效期的两倍；默认 24 小时链接建议保留图片 7 天。</li>
+          <li>在 OSS 控制台给该素材目录配置生命周期清理。清理期限应大于链接有效期的两倍；默认 24 小时链接建议保留素材 7 天。</li>
         </ol>
-        <p>链接过期不会删除云端图片。应用会缓存上传结果，在有效窗口内复用相同图片；云端文件被删除后会重新上传。OSS 按存储、请求和外网流量计费，视频生成费用由视频渠道另行收取。</p>
+        <p>链接过期不会删除云端素材。应用会缓存上传结果，在有效窗口内复用相同素材；云端文件被删除后会重新上传。OSS 按存储、请求和外网流量计费，视频生成费用由视频渠道另行收取。</p>
         <el-link href="https://help.aliyun.com/zh/oss/user-guide/share-objects" target="_blank" rel="noopener noreferrer" type="primary">查看 OSS 限时下载链接说明</el-link>
       </el-collapse-item>
     </el-collapse>

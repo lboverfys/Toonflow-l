@@ -56,16 +56,17 @@
         </div>
         <promptInput v-model="data.promptModel" v-model:text="data.prompt" :references="referenceMentions" expandable />
         <template v-if="selectedModel?.referenceImageInput === 'url'">
-          <div class="referenceHint">本地图片连线会通过「设置 → 素材存储」中的阿里云 OSS 自动上传；也可在下方每行填写一个 HTTPS 图片直链。先按上方图片顺序，再按链接顺序对应 @Image1、@Image2，合计最多 9 张。没有图片和链接时为文生视频。</div>
-          <el-input v-model="data.referenceImageUrlsText" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :disabled="generating || deleting || pendingTask" placeholder="https://example.com/reference.png" aria-label="参考图片 HTTPS 直链" />
+          <div class="referenceHint">本地图片连线会通过「设置 → 素材存储」中的阿里云 OSS 自动上传；也可在下方每行填写一个 HTTPS 图片直链。先按上方图片顺序，再按链接顺序对应 @Image1、@Image2，合计最多 9 张。<template v-if="selectedModel.mode?.includes('text')">没有图片和链接时为文生视频。</template></div>
+          <el-input v-model="data.referenceImageUrlsText" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :disabled="generating || deleting || pendingTask || taskChecking" placeholder="https://example.com/reference.png" aria-label="参考图片 HTTPS 直链" />
         </template>
+        <div v-if="selectedModel?.referenceAudioInput === 'url'" class="referenceHint">连接音频节点作为参考音频，按上方音频引用顺序使用；本地音频会通过「设置 → 素材存储」中的阿里云 OSS 自动上传。</div>
         <div class="promptFooter">
           <el-select
             v-model="data.model"
             class="modelSelect"
             filterable
             :loading="modelsLoading"
-            :disabled="generating || deleting || pendingTask"
+            :disabled="generating || deleting || pendingTask || taskChecking"
             placeholder="选择模型"
             aria-label="生成模型"
             noDataText="请先在设置中添加视频模型"
@@ -89,6 +90,7 @@
               v-model:ratio="data.ratio"
               v-model:mode="data.mode"
               v-model:generateAudio="data.generateAudio"
+              v-model:seed="data.seed"
               @update:duration="rememberPreferences"
               @update:resolution="rememberPreferences"
               @update:ratio="rememberPreferences"
@@ -96,7 +98,7 @@
               @update:generateAudio="rememberPreferences"
               :ratios="ratioOptions"
               :model="selectedModel"
-              :disabled="generating || deleting || pendingTask || !selectedModel" />
+              :disabled="generating || deleting || pendingTask || taskChecking || !selectedModel" />
             <el-button
               class="sendButton"
               :icon="generating ? IconPlayerStop : IconArrowUp"
@@ -155,7 +157,7 @@ const { id, node, nodeProps, nodeEvent, outputs, files, ai, updateNodeInternals,
   label: "视频生成",
 });
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
-const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean; appliedVideoTaskId?: string; referenceImageUrlsText: string; generationTiming?: GenerationTiming });
+const data = computed(() => node.data as { prompt: string; promptModel: PromptModel; model: string; duration?: number; resolution: string; ratio: string; mode: string; generateAudio: boolean; seed?: number | null; appliedVideoTaskId?: string; referenceImageUrlsText: string; generationTiming?: GenerationTiming });
 const rememberPreferences = useGenerationPreferences("video", () => data.value);
 data.value.prompt ??= "";
 data.value.promptModel ??= [];
@@ -344,11 +346,14 @@ async function startGeneration() {
   if (deleting.value) throw new Error("节点正在删除");
   if (!choice) throw new Error("请先选择视频模型");
   if (!generationPrompt.value) throw new Error("请输入生成提示词");
+  if (choice.supportsSeed === true && data.value.seed != null && !Number.isSafeInteger(data.value.seed)) throw new Error("seed 必须为 JavaScript 安全范围内的整数");
   if (refList.value.some(item => item.value === undefined)) throw new Error("引用节点暂无内容，请先补充引用内容");
   const images = refList.value.flatMap((item) => item.dataType === "IMAGE" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []);
   const referenceImageUrls = referenceUrls(choice);
   validateReferenceUrls(referenceImageUrls);
-  if (choice.referenceImageInput === "url" && images.length + referenceImageUrls.length > 9) throw new Error("本地参考图与 HTTPS 链接合计最多 9 张");
+  const imageCount = images.length + referenceImageUrls.length;
+  if (choice.minReferenceImages !== undefined && imageCount < choice.minReferenceImages) throw new Error(`当前模型至少需要 ${choice.minReferenceImages} 张参考图片`);
+  if (choice.referenceImageInput === "url" && imageCount > 9) throw new Error("本地参考图与 HTTPS 链接合计最多 9 张");
   if (choice.mode?.length && !matchingModes.value.length) throw new Error("当前模型没有适合这些参考素材的生成模式，请更换模型或调整引用");
   const workspace = files.getWorkspaceFiles();
   const controller = new AbortController();
@@ -362,6 +367,7 @@ async function startGeneration() {
     resolution: data.value.resolution || undefined,
     ratio: data.value.ratio,
     generateAudio: choice.audio === "optional" ? data.value.generateAudio : choice.audio,
+    ...(choice.supportsSeed === true && data.value.seed != null ? { seed: data.value.seed } : {}),
     outputDirectory: `assets/${id}`,
     images: frameMode.value ? undefined : images,
     ...(choice.referenceImageInput === "url" ? { referenceImageUrls } : {}),
@@ -487,6 +493,7 @@ function getConfig() {
       ratio: data.value.ratio,
       mode: selectedMode.value,
       generateAudio: data.value.generateAudio,
+      seed: data.value.seed ?? null,
       referenceImageUrls: referenceUrls(selectedModel.value),
     },
     models: models.value,
@@ -509,7 +516,7 @@ nodeTools.register({
 
 nodeTools.register({
   name: "setConfig",
-  description: "修改此视频生成节点的模型、时长、分辨率、比例、模式或声音；referenceImageInput 为 url 的模型可配置 referenceImageUrls（公网 HTTPS 图片直链）；先用 getConfig 查询能力，providerId 与 modelId 必须同时提供；mode 使用返回的原始字符串或数组，须匹配当前引用；不修改提示词、不启动生成",
+  description: "修改此视频生成节点的模型、时长、分辨率、比例、模式或声音；supportsSeed 为 true 的模型可设置 seed（安全整数，0 有效），省略不变，null 清空并使用供应商默认值；referenceImageInput 为 url 的模型可配置 referenceImageUrls（公网 HTTPS 图片直链）；先用 getConfig 查询能力，providerId 与 modelId 必须同时提供；mode 使用返回的原始字符串或数组，须匹配当前引用；不修改提示词、不启动生成",
   parameters: z.strictObject({
     providerId: z.string().min(1).optional(),
     modelId: z.string().min(1).optional(),
@@ -518,17 +525,19 @@ nodeTools.register({
     ratio: z.string().regex(/^[1-9]\d{0,3}:[1-9]\d{0,3}$/).optional(),
     mode: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
     generateAudio: z.boolean().optional(),
+    seed: z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
     referenceImageUrls: z.array(z.string().min(1).max(8192)).max(9).optional(),
   }).refine((args) => (args.providerId === undefined) === (args.modelId === undefined), "providerId 与 modelId 必须同时提供"),
   async execute(args, { signal }) {
     signal?.throwIfAborted();
-    if (generating.value || deleting.value) throw new Error("节点正在生成或删除，请稍后修改配置");
+    if (generating.value || deleting.value || pendingTask.value || taskChecking.value) throw new Error("节点正在处理或有待恢复任务，请稍后修改配置");
     await loadModels();
     signal?.throwIfAborted();
-    if (generating.value || deleting.value) throw new Error("节点正在生成或删除，请稍后修改配置");
+    if (generating.value || deleting.value || pendingTask.value || taskChecking.value) throw new Error("节点正在处理或有待恢复任务，请稍后修改配置");
     const choice = args.modelId === undefined ? selectedModel.value
       : models.value.find((item) => item.providerId === args.providerId && item.modelId === args.modelId);
     if (!choice) throw new Error("请选择 getConfig 返回的有效视频模型");
+    if (args.seed != null && choice.supportsSeed !== true) throw new Error("当前模型不支持设置 seed，请查看 getConfig 返回的 supportsSeed 能力");
     if (args.referenceImageUrls?.length && choice.referenceImageInput !== "url") throw new Error("当前模型没有参考图链接输入，请使用画布素材连线");
     const urls = args.referenceImageUrls ?? referenceUrls(choice);
     validateReferenceUrls(urls);
@@ -549,6 +558,7 @@ nodeTools.register({
     if (args.ratio !== undefined) data.value.ratio = args.ratio;
     if (args.mode !== undefined) data.value.mode = JSON.stringify(args.mode);
     if (args.generateAudio !== undefined) data.value.generateAudio = args.generateAudio;
+    if (args.seed !== undefined) data.value.seed = args.seed;
     return getConfig();
   },
 });

@@ -21,6 +21,7 @@
     "./media/dola": "./src/media/dola.ts",
     "./media/vidGate": "./src/media/vidGate.ts",
     "./media/fankeVideo": "./src/media/fankeVideo.ts",
-    "./media/ailxpImage": "./src/media/ailxpImage.ts"
+    "./media/ailxpImage": "./src/media/ailxpImage.ts",
+    "./media/autoDl": "./src/media/autoDl.ts"
   }
 }

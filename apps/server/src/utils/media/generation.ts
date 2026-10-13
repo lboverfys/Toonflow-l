@@ -11,6 +11,7 @@ import { runVideoTask } from "@/utils/media/videoTasks";
 export { getVideoTask, getVideoTaskRequest } from "@/utils/media/videoTasks";
 import { runImageTask } from "@/utils/media/imageTasks";
 import { getOssStorageSettings, uploadOssReferences } from "@/utils/media/oss";
+import { detectMimeType } from "@/utils/media/mimeType";
 export { getImageTask, getImageTaskRequest } from "@/utils/media/imageTasks";
 
 const maxMediaSize = 100 * 1024 * 1024;
@@ -42,7 +43,13 @@ export async function listMediaModels(): Promise<MediaModel[]> {
     return [{
       providerId: provider.id, providerLabel: provider.label, modelId: model.id, label: model.label, type: model.type,
       mode: model.mode, durationResolutionMap: model.durationResolutionMap, audio: model.audio,
-      ...(model.type === "video" ? { videoRatios: imageOptions(model.videoRatios, /^[1-9]\d{0,3}:[1-9]\d{0,3}$/), referenceImageInput: model.referenceImageInput === "url" ? "url" : undefined } : {}),
+      ...(model.type === "video" ? {
+        videoRatios: imageOptions(model.videoRatios, /^[1-9]\d{0,3}:[1-9]\d{0,3}$/),
+        referenceImageInput: model.referenceImageInput === "url" ? "url" : undefined,
+        referenceAudioInput: model.referenceAudioInput === "url" ? "url" : undefined,
+        supportsSeed: model.supportsSeed === true,
+        minReferenceImages: typeof model.minReferenceImages === "number" && Number.isInteger(model.minReferenceImages) && model.minReferenceImages > 0 && model.minReferenceImages <= 64 ? model.minReferenceImages : undefined,
+      } : {}),
       taskRecovery: model.taskRecovery === true,
       ...(model.type === "audio" ? { voices: model.voices } : {}),
       ...(model.type === "image" ? {
@@ -51,28 +58,6 @@ export async function listMediaModels(): Promise<MediaModel[]> {
       } : {}),
     } as MediaModel];
   }));
-}
-
-function detectMimeType(bytes: Uint8Array, fallback: string) {
-  const header = Buffer.from(bytes.buffer, bytes.byteOffset, Math.min(bytes.byteLength, 16));
-  const text = header.toString("ascii");
-  const mimeType = fallback.split(";")[0].trim().toLowerCase();
-  if (header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
-  if (header[0] === 255 && header[1] === 216 && header[2] === 255) return "image/jpeg";
-  if (/^GIF8[79]a/.test(text)) return "image/gif";
-  if (text.startsWith("RIFF") && text.slice(8, 12) === "WEBP") return "image/webp";
-  if (text.startsWith("RIFF") && text.slice(8, 12) === "WAVE") return "audio/wav";
-  if (text.startsWith("fLaC")) return "audio/flac";
-  if (text.startsWith("OggS")) return mimeType.startsWith("video/") ? "video/ogg" : mimeType === "audio/opus" ? "audio/opus" : "audio/ogg";
-  if (header[0] === 0xff && (header[1]! & 0xf6) === 0xf0) return "audio/aac";
-  if (text.startsWith("ID3") || (header[0] === 0xff && (header[1]! & 0xe0) === 0xe0 && (header[1]! & 0x06) !== 0)) return "audio/mpeg";
-  if (text.slice(4, 8) === "ftyp") {
-    if (/avif|avis/.test(text.slice(8))) return "image/avif";
-    if (/^M4[AB] $/.test(text.slice(8, 12)) || mimeType.startsWith("audio/")) return "audio/mp4";
-    return text.slice(8, 12) === "qt  " ? "video/quicktime" : "video/mp4";
-  }
-  if (header.subarray(0, 4).equals(Buffer.from([26, 69, 223, 163]))) return mimeType.startsWith("audio/") ? "audio/webm" : "video/webm";
-  return ({ "image/jpg": "image/jpeg", "audio/mp3": "audio/mpeg", "audio/x-wav": "audio/wav", "audio/wave": "audio/wav", "audio/x-flac": "audio/flac" } as Record<string, string>)[mimeType] ?? mimeType;
 }
 
 export async function readReference(cwd: string, reference: MediaReference, mediaType: string, signal?: AbortSignal): Promise<Extract<MediaInput, { type: "base64" }>> {
@@ -176,8 +161,15 @@ async function generateMediaResult(
   const rules = Array.isArray(provider.rules) ? provider.rules : [];
   if (rules.some(rule => rule.field === "apiKey") && (typeof provider.config.apiKey !== "string" || !provider.config.apiKey.trim())) invalid("请先在媒体模型设置中配置供应商 API Key");
   if (!videoTask?.requestSaved) {
+    if (mediaType === "video" && typeof model.minReferenceImages === "number" && (request.images?.length ?? 0) + (request.referenceImageUrls?.length ?? 0) < model.minReferenceImages) invalid(`当前模型至少需要 ${model.minReferenceImages} 张参考图片`);
     if (request.referenceImageUrls?.length && (mediaType !== "video" || model.referenceImageInput !== "url")) invalid("当前模型不支持参考图链接输入");
     if (mediaType === "video" && model.referenceImageInput === "url" && (request.images?.length ?? 0) + (request.referenceImageUrls?.length ?? 0) > 9) invalid("本地参考图与 HTTPS 链接合计最多 9 张");
+    if (request.seed !== undefined && (mediaType !== "video" || model.supportsSeed !== true || !Number.isSafeInteger(request.seed))) invalid("当前模型不支持 seed 或 seed 不是安全整数");
+    if (mediaType === "video" && model.referenceAudioInput === "url") {
+      const modes = Array.isArray(model.mode) ? model.mode.filter(Array.isArray) : [];
+      const limit = Math.max(0, ...modes.flat().filter((value): value is string => typeof value === "string" && /^audioReference:\d+$/.test(value)).map(value => Number(value.split(":")[1])));
+      if ((request.audios?.length ?? 0) > limit) invalid(`当前模型最多支持 ${limit} 段参考音频`);
+    }
   }
   if (mediaType === "video" && model.taskRecovery === true && !videoTask) {
     return runVideoTask(directory, request, provider.config,
@@ -190,15 +182,18 @@ async function generateMediaResult(
   }
   // 恢复使用首次保存的原始请求，不重新读取可能已修改或删除的参考素材。
   const restoring = videoTask?.requestSaved === true || imageTask?.requestSaved === true;
-  const ossConfig = !restoring && mediaType === "video" && model.referenceImageInput === "url" && request.images?.length ? getOssStorageSettings() : undefined;
+  const uploadImages = !restoring && mediaType === "video" && model.referenceImageInput === "url";
+  const uploadAudios = !restoring && mediaType === "video" && model.referenceAudioInput === "url";
+  const uploadReferences = [...(uploadImages ? request.images ?? [] : []), ...(uploadAudios ? request.audios ?? [] : [])];
+  const ossConfig = uploadReferences.length ? getOssStorageSettings() : undefined;
   if (ossConfig) {
     let total = 0;
-    for (const image of request.images!) {
-      const { path } = await resolveWorkspacePath(directory, image.path);
+    for (const input of uploadReferences) {
+      const { path } = await resolveWorkspacePath(directory, input.path);
       const info = await stat(path);
-      if (!info.isFile() || !info.size || info.size > 20 * 1024 * 1024) invalid("OSS 本地参考图为空或超过单张 20 MiB 的传输限制");
+      if (!info.isFile() || !info.size || info.size > 20 * 1024 * 1024) invalid("OSS 本地参考素材为空或超过单个 20 MiB 的传输限制");
       total += info.size;
-      if (total > 50 * 1024 * 1024) invalid("OSS 本地参考图合计超过 50 MiB 的传输限制");
+      if (total > 50 * 1024 * 1024) invalid("OSS 本地参考素材合计超过 50 MiB 的传输限制");
     }
   }
   if (!restoring && providerInfo.id === "dola") {
@@ -249,23 +244,29 @@ async function generateMediaResult(
   }
   const references = async (items: MediaReference[] | undefined, type: string) => items ? Promise.all(items.map(item => readReference(directory, item, type, signal))) : undefined;
   let images: MediaInput[] | undefined = restoring ? undefined : await references(request.images, "image");
+  let audios: MediaInput[] | undefined = restoring || mediaType === "image" ? undefined : await references(request.audios, "audio");
   if (!restoring && request.referenceImageUrls?.length) images = [...(images ?? []), ...request.referenceImageUrls.map((url): MediaInput => ({ type: "url", url }))];
-  if (ossConfig && images) images = await uploadOssReferences(images, ossConfig, signal);
+  if (ossConfig) {
+    const imageCount = uploadImages ? images?.length ?? 0 : 0;
+    const uploaded = await uploadOssReferences([...(uploadImages ? images ?? [] : []), ...(uploadAudios ? audios ?? [] : [])], ossConfig, signal);
+    if (uploadImages && images) images = uploaded.slice(0, imageCount);
+    if (uploadAudios && audios) audios = uploaded.slice(imageCount);
+  }
   signal?.throwIfAborted();
   const assets = mediaType === "audio"
     ? await provider.generateAudio!({
-      model: request.modelId, text: request.prompt, images, audios: await references(request.audios, "audio"),
+      model: request.modelId, text: request.prompt, images, audios,
       voice: request.voice, speed: request.speed, volume: request.volume, pitch: request.pitch, language: request.language, format: request.format, sampleRate: request.sampleRate,
     })
     : mediaType === "image"
     ? await provider.generateImage!({ model: request.modelId, prompt: request.prompt, images, ratio: request.ratio, size: request.size })
     : await provider.generateVideo!({
       model: request.modelId, prompt: request.prompt, images,
-      videos: restoring ? undefined : await references(request.videos, "video"), audios: restoring ? undefined : await references(request.audios, "audio"),
+      videos: restoring ? undefined : await references(request.videos, "video"), audios,
       firstFrame: !restoring && request.firstFrame ? await readReference(directory, request.firstFrame, "image", signal) : undefined,
       lastFrame: !restoring && request.lastFrame ? await readReference(directory, request.lastFrame, "image", signal) : undefined,
       ratio: request.ratio, resolution: request.resolution, duration: request.duration,
-      generateAudio: request.generateAudio, mode: request.mode,
+      generateAudio: request.generateAudio, mode: request.mode, seed: request.seed,
     });
   if (!Array.isArray(assets) || !assets.length) invalid("供应商未返回生成结果");
   if (videoTask && assets.length !== 1) invalid("此任务应生成一条视频");

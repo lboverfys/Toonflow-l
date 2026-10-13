@@ -82,6 +82,9 @@ export interface MediaModel {
   imageRatios?: string[];
   videoRatios?: string[];
   referenceImageInput?: "url";
+  referenceAudioInput?: "url";
+  supportsSeed?: boolean;
+  minReferenceImages?: number;
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
   taskRecovery?: boolean;
   audio?: boolean | "optional";
@@ -109,6 +112,7 @@ export interface MediaGenerationRequest {
   size?: string;
   resolution?: string;
   duration?: number;
+  seed?: number;
   generateAudio?: boolean;
   voice?: string;
   speed?: number;

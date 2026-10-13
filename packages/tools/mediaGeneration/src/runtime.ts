@@ -43,6 +43,7 @@ export const videoGenerationSchema = z.strictObject({
   lastFrame: imageReference.optional(),
   resolution: z.string().trim().min(1).max(64).optional(),
   duration: z.number().finite().positive().max(3600).optional(),
+  seed: z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).optional(),
   generateAudio: z.boolean().optional(),
   mode: z.union([
     z.enum(["singleImage", "startEndRequired", "endFrameOptional", "startFrameOptional", "text"]),
