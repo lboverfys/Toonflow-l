@@ -754,8 +754,12 @@ function zoomCanvas(event: WheelEvent | (Event & { scale: number })) {
       if (!event.ctrlKey) return;
       // 实体 Ctrl 未绑定缩放时，阻止 Vue Flow 和节点骨架将它误判为捏合。
       factor = 1;
+    } else if (pinching) {
+      factor = gestureScale === undefined ? 2 ** (-event.deltaY * 0.02) : 1;
     } else {
-      factor = pinching && gestureScale !== undefined ? 1 : 2 ** (pinching ? -event.deltaY * 0.02 : wheelDelta(event));
+      // 实体按键滚轮不使用捏合加速；减小步幅并限制单次跳变，方便微调比例。
+      const delta = wheelDelta({ deltaY: event.deltaY, deltaMode: event.deltaMode, ctrlKey: false });
+      factor = 2 ** Math.max(-0.08, Math.min(0.08, delta * 0.25));
     }
     point = { x: event.clientX, y: event.clientY };
   }
