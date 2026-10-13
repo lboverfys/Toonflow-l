@@ -321,7 +321,8 @@ function updateCanvasSnapshot(disk: { canvas: CanvasSnapshot; revision: string }
   const canvas = boundCanvas.value;
   if (!canvas?.snapshot) return;
   canvas.snapshot = { ...canvas.snapshot, revision: disk.revision };
-  canvas.flow = structuredClone(disk.canvas) as unknown as Canvas["flow"];
+  // ACT: 同步层单独克隆并保护 baseline；菜单只缓存返回快照，重新加载时可交给 Vue Flow。
+  canvas.flow = disk.canvas as unknown as Canvas["flow"];
 }
 
 async function refreshCanvasList(beforeApply?: () => void) {

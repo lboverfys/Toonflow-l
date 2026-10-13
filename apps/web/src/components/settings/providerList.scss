@@ -92,3 +92,110 @@
     }
   }
 }
+
+.providerPicker {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  height: min(560px, 70dvh);
+  gap: 24px;
+
+  .providerSidebar {
+    overflow-y: auto;
+    border-right: 1px solid var(--el-border-color-lighter);
+
+    padding: 2px;
+
+    .providerItem {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 4px;
+      border: 0;
+      border-radius: var(--el-border-radius-base);
+      background: transparent;
+      color: var(--el-text-color-regular);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+
+      &:hover {
+        background: var(--el-fill-color-light);
+      }
+
+      &[aria-pressed="true"] {
+        background: var(--el-color-primary-light-9);
+        color: var(--el-color-primary);
+      }
+
+      &:focus-visible {
+        outline: 2px solid var(--el-color-primary);
+      }
+
+      .providerLogo {
+        width: 18px;
+        height: 18px;
+        object-fit: contain;
+
+        &.monochrome {
+          .dark & {
+            filter: invert(1);
+          }
+        }
+      }
+    }
+  }
+
+  .providerDetails {
+    min-width: 0;
+
+    .providerContent {
+      padding-right: 12px;
+
+      .providerHeader {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        margin: 4px 0 24px;
+
+        h3 {
+          margin: 0;
+          color: var(--el-text-color-primary);
+          font-size: 18px;
+          overflow-wrap: anywhere;
+        }
+      }
+
+      :deep(.providerReadme) {
+        margin-bottom: 24px;
+        overflow-wrap: anywhere;
+      }
+
+      :deep(.modelHeader) {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 8px 0 12px;
+      }
+
+      :deep(.modelList) {
+        margin-bottom: 16px;
+      }
+    }
+  }
+
+  @media (max-width: 600px) {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 16px;
+
+    .providerSidebar {
+      max-height: 128px;
+      border-right: 0;
+      border-bottom: 1px solid var(--el-border-color-lighter);
+    }
+  }
+}

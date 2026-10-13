@@ -8,7 +8,8 @@
     "./types": "./src/types.ts",
     "./browser": "./src/browser.ts",
     "./remote": "./src/remote.ts",
-    "./runtime": "./src/runtime.ts"
+    "./runtime": "./src/runtime.ts",
+    "./validateRequest": "./src/validateRequest.ts"
   },
   "scripts": {
     "typecheck": "tsc"

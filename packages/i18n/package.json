@@ -9,7 +9,9 @@
     "./vite": "./src/vite.ts",
     "./transform": "./src/transform.ts",
     "./errors": "./src/errors.ts",
-    "./elementPlus": "./src/elementPlus.ts"
+    "./elementPlus": "./src/elementPlus.ts",
+    "./core": "./src/core.ts",
+    "./loadLocale": "./src/loadLocale.ts"
   },
   "scripts": {
     "extract": "bun src/extract.ts",

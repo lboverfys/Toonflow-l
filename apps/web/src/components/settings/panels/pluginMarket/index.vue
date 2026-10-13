@@ -243,18 +243,7 @@
         :skill="selectedSkill"
         @saved="refreshInstalled"
         @closed="selectedSkill = undefined" />
-      <el-dialog
-        v-if="selectedPlugin"
-        v-model="detailsVisible"
-        :title="selectedPlugin.displayName"
-        width="min(800px, calc(100vw - 32px))"
-        alignCenter
-        appendToBody
-        destroyOnClose>
-        <div class="pluginContent" tabindex="0" aria-label="插件说明">
-          <messageMarkdown :content="selectedPlugin.readme ?? ''" />
-        </div>
-      </el-dialog>
+      <pluginDetailsDialog v-if="selectedPlugin" v-model="detailsVisible" :plugin="selectedPlugin" />
     </template>
   </div>
 </template>
@@ -269,7 +258,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import tf, { getTfApiKey, isTfRouterProvider } from "@/lib/tf";
 import { saveSettings } from "@/stores/settings";
 import tfRouter from "@toonflow/providers/language/tfRouter";
-import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
+import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeModels";
 import saveFile from "@/lib/saveFile";
 import { writeClipboardText } from "@/lib/clipboard";
 import pluginConfigDialog from "./pluginConfigDialog.vue";
@@ -354,7 +343,7 @@ const configVisible = ref(false);
 const selectedPlugin = ref<Plugin>();
 const selectedSkill = ref<Plugin>();
 const detailsVisible = ref(false);
-const messageMarkdown = defineAsyncComponent(() => import("@/components/messageMarkdown.vue"));
+const pluginDetailsDialog = defineAsyncComponent(() => import("./pluginDetailsDialog.vue"));
 const requestHeaders = { "x-toonflow-workspace": "1" };
 
 const searchQuery = ref("");
@@ -1123,12 +1112,4 @@ async function updatePlugin(plugin: Plugin, action: "setEnabled" | "uninstall", 
   }
 }
 
-.pluginContent {
-  max-height: min(65vh, calc(100dvh - 160px));
-  overflow: auto;
-  overflow-wrap: anywhere;
-  padding: 0 4px;
-  font-size: 14px;
-  line-height: 1.7;
-}
 </style>

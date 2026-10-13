@@ -1,0 +1,125 @@
+import { resolve } from "node:path";
+import type { BrowserFfmpegRequest, FfmpegCall } from "./browserTypes";
+
+const inputMethods = new Set(["input", "addInput", "mergeAdd"]);
+const outputMethods = new Set(["output", "addOutput", "save", "saveToFile", "concat", "concatenate", "mergeToFile"]);
+const screenshotMethods = new Set(["screenshots", "screenshot", "takeScreenshots", "thumbnail", "thumbnails"]);
+const filters = new Set("scale crop pad fps format aformat setsar setdar setpts asetpts trim atrim concat overlay amix amerge asplit split aresample volume atempo hflip vflip transpose rotate fade afade xfade acrossfade color anull null eq hue unsharp reverse areverse drawbox drawgrid subtitles ass movie amovie".split(" "));
+const fileFilters = new Set(["subtitles", "ass", "movie", "amovie"]);
+const filterMethods = new Set("withAudioFilter withAudioFilters audioFilter audioFilters withVideoFilter withVideoFilters videoFilter videoFilters filterGraph complexFilter".split(" "));
+const switches = new Set("y n an vn sn dn shortest copyts start_at_zero count_frames count_packets show_streams show_format show_frames show_packets show_error show_programs show_chapters hide_banner nostats".split(" "));
+const valueOptions = new Set("c codec vcodec acodec b ab vb r ar ac crf preset profile level pix_fmt sample_fmt t ss to frames vframes aframes s aspect threads q qscale vtag atag movflags fflags map map_metadata map_chapters metadata disposition maxrate minrate bufsize filter_threads filter_complex_threads analyzeduration probesize read_intervals select_streams show_entries of print_format loglevel v vsync fps_mode f".split(" "));
+
+function invalid(message: string): never { throw Object.assign(new Error(message), { status: 403 }); }
+
+export async function validateFfmpegRequest(request: BrowserFfmpegRequest, resolvePath: (path: string) => Promise<string>, allowRawOptions: boolean) {
+  const workingDirectory = request.options.cwd ? await resolvePath(request.options.cwd) : request.directory;
+  if (request.options.source) await resolvePath(request.options.source);
+
+  async function fileFilterPath(value: unknown) {
+    if (typeof value !== "string" || !value || /[\\:'";,\[\]\x00-\x1f]/.test(value) || value.startsWith("/") || value.split("/").includes("..")) {
+      invalid("FFmpeg 文件路径无效，不能使用协议或设备路径");
+    }
+    await resolvePath(resolve(workingDirectory, value));
+  }
+
+  async function validateFilter(value: unknown): Promise<void> {
+    if (Array.isArray(value)) { for (const item of value) await validateFilter(item); return; }
+    if (typeof value === "string") {
+      if (/[\\'"\x00-\x1f]/.test(value)) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+      for (const part of value.split(/[,;]/)) {
+        const name = /^(?:\s*\[[\w:.]+\])*\s*(\w+)(?:@\w+)?(?:=|\[|\s*$)/.exec(part)?.[1];
+        if (!name || !filters.has(name)) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+        if (fileFilters.has(name)) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+      }
+      return;
+    }
+    if (!value || typeof value !== "object") invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+    const item = value as { filter?: unknown; options?: unknown; inputs?: unknown; outputs?: unknown };
+    if (typeof item.filter !== "string" || !filters.has(item.filter)) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+    for (const labels of [item.inputs, item.outputs]) {
+      if (labels !== undefined && (Array.isArray(labels) ? labels : [labels]).some(label => typeof label !== "string" || !/^\[?[\w:.]+\]?$/.test(label))) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+    }
+    if (fileFilters.has(item.filter)) {
+      if (!item.options || typeof item.options !== "object" || Array.isArray(item.options)) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+      const options = item.options as Record<string, unknown>;
+      const allowed = new Set(["filename", "f", "fontsdir", "original_size", "alpha", "charenc", "stream_index", "si", "wrap_unicode", "loop", "seek_point", "s", "streams"]);
+      if (Object.keys(options).some(key => !allowed.has(key))) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+      if (options.filename === undefined && options.f === undefined) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+      for (const name of ["filename", "f", "fontsdir"]) if (options[name] !== undefined) await fileFilterPath(options[name]);
+    }
+    const values = item.options && typeof item.options === "object" ? Object.entries(item.options) : [["", item.options]];
+    for (const [key, value] of values) {
+      if (/[\\:'";,\[\]\x00-\x1f]/.test(String(key))) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+      if (value !== undefined && typeof value !== "number" && (typeof value !== "string" || /[\\'";,\[\]\x00-\x1f]/.test(value))) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+      if (fileFilters.has(item.filter) && typeof value === "string" && value.includes(":")) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+    }
+  }
+
+  async function validateOptions(args: unknown[]) {
+    const values = args.flatMap(value => Array.isArray(value) ? value : [value]).flatMap(value => {
+      if (typeof value !== "string") invalid("原始参数不在允许范围内，请使用专用方法");
+      const combined = /^(-\S+)\s+([\s\S]+)$/.exec(value);
+      return combined ? [combined[1], combined[2]] : [value];
+    });
+    for (let index = 0; index < values.length; index++) {
+      const option = values[index];
+      const name = /^-([a-z_]+)(?::[\w:]+)?$/i.exec(option)?.[1];
+      if (!name) invalid("原始参数不在允许范围内，请使用专用方法");
+      if (switches.has(name)) continue;
+      if (!["vf", "af", "filter_complex"].includes(name) && !valueOptions.has(name)) invalid("原始参数不在允许范围内，请使用专用方法");
+      const value = values[++index];
+      if (value === undefined) invalid("原始参数不在允许范围内，请使用专用方法");
+      if (["vf", "af", "filter_complex"].includes(name)) await validateFilter(value);
+      if (name === "f" && /^(concat|hls|dash|sdp|lavfi)$/i.test(value)) invalid("不允许通过媒体清单间接访问文件");
+    }
+  }
+
+  for (const call of [...request.calls, request.operation]) {
+    if (inputMethods.has(call.method) || outputMethods.has(call.method)) {
+      if (typeof call.args[0] !== "string") invalid("浏览器 FFmpeg 输入、输出必须使用工作区文件路径");
+      await resolvePath(call.args[0]);
+    }
+    if (/options?$/i.test(call.method)) {
+      if (!allowRawOptions) invalid("配对设备不能使用 FFmpeg 原始参数或滤镜");
+      await validateOptions(call.args);
+    }
+    if (filterMethods.has(call.method)) {
+      if (!allowRawOptions) invalid("配对设备不能使用 FFmpeg 原始参数或滤镜");
+      await validateFilter(call.args[0]);
+      if (call.args.length > 1 && !/^(filterGraph|complexFilter)$/.test(call.method)) {
+        for (const value of call.args.slice(1)) await validateFilter(value);
+      } else if (call.args[1] !== undefined && (Array.isArray(call.args[1]) ? call.args[1] : [call.args[1]]).some((value: unknown) => typeof value !== "string" || !/^\[?[\w:.]+\]?$/.test(value))) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
+    }
+    if (/format/i.test(call.method) && typeof call.args[0] === "string" && /^(concat|hls|dash|sdp|lavfi)$/i.test(call.args[0])) invalid("不允许通过媒体清单间接访问文件");
+    if (screenshotMethods.has(call.method)) {
+      const options = call.args[0];
+      if (options && typeof options === "object" && !Array.isArray(options)) {
+        const { folder, filename } = options as { folder?: string; filename?: string };
+        if (folder) await resolvePath(folder);
+        if (filename) await resolvePath(resolve(workingDirectory, folder ?? "", filename));
+      }
+      if (typeof call.args[1] === "string") await resolvePath(call.args[1]);
+    }
+    if (call.method === "ffprobe") {
+      const args = call.args.map((value, index) => call.undefinedArgs?.includes(index) ? undefined : value);
+      let config: { index?: unknown; options?: unknown; json?: unknown };
+      if (args.length <= 1 && args[0] && typeof args[0] === "object" && !Array.isArray(args[0])) config = args[0];
+      else if (args.length <= 1 && Array.isArray(args[0])) config = { options: args[0] };
+      else if (args.length <= 2) config = { index: args[0], options: args[1] };
+      else invalid("原始参数不在允许范围内，请使用专用方法");
+      if (Object.keys(config).some(key => !["index", "options", "json"].includes(key))
+        || config.index !== undefined && (typeof config.index !== "number" || !Number.isInteger(config.index) || config.index < 0)
+        || config.json !== undefined && typeof config.json !== "boolean"
+        || config.options !== undefined && !Array.isArray(config.options)) invalid("原始参数不在允许范围内，请使用专用方法");
+      const options = config.options as unknown[] | undefined;
+      if (!allowRawOptions && options?.length) invalid("配对设备不能使用 FFmpeg 原始参数或滤镜");
+      if (options) await validateOptions(options);
+      call.args = [{ ...Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined)), options: ["-protocol_whitelist", "file,pipe", ...(options ?? [])] }];
+      delete call.undefinedArgs;
+    }
+  }
+  // ACT: 仅约束 JSON 桥接中的显式参数；媒体容器自身的间接文件引用仍需要进程级文件系统隔离。
+  const protocol: FfmpegCall = { method: "inputOptions", args: ["-protocol_whitelist", "file,pipe"] };
+  request.calls = [...(request.options.source ? [protocol] : []), ...request.calls.flatMap(call => inputMethods.has(call.method) ? [call, protocol] : [call])];
+}

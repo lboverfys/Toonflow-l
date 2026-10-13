@@ -430,6 +430,8 @@ defineExpose({ canvasId, canvasReady, getCanvasContext, readDocumentNode, readDo
     &.backgroundCanvas {
       opacity: 0;
       visibility: hidden;
+      // ACT: 跳过后台布局但保留节点实例与任务；激活时恢复实际尺寸测量。
+      content-visibility: hidden;
       pointer-events: none;
     }
   }

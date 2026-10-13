@@ -10,6 +10,7 @@ await createToolConfig({
   author: "Toonflow",
   github: "https://github.com/HBAI-Ltd/Toonflow-app",
   configRules: [
+    { type: "switch", field: "allowPrivateNetwork", title: "允许访问本机与内网", value: false },
     { type: "inputNumber", field: "timeoutMs", title: "超时（毫秒）", value: 20000, props: { min: 1000, max: 60000, step: 1000 } },
     { type: "inputNumber", field: "maxChars", title: "正文最大字符数", value: 40000, props: { min: 1000, max: 100000, step: 1000 } },
   ],

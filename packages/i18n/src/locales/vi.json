@@ -2621,5 +2621,12 @@
   "Android 暂不支持在文件管理器中定位项目文件，请使用下载或导出保存文件。": "Android chưa hỗ trợ định vị tệp dự án trong trình quản lý tệp. Vui lòng tải xuống hoặc xuất để lưu tệp.",
   "API Key 已保存，部分模型获取失败：{0}": "Đã lưu API Key nhưng không thể lấy một số mô hình: {0}",
   "assets 是节点素材目录，请使用其他文件夹名称": "assets là thư mục tài nguyên nút, vui lòng dùng tên thư mục khác",
-  "TF-Router API Key 已配置完成": "Đã cấu hình TF-Router API Key"
+  "TF-Router API Key 已配置完成": "Đã cấu hình TF-Router API Key",
+  "请在桌面端或服务器本机管理供应商": "Vui lòng quản lý nhà cung cấp trong ứng dụng máy tính hoặc trực tiếp trên máy chủ",
+  "剪贴板文件总大小不能超过 100 MB": "Tổng dung lượng tệp trong bộ nhớ tạm không được vượt quá 100 MB",
+  "临时对话不存在或已关闭，请重新打开对话": "Cuộc trò chuyện tạm thời không tồn tại hoặc đã đóng. Vui lòng mở lại",
+  "配对设备不能使用 FFmpeg 原始参数或滤镜": "Thiết bị đã ghép đôi không thể dùng tham số hoặc bộ lọc FFmpeg thô",
+  "滤镜不在允许范围内，请使用结构化参数与工作区相对路径": "Bộ lọc này không được phép. Hãy dùng tham số có cấu trúc và đường dẫn tương đối trong không gian làm việc",
+  "原始参数不在允许范围内，请使用专用方法": "Tham số thô này không được phép. Hãy dùng phương thức chuyên dụng",
+  "不允许通过媒体清单间接访问文件": "Không được phép truy cập tệp gián tiếp qua danh sách phương tiện"
 }

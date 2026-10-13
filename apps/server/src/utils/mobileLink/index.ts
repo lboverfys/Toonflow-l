@@ -9,6 +9,7 @@ import { isAbsolute, posix } from "node:path";
 import { realpath, stat } from "@toonflow/file";
 import conf from "@/utils/conf";
 import { errorFromCause } from "@/lib/responseFormat";
+import { isLocalSocket, isLocalHost, isSameOrigin } from "@/lib/desktop";
 
 export type MobileLinkConfig = {
   enabled: boolean;
@@ -25,6 +26,8 @@ type Runtime = {
 const runtimes = new WeakMap<Application, Runtime>();
 const deviceKey = Symbol("mobileLinkDevice");
 const pairingKey = Symbol("mobileLinkPairing");
+let configCache: MobileLinkConfig | undefined;
+conf.onDidChange("mobileLink", () => { configCache = undefined; });
 
 export function initializeMobileLinkRuntime(app: Application) {
   if (!runtimes.has(app)) runtimes.set(app, { supported: false, changing: false, lastSeen: new Map() });
@@ -37,11 +40,22 @@ function getRuntime(app: Application) {
 }
 
 export function getMobileLinkConfig(): MobileLinkConfig {
-  return conf.get("mobileLink", { enabled: false, port: 43123, publicUrl: "", directories: [], devices: [] });
+  if (!configCache) {
+    const value = conf.get("mobileLink", { enabled: false, port: 43123, publicUrl: "", directories: [], devices: [] });
+    value.devices.forEach(device => Object.freeze(device));
+    Object.freeze(value.devices);
+    Object.freeze(value.directories);
+    configCache = Object.freeze(value);
+  }
+  return configCache;
 }
 
 export function isMobileLinkRequest(req: Request) {
   return Boolean(req.res && Reflect.get(req.res.locals, deviceKey));
+}
+
+export function isMobileLinkGatewayRequest(req: Request) {
+  return Boolean(req.res && (Reflect.get(req.res.locals, deviceKey) || Reflect.get(req.res.locals, pairingKey)));
 }
 
 export function getMobileLinkDevice(req: Request) {
@@ -51,11 +65,7 @@ export function getMobileLinkDevice(req: Request) {
 }
 
 export function assertMobileLinkControl(req: Request) {
-  const origin = `${req.protocol}://${req.get("host")}`;
-  const sameOrigin = req.get("origin") === undefined ? req.get("referer")?.startsWith(`${origin}/`) : req.get("origin") === origin;
-  const localSocket = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "");
-  const localHost = ["localhost", "127.0.0.1", "[::1]"].includes(req.hostname);
-  if (isMobileLinkRequest(req) || !localSocket || !localHost || !sameOrigin ||
+  if (isMobileLinkRequest(req) || !isLocalSocket(req) || !isLocalHost(req) || !isSameOrigin(req) ||
     (req.get("x-toonflow-mobile-link") !== "1" && req.get("x-toonflow-workspace") !== "1")) {
     throw Object.assign(new Error("只允许本机 Toonflow 页面管理设备互联"), { status: 403 });
   }
@@ -250,8 +260,8 @@ export function pairMobileDevice(req: Request, code: string, name: string) {
   runtime.pairing = undefined;
   const deviceToken = randomBytes(32).toString("base64url");
   const config = getMobileLinkConfig();
-  config.devices.push({ id: crypto.randomUUID(), name: name.trim(), tokenHash: digest(deviceToken), pairedAt: Date.now() });
-  conf.set("mobileLink", config);
+  conf.set("mobileLink", { ...config, devices: [...config.devices,
+    { id: crypto.randomUUID(), name: name.trim(), tokenHash: digest(deviceToken), pairedAt: Date.now() }] });
   return { deviceToken, name: hostname(), appVersion: req.app.locals.appVersion };
 }
 

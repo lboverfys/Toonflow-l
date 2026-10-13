@@ -5,6 +5,7 @@ import type { DownloadState, FfmpegMode, SourceId } from "@toonflow/ffmpeg";
 import conf from "@/utils/conf";
 
 export { executeRemoteFfmpeg } from "@toonflow/ffmpeg";
+export { validateFfmpegRequest } from "@toonflow/ffmpeg/validateRequest";
 
 const directory = join(dirname(conf.path), "ffmpeg", target);
 let download: DownloadState = { phase: "idle", received: 0 };

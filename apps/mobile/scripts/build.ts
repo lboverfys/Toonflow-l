@@ -29,8 +29,17 @@ function requireFile(path: string, help: string) {
   return path;
 }
 
-// ACT: 使用仓库内公开的默认签名，保证不同 CI 构建可覆盖安装；商店发布需改用专用签名。
 const keystore = requireFile(join(mobileRoot, "native/defaultSigning.keystore"), "请使用包含默认签名文件的完整源码。");
+const releaseKeystore = process.env.ANDROID_RELEASE_KEYSTORE;
+const signingLineage = process.env.ANDROID_SIGNING_LINEAGE;
+const keyAlias = process.env.ANDROID_KEY_ALIAS;
+if (release) {
+  if (!releaseKeystore || !signingLineage || !keyAlias || !process.env.ANDROID_KEYSTORE_PASSWORD || !process.env.ANDROID_KEY_PASSWORD) {
+    throw new Error("Android 发布构建缺少专用签名密钥、密码、别名或签名轮换 lineage，停止构建。");
+  }
+  requireFile(releaseKeystore, "请配置 ANDROID_RELEASE_KEYSTORE。");
+  requireFile(signingLineage, "请配置 ANDROID_SIGNING_LINEAGE。");
+}
 const sdkTools = join(sdkRoot, "build-tools", buildToolsVersion);
 const androidJar = requireFile(join(sdkRoot, "platforms", platformVersion, "android.jar"), "请确认 ANDROID_HOME 和 ANDROID_PLATFORM。");
 const aapt = requireFile(join(sdkTools, "aapt2.exe"), "请确认 ANDROID_HOME 和 ANDROID_BUILD_TOOLS。");
@@ -117,6 +126,11 @@ for (const name of dexFiles) await copyFile(join(dex, name), join(staging, name)
 await run([javaTools.jar, "uf", unsigned, ...dexFiles, "assets", "lib"]);
 await run([zipalign, "-f", "-P", "16", "4", unsigned, aligned]);
 
-await run([javaTools.java, "-jar", signer, "sign", "--ks", keystore, "--ks-key-alias", "androiddebugkey", "--ks-pass", "pass:android", "--key-pass", "pass:android", "--out", apk, aligned]);
+// ACT: Android 9 起使用新证书；API 26–27 仍需旧签名兼容覆盖安装，其公开密钥风险无法由 v3 轮换消除。
+const signingArgs = ["--ks", keystore, "--ks-key-alias", "androiddebugkey", "--ks-pass", "pass:android", "--key-pass", "pass:android"];
+if (release) signingArgs.push("--next-signer", "--ks", releaseKeystore!, "--ks-key-alias", keyAlias!,
+  "--ks-pass", "env:ANDROID_KEYSTORE_PASSWORD", "--key-pass", "env:ANDROID_KEY_PASSWORD",
+  "--lineage", signingLineage!, "--rotation-min-sdk-version", "28", "--v3-signing-enabled", "true");
+await run([javaTools.java, "-jar", signer, "sign", ...signingArgs, "--out", apk, aligned]);
 await run([javaTools.java, "-jar", signer, "verify", "--verbose", apk]);
 console.log(`APK 已生成：${apk}`);

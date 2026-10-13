@@ -80,6 +80,9 @@ export function createNodeConfig(config: NodeConfig, configUrl: string) {
             throw error;
           });
           // 压缩后再写入，防止元数据注释被移除。
+          if (chunk.code.includes("toonflowNodeHost.zod")) {
+            chunk.code = 'if (!globalThis.toonflowNodeHost?.zod) throw new Error("此节点需要支持共享 Zod 的 Toonflow，请先升级宿主");\n' + chunk.code;
+          }
           chunk.code = `/*! toonflowNode:${JSON.stringify({ ...metadata, version, readme }).replaceAll("/", "\\u002f")} */\n${chunk.code}`;
         },
         async writeBundle() {
@@ -109,7 +112,7 @@ export function createNodeConfig(config: NodeConfig, configUrl: string) {
         fileName: () => fileName,
       },
       rolldownOptions: {
-        external: ["vue", "@vue/runtime-core", "@vue/runtime-dom", "@vue-flow/core", "element-plus", "three", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", ...Object.keys(tiptapGlobals)],
+        external: ["vue", "@vue/runtime-core", "@vue/runtime-dom", "@vue-flow/core", "element-plus", "three", "zod", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", ...Object.keys(tiptapGlobals)],
         output: {
           exports: "default",
           globals: {
@@ -120,6 +123,7 @@ export function createNodeConfig(config: NodeConfig, configUrl: string) {
             "@vue-flow/core": "toonflowNodeHost.vueFlow",
             "element-plus": "toonflowNodeHost.elementPlus",
             three: "toonflowNodeHost.three",
+            zod: "toonflowNodeHost.zod",
             "@earendil-works/pi-agent-core": "toonflowNodeHost.ai",
             "@earendil-works/pi-ai": "toonflowNodeHost.ai",
           },

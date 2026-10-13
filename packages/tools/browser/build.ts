@@ -14,5 +14,5 @@ await createToolConfig({
     title: "浏览器程序路径",
     value: "",
     props: { placeholder: "留空自动查找本机 Chrome 或 Edge" },
-  }],
+  }, { type: "switch", field: "allowPrivateNetwork", title: "允许访问本机与内网", value: false }],
 }, import.meta.url);

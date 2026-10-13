@@ -156,7 +156,7 @@
   <arrangeDialog ref="arrangeDialogRef" :active="active" :canvasId="canvasId" :directory="directory" :projectName="projectName" :batchHistory="batchHistory" />
   <el-dialog v-model="contactVisible" :title="contactInfo.title" width="min(360px, calc(100vw - 32px))" alignCenter appendToBody>
     <div class="contactContent">
-      <q-r-code
+      <tdesignProvider><q-r-code
         :value="contactInfo.url"
         :size="192"
         type="svg"
@@ -164,13 +164,14 @@
         bgColor="#ffffff"
         borderless
         role="img"
-        :aria-label="`${contactInfo.title}二维码`" />
+        :aria-label="`${contactInfo.title}二维码`" /></tdesignProvider>
       <p class="contactTip">{{ contactInfo.tip }}</p>
     </div>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
+import tdesignProvider from "@/components/tdesignProvider.vue";
 import { computed, ref } from "vue";
 import { Panel, useVueFlow } from "@vue-flow/core";
 import { IconMap, IconMagnet, IconFocusCentered, IconHelp, IconBook, IconBug, IconBrandWechat, IconBriefcase } from "@tabler/icons-vue";

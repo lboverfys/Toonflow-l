@@ -178,7 +178,7 @@ Intel Mac 则先安装兼容 SDK，并运行一次桌面开发或构建命令生
 | `bun run typecheck` | 完成对应环境准备后，检查各工作区类型；适合共享接口或跨包改动。 |
 | `bun run --cwd apps/web build` | 验证 Web 构建，输出到 `build/web/`。 |
 | `bun run --cwd apps/server build` | 构建 Server、MCP，并输出技能与提供方文件；不代替路由生成。 |
-| `bun run build` | 构建工具、Web、Server、MCP，并输出技能与提供方；**不包含节点、桌面构建或类型检查**。 |
+| `bun run build` | 构建工具、文件扩展、Web、Server、MCP，并输出技能与提供方；**不包含节点、桌面构建或类型检查**。 |
 | `bun run build:desktop` | 构建当前平台桌面应用及随包资源，包含节点、工具、Web 与 MCP 构建。 |
 | `bun run package:desktop` | 重新构建并制作 Windows NSIS 安装包或 macOS DMG，需满足对应平台的打包要求。 |
 

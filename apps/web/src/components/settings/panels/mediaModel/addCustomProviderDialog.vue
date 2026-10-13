@@ -9,41 +9,19 @@
     :closeOnClickModal="false"
     :closeOnPressEscape="!saving"
     :showClose="!saving">
-    <div v-if="mode === 'builtin'" class="providerPicker">
-      <aside class="providerSidebar" aria-label="选择厂商">
-        <button
-          v-for="item in mediaProviders"
-          :key="item.id"
-          class="providerItem"
-          type="button"
-          :disabled="saving"
-          :aria-pressed="selectedProvider === item.id"
-          @click="selectedProvider = item.id">
-          <img v-if="item.icon" class="providerLogo" :class="{ monochrome: item.id === 'tfRouter' }" :src="item.icon" alt="" />
-          <modelIcon v-else :model="item.id" :size="18" />
-          <span>{{ item.label }}</span>
-        </button>
-      </aside>
-      <el-scrollbar class="providerDetails">
-        <section v-if="activeProvider" :key="selectedProvider" class="providerContent" :aria-label="activeProvider.label">
-          <div class="providerHeader">
-            <h3>{{ activeProvider.label }}</h3>
-            <el-tag v-if="activeProvider.version" size="small" type="info" effect="plain">v{{ activeProvider.version }}</el-tag>
-          </div>
-          <messageMarkdown v-if="providerReadme" class="providerReadme" :content="providerReadme" />
-          <el-divider v-if="providerReadme" contentPosition="left">连接配置</el-divider>
-          <form-create v-model:api="formApi" :rule="providerRules" :option="formOptions" />
-          <div class="modelHeader">
-            <el-text tag="strong">模型列表 <el-text type="info">{{ models.length }}</el-text></el-text>
-          </div>
-          <el-table v-if="models.length" class="modelList" :data="models" rowKey="id" aria-label="模型列表">
-            <el-table-column prop="id" label="模型 ID" minWidth="220" showOverflowTooltip />
-            <el-table-column prop="label" label="显示名称" minWidth="180" showOverflowTooltip />
-          </el-table>
-          <el-alert v-if="formError" :title="formError" type="error" :closable="false" showIcon />
-        </section>
-      </el-scrollbar>
-    </div>
+    <providerPicker v-if="mode === 'builtin'" v-model="selectedProvider" :providers="mediaProviders" :disabled="saving">
+      <messageMarkdown v-if="providerReadme" class="providerReadme" :content="providerReadme" />
+      <el-divider v-if="providerReadme" contentPosition="left">连接配置</el-divider>
+      <form-create v-model:api="formApi" :rule="providerRules" :option="formOptions" />
+      <div class="modelHeader">
+        <el-text tag="strong">模型列表 <el-text type="info">{{ models.length }}</el-text></el-text>
+      </div>
+      <el-table v-if="models.length" class="modelList" :data="models" rowKey="id" aria-label="模型列表">
+        <el-table-column prop="id" label="模型 ID" minWidth="220" showOverflowTooltip />
+        <el-table-column prop="label" label="显示名称" minWidth="180" showOverflowTooltip />
+      </el-table>
+      <el-alert v-if="formError" :title="formError" type="error" :closable="false" showIcon />
+    </providerPicker>
     <el-scrollbar v-else maxHeight="min(65dvh, calc(100dvh - 160px))">
       <div class="dialogContent">
         <el-form class="importForm" labelPosition="top" :disabled="saving" @submit.prevent>
@@ -102,9 +80,9 @@ import formCreate, { type Api, type Options } from "../../formCreate";
 import { IconFileCode, IconCode, IconFolderOpen, IconCopy, IconSparkles } from "@tabler/icons-vue";
 import { ElMessage } from "element-plus";
 import { mediaProviders } from "@toonflow/providers";
-import { modelIcon } from "@toonflow/model-icons";
+import providerPicker from "../../providerPicker.vue";
 import messageMarkdown from "@/components/messageMarkdown.vue";
-import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
+import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeModels";
 import laoliImageSource from "@toonflow/providers/media/laoliImage?raw";
 import laoliVideoSource from "@toonflow/providers/media/laoliVideo?raw";
 import sub2apiImageSource from "@toonflow/providers/media/sub2apiImage?raw";
@@ -230,7 +208,7 @@ async function addProvider() {
       }
     }
     if (!addedProvider.value) {
-      const { data } = await axios.post<{ data: MediaProvider }>("/api/providers/media/add", { source: source.value });
+      const { data } = await axios.post<{ data: MediaProvider }>("/api/providers/media/add", { source: source.value }, { headers: { "x-toonflow-workspace": "1" } });
       addedProvider.value = data.data;
       emit("added", data.data);
       invalidateNodeModels("media");
@@ -267,96 +245,7 @@ async function copyPrompt() {
 </script>
 
 <style lang="scss" scoped>
-.providerPicker {
-  display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
-  height: min(560px, 70dvh);
-  gap: 24px;
 
-  .providerSidebar {
-    overflow-y: auto;
-    border-right: 1px solid var(--el-border-color-lighter);
-    padding: 2px;
-
-    .providerItem {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      width: 100%;
-      padding: 10px 12px;
-      margin-bottom: 4px;
-      border: 0;
-      border-radius: var(--el-border-radius-base);
-      background: transparent;
-      color: var(--el-text-color-regular);
-      font: inherit;
-      text-align: left;
-      cursor: pointer;
-
-      &:hover { background: var(--el-fill-color-light); }
-      &[aria-pressed="true"] {
-        background: var(--el-color-primary-light-9);
-        color: var(--el-color-primary);
-      }
-      &:focus-visible { outline: 2px solid var(--el-color-primary); }
-
-      .providerLogo {
-        width: 18px;
-        height: 18px;
-        object-fit: contain;
-
-        &.monochrome {
-          .dark & { filter: invert(1); }
-        }
-      }
-    }
-  }
-
-  .providerDetails {
-    min-width: 0;
-
-    .providerContent {
-      padding-right: 12px;
-
-      .providerHeader {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 10px;
-        margin: 4px 0 24px;
-
-        h3 {
-          margin: 0;
-          color: var(--el-text-color-primary);
-          font-size: 18px;
-          overflow-wrap: anywhere;
-        }
-      }
-      .providerReadme {
-        margin-bottom: 24px;
-        overflow-wrap: anywhere;
-      }
-      .modelHeader {
-        margin: 8px 0 12px;
-      }
-      .modelList {
-        margin-bottom: 16px;
-      }
-    }
-  }
-
-  @media (max-width: 600px) {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 16px;
-
-    .providerSidebar {
-      max-height: 128px;
-      border-right: 0;
-      border-bottom: 1px solid var(--el-border-color-lighter);
-    }
-  }
-}
 
 .dialogContent {
   padding: 8px 4px;

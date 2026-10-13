@@ -2,11 +2,10 @@ import { resolve } from "node:path";
 import { Router } from "express";
 import { z } from "zod";
 import u from "@/utils";
-import { validateFields } from "@/lib/middleware";
-import { error, success } from "@/lib/responseFormat";
+import { localOnly, validateFields } from "@/lib/middleware";
+import { success } from "@/lib/responseFormat";
 
-export default Router().put("/", validateFields({ name: u.extPlugins.extNameSchema, config: z.record(z.string(), z.json()) }), async (req, res) => {
-  if (!u.workspace.isLocalWorkspaceRequest(req)) return res.status(403).json(error("请在桌面端或服务器本机管理文件扩展配置", null, 403));
+export default Router().put("/", localOnly("请在桌面端或服务器本机管理文件扩展配置"), validateFields({ name: u.extPlugins.extNameSchema, config: z.record(z.string(), z.json()) }), async (req, res) => {
   const { name, config } = req.body;
   const release = u.workspaceFile.lockWorkspaceFiles([resolve(u.extPlugins.extDirectory, `${name}.umd.js`)]);
   try {

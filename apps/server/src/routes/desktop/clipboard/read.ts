@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat } from "@toonflow/file";
 import { basename, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Router } from "express";
@@ -13,6 +13,7 @@ const mediaTypes: Record<string, string> = {
   ".aac": "audio/aac", ".flac": "audio/flac", ".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav",
   ".avi": "video/x-msvideo", ".m4v": "video/mp4", ".mkv": "video/x-matroska", ".mov": "video/quicktime", ".mp4": "video/mp4", ".webm": "video/webm",
 };
+const clipboardLimit = 100 * 1024 * 1024;
 
 function clipboardPaths(text: string) {
   const paths = new Set<string>();
@@ -28,14 +29,16 @@ function clipboardPaths(text: string) {
   return [...paths];
 }
 
-async function readClipboardFile(path: string) {
+async function readClipboardFile(path: string, remaining: number) {
   const info = await stat(path);
   if (!info.isFile()) return;
   if (info.size > 100 * 1024 * 1024) throw new Error(t`剪贴板文件“${basename(path)}”超过 100 MB`);
+  if (info.size > remaining) throw Object.assign(new Error("剪贴板文件总大小不能超过 100 MB"), { status: 413 });
   const mimeType = mediaTypes[extname(path).toLowerCase()];
   if (!mimeType) throw new Error(t`剪贴板文件“${basename(path)}”不是支持的图片、视频或音频`);
   const bytes = await readFile(path);
-  return { name: basename(path), mimeType, data: bytes.toString("base64") };
+  if (bytes.length > remaining) throw Object.assign(new Error("剪贴板文件总大小不能超过 100 MB"), { status: 413 });
+  return { bytes: bytes.length, file: { name: basename(path), mimeType, data: bytes.toString("base64") } };
 }
 
 // ACT: 读取也使用 POST，复用 desktopRequest 的同源校验。
@@ -43,18 +46,21 @@ export default Router().post("/", validateFields({ format: z.enum(["image", "fil
   const desktop = u.desktop.getDesktopRuntime(req);
   if (req.body.format === "image") {
     const image = desktop.readClipboardImage();
+    if (image && image.byteLength > clipboardLimit) throw Object.assign(new Error("剪贴板文件总大小不能超过 100 MB"), { status: 413 });
     res.json(success({ image: image ? Buffer.from(image).toString("base64") : null }));
     return;
   }
   if (req.body.format === "files") {
     const paths = clipboardPaths(desktop.readClipboardText() ?? "");
     const files = [];
+    let totalBytes = 0;
     for (const path of paths) {
-      const file = await readClipboardFile(path);
-      if (file) files.push(file);
+      const result = await readClipboardFile(path, clipboardLimit - totalBytes);
+      if (result) { totalBytes += result.bytes; files.push(result.file); }
     }
     if (!files.length) {
       const image = desktop.readClipboardImage();
+      if (image && image.byteLength > clipboardLimit) throw Object.assign(new Error("剪贴板文件总大小不能超过 100 MB"), { status: 413 });
       if (image) files.push({ name: "clipboard-image.png", mimeType: "image/png", data: Buffer.from(image).toString("base64") });
     }
     res.json(success({ files }));

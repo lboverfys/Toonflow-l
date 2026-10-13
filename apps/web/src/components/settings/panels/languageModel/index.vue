@@ -41,7 +41,7 @@
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref, shallowRef, type Component } from "vue";
-import axios from "axios";
+import api, { errorMessage } from "@/lib/api";
 import { ElMessage } from "element-plus";
 import { customProviders, saveSettings, type CustomProvider } from "@/stores/settings";
 import { IconPlus, IconSettings, IconEdit, IconTrash, IconRefresh } from "@tabler/icons-vue";
@@ -110,8 +110,8 @@ async function fetchProviderModels(provider: CustomProvider) {
   const { id, apiUrl, protocol, apiKey } = provider;
   fetchingId.value = id;
   try {
-    const { data } = await axios.post("/api/providers/models", { apiUrl, protocol, apiKey }, { timeout: 35000 });
-    if (data.code !== 200 || !Array.isArray(data.data)) throw new Error(data.message || "获取模型列表失败");
+    const { data } = await api.post("/api/providers/models", { apiUrl, protocol, apiKey }, { timeout: 35000 });
+    if (!Array.isArray(data.data)) throw new Error(data.message || "获取模型列表失败");
     if (!data.data.length) throw new Error("未获取到可用模型，请检查 API Key 后重试");
     await saveSettings(settings => {
       const current = settings.customProviders;
@@ -124,7 +124,7 @@ async function fetchProviderModels(provider: CustomProvider) {
       return { customProviders: current.map(item => item?.id === id ? { ...item, models: data.data } : item) };
     });
   } catch (error) {
-    ElMessage.error(axios.isAxiosError(error) ? error.response?.data?.message || "获取模型列表失败，请重试" : error instanceof Error ? error.message : "获取模型列表失败，请重试");
+    ElMessage.error(errorMessage(error, "获取模型列表失败，请重试"));
   }
   finally { fetchingId.value = ""; }
 }

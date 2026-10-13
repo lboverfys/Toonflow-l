@@ -29,8 +29,9 @@ export function loadNodeComponent(name: string, url: string, force = false): Pro
     if (!response.ok) throw new Error(`节点脚本加载失败（HTTP ${response.status}）`);
     const code = await response.text();
     if (code.includes("toonflowTiptapHost")) await import("@/lib/tiptapHost");
-    const host = (window as typeof window & { toonflowNodeHost?: { three?: unknown } }).toonflowNodeHost;
+    const host = (window as typeof window & { toonflowNodeHost?: { three?: unknown; zod?: unknown } }).toonflowNodeHost;
     if (host && !host.three && code.includes("toonflowNodeHost.three")) host.three = await import("three");
+    if (host && !host.zod && code.includes("toonflowNodeHost.zod")) host.zod = await import("zod");
     return new Promise<NodeComponent>((resolve, reject) => {
       delete nodeWindow.toonflowNodes?.[name];
       const script = document.createElement("script");
