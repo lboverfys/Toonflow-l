@@ -3,6 +3,7 @@
   <el-dialog v-model="previewVisible" :title="selected?.label || '提及内容'" width="min(720px, 90vw)" alignCenter appendToBody destroyOnClose>
     <div v-if="selected" class="mentionPreview">
       <p class="mentionSource">{{ sourceLabel(selected) }}</p>
+      <p v-if="selected.dataType === 'VIDEO'" class="mentionSource">视频引用仅提供文件路径，供本地工具处理；需要模型分析视频内容时，请添加视频附件。</p>
       <p v-if="loading || error" :role="error ? 'alert' : 'status'">{{ loading ? '正在读取…' : error }}</p>
       <img v-else-if="previewUrl && ['IMAGE', 'MASK'].includes(selected.dataType)" :src="previewUrl" :alt="selected.label" @error="error = '无法预览该图片'" />
       <video v-else-if="previewUrl && selected.dataType === 'VIDEO'" :src="previewUrl" controls playsinline preload="metadata" @error="error = '无法预览该视频'" />
