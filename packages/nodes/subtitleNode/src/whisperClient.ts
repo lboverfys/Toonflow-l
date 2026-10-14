@@ -12,6 +12,7 @@ async function request<T>(path: string, input: Record<string, unknown>, method: 
   const response = await fetch(`/api/whisper/${path}${query}`, {
     method,
     headers: { "content-type": "application/json", "x-toonflow-workspace": "1" },
+    ...(path === "start" ? {} : { signal: AbortSignal.timeout(path === "task" ? 15000 : path === "cancel" ? 60000 : 120000) }),
     ...(method === "POST" ? { body: JSON.stringify(input) } : {}),
   });
   const body = await response.json() as { code: number; data: T & { code?: string }; message: string };

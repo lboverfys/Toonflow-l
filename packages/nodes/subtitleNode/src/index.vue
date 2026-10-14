@@ -2,10 +2,10 @@
   <nodeSkeleton v-bind="nodeProps" :topVisible="node.selected" topWidth="max-content" :fullscreenVisible="false" style="width: 740px">
     <template #top>
       <div class="subtitleToolbar">
-        <el-button :disabled="!ready || busy" @click="startGeneration().catch(reportError)">AI生成</el-button>
+        <el-button :disabled="!ready || busy || !validMedia || !!data.taskId" @click="startGeneration().catch(reportError)">AI生成</el-button>
         <el-button :disabled="!ready || busy" @click="fileInput?.click()">导入SRT</el-button>
         <el-button :disabled="!ready || busy || dirty" :title="dirty ? '请先保存字幕' : '导出已保存字幕'" @click="exportSubtitle">导出SRT</el-button>
-        <el-button v-if="generating" @click="cancelJob">取消生成</el-button>
+        <el-button v-if="generating" :disabled="phase === 'writing'" @click="cancelJob">取消生成</el-button>
         <el-button v-else-if="data.taskId" :disabled="!ready || busy" @click="resumeGeneration().catch(reportError)">恢复任务</el-button>
         <el-button v-else-if="data.resultPath && phase === 'failed'" :disabled="!ready || busy" @click="recoverResult().catch(reportError)">读取生成结果</el-button>
         <input ref="fileInput" type="file" accept=".srt" hidden aria-label="导入字幕文件" @change="importSubtitle" />
@@ -13,6 +13,10 @@
     </template>
     <div class="subtitleContent nodrag nopan nowheel" @keydown.stop>
       <p class="mediaSource">{{ sourceLabel }}</p>
+      <div class="generationOptions">
+        <label>Whisper 模型<select v-model="model" :disabled="!ready || busy"><option v-for="choice in models" :key="choice" :value="choice">{{ choice }}</option></select></label>
+        <label>语言（留空自动识别）<input v-model="language" :disabled="!ready || busy" /></label>
+      </div>
       <p class="taskStatus" role="status">{{ statusLabel }}</p>
       <p v-if="error" class="subtitleError" role="alert">{{ error }}</p>
       <segmentTable v-model="draft" :disabled="!ready || busy" />
@@ -44,17 +48,21 @@ defineOptions({
     { id: "subtitle", type: "source", dataType: "STRING", label: "已保存的 SRT 字幕" },
   ] satisfies NodeHandle[],
 });
-const { id, node, nodeProps, nodeEvent, outputs, files } = useNode({
+const { id, node, nodeProps, nodeEvent, outputs, files, config } = useNode({
   label: "字幕", outputs: { subtitle: { dataType: "STRING", value: "" } },
 });
 type DraftSegment = { start: string; end: string; text: string };
 type SubtitleData = {
   subtitlePath?: string; subtitleSnapshot?: string; subtitleDraft?: DraftSegment[];
   taskId?: string; taskDirectory?: string; resultPath?: string; subtitlePhase?: string; subtitleError?: string;
+  subtitleModel?: WhisperModel; subtitleLanguage?: string;
 };
 const data = computed(() => node.data as typeof node.data & SubtitleData);
 const subtitlePath = `assets/${id}/subtitle.srt`;
 const models = ["tiny", "base", "small", "medium", "large", "turbo"] as const;
+const model = computed({ get: () => data.value.subtitleModel ?? (models.includes(config.value.defaultModel as WhisperModel) ? config.value.defaultModel as WhisperModel : "small"),
+  set: (value: WhisperModel) => { data.value.subtitleModel = value; } });
+const language = computed({ get: () => data.value.subtitleLanguage ?? "", set: (value: string) => { data.value.subtitleLanguage = value; } });
 const inputs = ref<NodeInputValue[]>([]);
 const ready = ref(false);
 const saving = ref(false);
@@ -74,6 +82,7 @@ let currentJob: { cancelled: boolean; directory?: string; operationId?: string; 
 const generationState = useNodeGeneration(outputs, cancelJob, "字幕生成已取消");
 const { generating } = generationState;
 const busy = computed(() => generating.value || saving.value || importing.value || deleting.value || disposed);
+const validMedia = computed(() => inputs.value.length === 1 && ["VIDEO", "AUDIO"].includes(String(inputs.value[0].dataType)) && !!inputs.value[0].value);
 const dirty = computed(() => {
   try { return draftText() !== outputs.value.subtitle.value; }
   catch { return true; }
@@ -243,6 +252,10 @@ async function startGeneration(args: { model?: WhisperModel; language?: string }
   const input = inputs.value[0];
   if ((input.dataType !== "VIDEO" && input.dataType !== "AUDIO") || !input.value) throw new Error("媒体节点暂无可转录内容");
   const source = input.value.url;
+  const choice = args.model ?? model.value;
+  const selectedLanguage = (args.language ?? language.value).trim();
+  if (!models.includes(choice) || selectedLanguage.length > 32 || !/^(?:[a-zA-Z][a-zA-Z -]*)?$/.test(selectedLanguage)) throw new Error("请选择有效模型，语言使用名称或代码（如 Chinese、zh），留空自动识别");
+  model.value = choice; language.value = selectedLanguage;
   const resultFiles = files.getWorkspaceFiles();
   const output = `assets/${id}/${crypto.randomUUID()}.srt`;
   phase.value = "preparing"; error.value = "";
@@ -252,8 +265,13 @@ async function startGeneration(args: { model?: WhisperModel; language?: string }
     const check = await whisperClient.check(current.directory);
     if (current.cancelled) throw new DOMException("字幕生成已取消", "AbortError");
     if (!check.ready) throw new Error(check.errors.join("\n") || "本地 Whisper 尚未就绪");
+    data.value.resultPath = output;
+    data.value.taskDirectory = current.directory;
     // start 发送后必须收取 operationId；取消不 abort 请求，以免任务成为孤儿。
-    const task = await whisperClient.start({ directory: current.directory, source, output, ...args });
+    const task = await whisperClient.start({ directory: current.directory, source, output, model: choice, language: selectedLanguage }).catch(failure => {
+      if (failure instanceof WhisperHttpError) throw failure;
+      throw new Error(`启动响应未确认，任务可能仍在运行。结果路径已保留，可稍后读取结果；不会自动重新提交。\n${errorMessage(failure)}`, { cause: failure });
+    });
     current.operationId = task.operationId;
     data.value.taskId = task.operationId;
     data.value.taskDirectory = current.directory;
@@ -285,7 +303,13 @@ async function cancelAndWait() {
   cancelJob();
   await job;
   // 取消网络失败时必须阻止清理文件；恢复后的任务同样先等待服务端释放。
-  if (current?.cancelPromise) await current.cancelPromise;
+  if (current?.cancelPromise) {
+    try { await current.cancelPromise; }
+    catch (failure) {
+      if (!(failure instanceof WhisperHttpError) || failure.code !== "WHISPER_TASK_EXPIRED") throw failure;
+      delete data.value.taskId;
+    }
+  }
   if (!data.value.taskId) return;
   const directory = (await files.getWorkspaceFiles().list()).directory;
   if (directory !== data.value.taskDirectory) throw new Error("字幕任务不属于当前工作区，无法取消");
@@ -314,7 +338,7 @@ nodeEvent.on("delete", async () => {
 });
 onScopeDispose(() => {
   disposed = true;
-  Promise.all([cancelAndWait(), saveQueue]).then(() => files.removeNodeFiles()).catch(reportError);
+  cancelAndWait().catch(reportError);
 });
 function subtitleStatus() {
   let draftReady = ready.value;
@@ -326,7 +350,7 @@ nodeTools.register({
   name: "getSubtitleStatus", description: "查询字幕草稿和保存状态；生成成功只填草稿，saved 为 true 才表示当前草稿已写入字幕文件并同步输出。dirty 表示有未保存修改。", parameters: z.strictObject({}), execute: subtitleStatus,
 });
 nodeTools.register({
-  name: "generateSubtitle", description: "从恰好一个视频或音频输入启动本地 Whisper 后台转录，立即返回 generating，不等待任务完成。getGenerationStatus 的 succeeded 仅表示草稿生成完成，outputs 可能仍是旧字幕；用 getSubtitleStatus 查询草稿，确认后显式调用 saveSubtitle。不要循环等待，除非用户要求。",
+  name: "generateSubtitle", description: "从恰好一个视频或音频输入启动本地 Whisper 后台转录，立即返回 generating，不等待任务完成。可指定 model/language，省略则沿用节点配置（语言留空自动识别）。getGenerationStatus 的 succeeded 仅表示草稿生成完成，outputs 可能仍是旧字幕；用 getSubtitleStatus 查询草稿，确认后显式调用 saveSubtitle。不要循环等待，除非用户要求。",
   parameters: z.strictObject({ model: z.enum(models).optional(), language: z.string().trim().max(32).regex(/^(?:[a-zA-Z][a-zA-Z -]*)?$/).optional() }),
   execute(args, { signal }) { signal?.throwIfAborted(); return startGeneration(args); },
 });
@@ -337,13 +361,18 @@ nodeTools.register({
 });
 nodeTools.register({ name: "saveSubtitle", description: "明确保存当前字幕草稿；写入成功才同步输出，文件冲突保留草稿与旧输出。", parameters: z.strictObject({}), execute: saveSubtitle });
 nodeTools.register({ name: "getConfig", description: "检查本地 Whisper、PyTorch 与 FFmpeg 环境及可选模型，不启动转录。", parameters: z.strictObject({}),
-  async execute() { const directory = (await files.getWorkspaceFiles().list()).directory; return whisperClient.check(directory); } });
+  async execute() { const directory = (await files.getWorkspaceFiles().list()).directory; return { ...await whisperClient.check(directory), model: model.value, language: language.value }; } });
 </script>
 
 <style scoped lang="scss">
 .subtitleToolbar { display: flex; gap: 8px; padding: 8px; background: var(--el-bg-color); border: 1px solid var(--el-border-color); border-radius: 6px; }
 .subtitleContent {
   .mediaSource, .taskStatus { margin: 0 0 8px; font-size: 12px; overflow-wrap: anywhere; }
+  .generationOptions {
+    display: flex; gap: 12px; margin-bottom: 10px; font-size: 12px;
+    label { display: flex; align-items: center; gap: 6px; }
+    input, select { padding: 5px; color: var(--el-text-color-primary); background: var(--el-fill-color-blank); border: 1px solid var(--el-border-color); border-radius: 4px; }
+  }
   .subtitleError { white-space: pre-wrap; color: var(--el-color-danger); }
   .saveActions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; font-size: 12px; }
 }
