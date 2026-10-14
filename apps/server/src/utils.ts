@@ -10,6 +10,7 @@ import * as providerDebug from "@/utils/media/debug";
 import * as mediaGeneration from "@/utils/media/generation";
 import * as mediaProvider from "@/utils/media/provider";
 import * as ffmpeg from "@/utils/ffmpeg";
+import * as whisper from "@/utils/whisper";
 import * as pluginInstall from "@/utils/plugins/install";
 import conf, { removeLegacySettings } from "@/utils/conf";
 import * as ai from "@/utils/ai";
@@ -45,6 +46,7 @@ export default {
   mediaGeneration,
   mediaProvider,
   ffmpeg,
+  whisper,
   pluginInstall,
   conf,
   removeLegacySettings,
