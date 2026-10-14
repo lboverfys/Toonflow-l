@@ -14,6 +14,7 @@
       @command="handleCommand">
       <template #dropdown>
         <el-dropdown-menu>
+          <el-dropdown-item v-if="!documentTarget" command="rename" :icon="IconPencil">重命名</el-dropdown-item>
           <el-dropdown-item v-if="assetOutputs.length && saveNodeToAssets" command="saveAsset" :icon="IconFolderPlus">保存到素材库</el-dropdown-item>
           <el-dropdown-item :divided="!!(assetOutputs.length && saveNodeToAssets)" command="copy" :icon="IconCopy">复制节点</el-dropdown-item>
           <el-dropdown-item command="duplicate" :icon="IconCopyPlus">创建副本</el-dropdown-item>
@@ -27,6 +28,7 @@
     <teleport :to="slotDock?.top.value ?? 'body'" :disabled="!docked">
     <div
       v-if="documentTarget || (topVisible && slotsVisible)"
+      v-show="!editingLabel"
       class="floatingSlot topSlot nodrag nopan nowheel"
       :class="{ docked }"
       :style="{ width: typeof topWidth === 'number' ? `${topWidth}px` : topWidth }"
@@ -75,6 +77,7 @@
     <teleport :to="slotDock?.bottom.value ?? 'body'" :disabled="!docked">
     <div
       v-if="$slots.bottom && (documentTarget || (bottomVisible && slotsVisible))"
+      v-show="!editingLabel"
       class="floatingSlot bottomSlot nodrag nopan nowheel"
       :class="{ docked }"
       :style="{ width: typeof bottomWidth === 'number' ? `${bottomWidth}px` : bottomWidth }"
@@ -96,6 +99,7 @@
         aria-label="节点名称"
         @pointerdown.stop
         @mousedown.stop
+        @click.stop
         @dblclick.stop
         @keydown.stop
         @keydown.enter="confirmLabel"
@@ -103,9 +107,12 @@
         @blur="saveLabel" />
       <span
         v-else
-        class="labelText"
+        class="labelText nodrag nopan"
         tabindex="0"
         :title="`${label}（双击编辑名称）`"
+        @pointerdown.stop
+        @mousedown.stop
+        @click.stop
         @dblclick.stop="editLabel"
         @keydown.enter.stop.prevent="editLabel">
         {{ label }}
@@ -177,6 +184,7 @@ import { computed, inject, nextTick, onScopeDispose, ref, shallowRef, watch, wat
 import { Handle, Position, getTransformForBounds, pointToRendererPoint, useNode, useVueFlow, wheelDelta } from "@vue-flow/core";
 import {
   IconRefresh,
+  IconPencil,
   IconX,
   IconTrash,
   IconCopy,
@@ -459,6 +467,7 @@ const assetOutputs = computed(() =>
 );
 
 async function handleCommand(command: string) {
+  if (command === "rename") await editLabel();
   if (command === "saveAsset") saveNodeToAssets?.(props.label, assetOutputs.value);
   if (command === "clipboard" && copyNodeToClipboard && !copyingToClipboard.value) {
     copyingToClipboard.value = true;
@@ -518,6 +527,7 @@ async function editLabel() {
   labelDraft.value = props.label;
   editingLabel.value = true;
   await nextTick();
+  labelInput.value?.focus({ preventScroll: true });
   labelInput.value?.select();
 }
 
@@ -685,12 +695,8 @@ watch(
       min-width: 0;
       overflow-wrap: anywhere;
       white-space: normal;
-      cursor: grab;
+      cursor: text;
       user-select: none;
-
-      &:active {
-        cursor: grabbing;
-      }
     }
 
     .labelInput {

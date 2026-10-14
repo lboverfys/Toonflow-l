@@ -1376,6 +1376,11 @@ const defaultEdgeOptions = markRaw({
     }
   }
 
+  // 改名时仅隐藏停靠区，保留提示词编辑器及其状态。
+  &:has(.labelInput) .canvasBottomBar.vue-flow__panel .nodeDock {
+    display: none;
+  }
+
   // 底栏横跨画布，空白处放行指针给画布；左侧为画布工具，选中节点的工具栏与提示词停靠在剩余空间居中。
   .canvasBottomBar.vue-flow__panel {
     right: 0;
