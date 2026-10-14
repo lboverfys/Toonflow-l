@@ -89,7 +89,9 @@ export function createFfmpeg(directory: string): typeof ffmpeg {
   };
   proto._getArguments = function() {
     checkFiles(this);
-    return native._getArguments.call(this);
+    const args = native._getArguments.call(this);
+    // ACT: fluent 自动加 -y；显式禁止覆盖的 -n 优先，避免 FFmpeg 因两个参数冲突而拒绝执行。
+    return args.includes("-n") ? args.filter(argument => argument !== "-y") : args;
   };
   proto.ffprobe = function(...args: unknown[]) {
     try { checkFiles(this); }
