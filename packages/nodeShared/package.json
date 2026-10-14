@@ -17,7 +17,8 @@
     "./markdownExtensions": "./src/markdownExtensions.ts",
     "./useMediaModels": "./src/useMediaModels.ts",
     "./useOutputReplace": "./src/useOutputReplace.ts",
-    "./generationTools": "./src/generationTools.ts"
+    "./generationTools": "./src/generationTools.ts",
+    "./subtitleSrt": "./src/subtitleSrt.ts"
   },
   "scripts": {
     "typecheck": "vue-tsc --noEmit"
