@@ -32,7 +32,7 @@
 import { computed, onMounted, onScopeDispose, ref } from "vue";
 import { ElButton } from "element-plus";
 import { IconSubtitles } from "@tabler/icons-vue";
-import { getTargetValues, nodeSkeleton, nodeTools, useNode, z, type NodeHandle, type NodeInputValue, type WorkspaceFiles } from "@toonflow/nodes-scaffold/runtime";
+import { getTargetValues, nodeSkeleton, nodeTools, useNode, useNodeInputs, z, type NodeHandle, type NodeInputValue, type WorkspaceFiles } from "@toonflow/nodes-scaffold/runtime";
 import { parseSrt, serializeSrt, parseSrtTime, formatSrtTime } from "@toonflow/node-shared/subtitleSrt";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useNodeGeneration } from "@toonflow/node-shared/useNodeGeneration";
@@ -51,6 +51,7 @@ defineOptions({
 const { id, node, nodeProps, nodeEvent, outputs, files, config } = useNode({
   label: "字幕", outputs: { subtitle: { dataType: "STRING", value: "" } },
 });
+const { getTargetSources } = useNodeInputs();
 type DraftSegment = { start: string; end: string; text: string };
 type SubtitleData = {
   subtitlePath?: string; subtitleSnapshot?: string; subtitleDraft?: DraftSegment[];
@@ -87,8 +88,14 @@ const dirty = computed(() => {
   try { return draftText() !== outputs.value.subtitle.value; }
   catch { return true; }
 });
-const sourceLabel = computed(() => inputs.value.length !== 1 ? `媒体输入：${inputs.value.length} 个（需恰好一个）`
-  : `媒体输入：${inputs.value[0].source} / ${inputs.value[0].value && typeof inputs.value[0].value === "object" ? inputs.value[0].value.url : '暂无内容'}`);
+const sourceLabel = computed(() => {
+  if (inputs.value.length !== 1) return `媒体输入：${inputs.value.length} 个（需恰好一个）`;
+  const source = getTargetSources(id, "media")[0]?.node;
+  const title = source?.data?.label?.trim();
+  const input = inputs.value[0].value;
+  const fileName = input && typeof input === "object" ? input.url.split(/[\\/]/).at(-1) : "暂无内容";
+  return `媒体输入：${title || fileName}`;
+});
 const statusLabel = computed(() => ({
   idle: "", preparing: "正在准备本地 Whisper", downloadingModel: "正在下载 Whisper 模型", transcribing: "正在转录", writing: "正在写入生成结果",
   draft: "生成完成，草稿待保存", saved: "字幕已保存", cancelled: "生成已取消", failed: "生成或读取失败",
@@ -197,10 +204,14 @@ function cancelJob() {
     current.cancelPromise.catch(reportError);
   }
 }
-async function consumeResult(resultPath: string, resultFiles: WorkspaceFiles) {
+async function consumeResult(resultPath: string, resultFiles: WorkspaceFiles, current?: NonNullable<typeof currentJob>) {
   if (!resultPath.startsWith(`assets/${id}/`) || !resultPath.endsWith(".srt") || resultPath.split("/").some(part => part === ".." || part === ".") || resultPath.includes("\\")) throw new Error("生成结果不属于当前字幕节点");
   data.value.resultPath = resultPath;
   const srt = await resultFiles.readText(resultPath);
+  if (current?.cancelled) {
+    delete data.value.taskId;
+    throw new DOMException("字幕生成已取消", "AbortError");
+  }
   if (disposed || deleting.value) return;
   setDraft(srt);
   phase.value = "draft";
@@ -231,7 +242,7 @@ async function monitorTask(current: NonNullable<typeof currentJob>, resultFiles:
   // writing 阶段可能已经完成提交；取消请求后保留结果路径，避免覆盖用户草稿。
   data.value.resultPath = task.output;
   if (current.cancelled) { delete data.value.taskId; phase.value = "cancelled"; throw new DOMException("字幕生成已取消", "AbortError"); }
-  await consumeResult(task.output, resultFiles);
+  await consumeResult(task.output, resultFiles, current);
 }
 function ownJob(task: (current: NonNullable<typeof currentJob>) => Promise<void>, operationId?: string) {
   const current: NonNullable<typeof currentJob> = { cancelled: false, operationId };
