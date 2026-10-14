@@ -10,6 +10,28 @@
 
 ---
 
+## 实现时的契约修正
+
+以下修正是对现有代码约束的落实，优先于下方原始步骤中的接口示意：
+
+- SRT 编解码由 `@toonflow/node-shared/subtitleSrt` 同时供服务端与两个节点复用；换行统一为 CRLF，区间按毫秒校验，解析与序列化可往返。服务端通过工作区依赖声明引用，不能穿透源码。
+- Python 路径和默认模型由服务端读取已安装、已启用的 `subtitleNode` 配置；HTTP 不接受 `pythonPath`。`check` 接收授权工作区目录，返回完整预检、模型名单及默认值。类型通过 `@toonflow/server/whisper/types` 公开子路径供前端仅作类型引用。
+- 转录先排他写入独立结果 SRT，再由节点载入草稿。只有“保存字幕”或明确的 Agent 保存工具才使用 `writeTextSnapshot` 更新 canonical `subtitle.srt` 和输出端，失败保留草稿。
+- 本地单进程同一时间执行一个 Whisper 任务，完成状态在退出和清理后发布；任务表有界保留。`writing` 作为不可取消的原子提交边界，取消请求等待真实结果。
+- 节点工具有 120 秒上限。`generateSubtitle` 和 `burnSubtitles` 启动后台操作并立即返回；查询/取消复用现有 `useNodeGeneration`。前端轮询不占用 Agent 回合，不能把前次输出误当本次完成结果。
+- 原 Task 4 在没有 `index.vue` 时无法独立构建，所以 Task 4 和 Task 5 作为一个字幕节点实现单元执行和审查。两包均须有 `tsconfig.json`，注册工作区依赖后更新 `bun.lock`。
+- 烧录使用不同的输入/输出端口 ID：`videoInput`、`subtitleInput`、`video`。每次导出创建新的子目录与 `burned.mp4`，保留历史成品。能力查询必须确认 `subtitles` 滤镜可用，并检查中文字体渲染。
+- 当前机器原有 Python 3.8/PyTorch 保持不动；真实验证使用隔离工作区 `data/whisperPython` 的 Python 3.11、官方 Whisper 和 CPU PyTorch。用户指定的视频仅复制到工作区使用。
+
+## 执行记录
+
+- [x] Task 1：共享 SRT 编解码器、规范审查及完整差异质量复审通过，提交 `9384243`。
+- [x] Task 2：服务端运行时及两阶段审查通过，提交 `acf5224`。
+- [ ] Task 3：HTTP 接口与共享契约集成。
+- [ ] Task 4 + Task 5：字幕节点及编辑表格。
+- [ ] Task 6：烧录节点。
+- [ ] Task 7：构建、真实媒体链路和最终审查。
+
 ## 文件地图
 
 ### 新建文件
