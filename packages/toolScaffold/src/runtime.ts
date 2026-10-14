@@ -85,6 +85,8 @@ export interface MediaModel {
   referenceAudioInput?: "url";
   supportsSeed?: boolean;
   minReferenceImages?: number;
+  defaultDuration?: number;
+  defaultResolution?: string;
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
   taskRecovery?: boolean;
   audio?: boolean | "optional";
@@ -106,8 +108,8 @@ export interface MediaGenerationRequest {
   referenceImageUrls?: string[];
   videos?: MediaReference[];
   audios?: MediaReference[];
-  firstFrame?: MediaReference;
-  lastFrame?: MediaReference;
+  firstFrame?: MediaReference | { url: string };
+  lastFrame?: MediaReference | { url: string };
   ratio?: string;
   size?: string;
   resolution?: string;

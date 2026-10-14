@@ -256,6 +256,10 @@ export async function initializeMediaProviders(sourceDirectory: string, bundled:
     const source = await readFile(join(sourceDirectory, name), "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
     if (source === null) continue;
     const saved = current ? parseProvider(current.source) : undefined;
+    if (saved?.id === "autoDl" && saved.version === "1.0.0" && !saved.models.some(model => model.id === "minimaxH3FirstLastFrame")) {
+      const model = parseProvider(source).models.find(model => model.id === "minimaxH3FirstLastFrame");
+      if (model) saved.models.push(model);
+    }
     const next = saved ? replaceProviderConfig(source, saved.models, saved.label) : source;
     metadata(name, next);
     await writeAtomic(target, next);

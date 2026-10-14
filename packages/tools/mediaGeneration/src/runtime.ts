@@ -9,6 +9,13 @@ const relativePath = z.string().min(1).max(2048).refine(
 const imageReference = z.strictObject({ path: relativePath, mimeType: z.string().regex(/^image\/[a-z0-9.+-]+$/i) });
 const videoReference = z.strictObject({ path: relativePath, mimeType: z.string().regex(/^video\/[a-z0-9.+-]+$/i) });
 const audioReference = z.strictObject({ path: relativePath, mimeType: z.string().regex(/^audio\/[a-z0-9.+-]+$/i) });
+const imageUrl = z.url({ protocol: /^https$/ }).max(8192).refine(value => {
+  try {
+    const url = new URL(value);
+    return !url.username && !url.password && !url.hash;
+  } catch { return false; }
+}, "参考图须为不含账号密码或片段的公网 HTTPS 直链");
+const frameReference = z.union([imageReference, z.strictObject({ url: imageUrl })]);
 const sharedFields = {
   providerId: z.string().regex(/^[a-z][a-zA-Z0-9]{0,95}$/),
   modelId: z.string().trim().min(1).max(256),
@@ -29,18 +36,13 @@ export const imageGenerationSchema = z.strictObject({
 });
 export const videoGenerationSchema = z.strictObject({
   ...sharedFields,
-  referenceImageUrls: z.array(z.url({ protocol: /^https$/ }).max(8192).refine(value => {
-    try {
-      const url = new URL(value);
-      return !url.username && !url.password && !url.hash;
-    } catch { return false; }
-  }, "参考图须为不含账号密码或片段的公网 HTTPS 直链")).max(9).optional(),
+  referenceImageUrls: z.array(imageUrl).max(9).optional(),
   prompt: z.string().min(1).max(100000).refine(value => !!value.trim(), "请输入生成提示词"),
   operationId: z.uuid().optional(),
   videos: z.array(videoReference).max(64).optional(),
   audios: z.array(audioReference).max(64).optional(),
-  firstFrame: imageReference.optional(),
-  lastFrame: imageReference.optional(),
+  firstFrame: frameReference.optional(),
+  lastFrame: frameReference.optional(),
   resolution: z.string().trim().min(1).max(64).optional(),
   duration: z.number().finite().positive().max(3600).optional(),
   seed: z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).optional(),

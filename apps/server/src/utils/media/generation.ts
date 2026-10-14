@@ -49,6 +49,8 @@ export async function listMediaModels(): Promise<MediaModel[]> {
         referenceAudioInput: model.referenceAudioInput === "url" ? "url" : undefined,
         supportsSeed: model.supportsSeed === true,
         minReferenceImages: typeof model.minReferenceImages === "number" && Number.isInteger(model.minReferenceImages) && model.minReferenceImages > 0 && model.minReferenceImages <= 64 ? model.minReferenceImages : undefined,
+        defaultDuration: typeof model.defaultDuration === "number" && Number.isFinite(model.defaultDuration) && model.defaultDuration > 0 ? model.defaultDuration : undefined,
+        defaultResolution: typeof model.defaultResolution === "string" ? model.defaultResolution : undefined,
       } : {}),
       taskRecovery: model.taskRecovery === true,
       ...(model.type === "audio" ? { voices: model.voices } : {}),
@@ -163,6 +165,11 @@ async function generateMediaResult(
   if (!videoTask?.requestSaved) {
     if (mediaType === "video" && typeof model.minReferenceImages === "number" && (request.images?.length ?? 0) + (request.referenceImageUrls?.length ?? 0) < model.minReferenceImages) invalid(`当前模型至少需要 ${model.minReferenceImages} 张参考图片`);
     if (request.referenceImageUrls?.length && (mediaType !== "video" || model.referenceImageInput !== "url")) invalid("当前模型不支持参考图链接输入");
+    if ([request.firstFrame, request.lastFrame].some(frame => frame && "url" in frame) && (mediaType !== "video" || model.referenceImageInput !== "url")) invalid("当前模型不支持首尾帧链接输入");
+    if (mediaType === "video" && (request.mode === "startEndRequired" || Array.isArray(model.mode) && model.mode.length === 1 && model.mode[0] === "startEndRequired")) {
+      if (!request.firstFrame || !request.lastFrame) invalid("首尾帧模式需要同时提供首帧和尾帧图片");
+      if (request.images?.length || request.referenceImageUrls?.length || request.audios?.length || request.videos?.length) invalid("首尾帧模式不支持额外参考图片、音频或视频");
+    }
     if (mediaType === "video" && model.referenceImageInput === "url" && (request.images?.length ?? 0) + (request.referenceImageUrls?.length ?? 0) > 9) invalid("本地参考图与 HTTPS 链接合计最多 9 张");
     if (request.seed !== undefined && (mediaType !== "video" || model.supportsSeed !== true || !Number.isSafeInteger(request.seed))) invalid("当前模型不支持 seed 或 seed 不是安全整数");
     if (mediaType === "video" && model.referenceAudioInput === "url") {
@@ -184,7 +191,8 @@ async function generateMediaResult(
   const restoring = videoTask?.requestSaved === true || imageTask?.requestSaved === true;
   const uploadImages = !restoring && mediaType === "video" && model.referenceImageInput === "url";
   const uploadAudios = !restoring && mediaType === "video" && model.referenceAudioInput === "url";
-  const uploadReferences = [...(uploadImages ? request.images ?? [] : []), ...(uploadAudios ? request.audios ?? [] : [])];
+  const localFrames = [request.firstFrame, request.lastFrame].filter((frame): frame is MediaReference => !!frame && "path" in frame);
+  const uploadReferences = [...(uploadImages ? [...(request.images ?? []), ...localFrames] : []), ...(uploadAudios ? request.audios ?? [] : [])];
   const ossConfig = uploadReferences.length ? getOssStorageSettings() : undefined;
   if (ossConfig) {
     let total = 0;
@@ -245,12 +253,21 @@ async function generateMediaResult(
   const references = async (items: MediaReference[] | undefined, type: string) => items ? Promise.all(items.map(item => readReference(directory, item, type, signal))) : undefined;
   let images: MediaInput[] | undefined = restoring ? undefined : await references(request.images, "image");
   let audios: MediaInput[] | undefined = restoring || mediaType === "image" ? undefined : await references(request.audios, "audio");
+  let [firstFrame, lastFrame] = await Promise.all([request.firstFrame, request.lastFrame].map(async (frame): Promise<MediaInput | undefined> => {
+    if (restoring || mediaType !== "video" || !frame) return undefined;
+    return "url" in frame ? { type: "url", url: frame.url } : readReference(directory, frame, "image", signal);
+  }));
   if (!restoring && request.referenceImageUrls?.length) images = [...(images ?? []), ...request.referenceImageUrls.map((url): MediaInput => ({ type: "url", url }))];
   if (ossConfig) {
-    const imageCount = uploadImages ? images?.length ?? 0 : 0;
-    const uploaded = await uploadOssReferences([...(uploadImages ? images ?? [] : []), ...(uploadAudios ? audios ?? [] : [])], ossConfig, signal);
-    if (uploadImages && images) images = uploaded.slice(0, imageCount);
-    if (uploadAudios && audios) audios = uploaded.slice(imageCount);
+    const imageInputs = uploadImages ? [...(images ?? []), ...(firstFrame ? [firstFrame] : []), ...(lastFrame ? [lastFrame] : [])] : [];
+    const uploaded = await uploadOssReferences([...imageInputs, ...(uploadAudios ? audios ?? [] : [])], ossConfig, signal);
+    if (uploadImages) {
+      let frameIndex = images?.length ?? 0;
+      if (images) images = uploaded.slice(0, frameIndex);
+      if (firstFrame) firstFrame = uploaded[frameIndex++];
+      if (lastFrame) lastFrame = uploaded[frameIndex];
+    }
+    if (uploadAudios && audios) audios = uploaded.slice(imageInputs.length);
   }
   signal?.throwIfAborted();
   const assets = mediaType === "audio"
@@ -263,8 +280,7 @@ async function generateMediaResult(
     : await provider.generateVideo!({
       model: request.modelId, prompt: request.prompt, images,
       videos: restoring ? undefined : await references(request.videos, "video"), audios,
-      firstFrame: !restoring && request.firstFrame ? await readReference(directory, request.firstFrame, "image", signal) : undefined,
-      lastFrame: !restoring && request.lastFrame ? await readReference(directory, request.lastFrame, "image", signal) : undefined,
+      firstFrame, lastFrame,
       ratio: request.ratio, resolution: request.resolution, duration: request.duration,
       generateAudio: request.generateAudio, mode: request.mode, seed: request.seed,
     });

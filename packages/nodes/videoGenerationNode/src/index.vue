@@ -53,11 +53,11 @@
           @preview="setReferencePreview"
           @remove="removeReference" />
         <div v-if="frameMode" class="referenceHint">
-          {{ selectedMode === "startFrameOptional" ? "仅一张图片时作为尾帧；两张图片按顺序作为首帧、尾帧" : "图片引用按顺序作为首帧、尾帧" }}
+          {{ selectedMode === "startFrameOptional" ? "仅一张图片时作为尾帧；两张图片按顺序作为首帧、尾帧" : "图片引用按顺序作为首帧、尾帧" }}<template v-if="selectedModel?.referenceImageInput === 'url'">，图片节点在前、下方链接在后</template>
         </div>
         <promptInput v-model="data.promptModel" v-model:text="data.prompt" :references="referenceMentions" expandable />
         <template v-if="selectedModel?.referenceImageInput === 'url'">
-          <div class="referenceHint">本地图片连线会通过「设置 → 素材存储」中的阿里云 OSS 自动上传；也可在下方每行填写一个 HTTPS 图片直链。先按上方图片顺序，再按链接顺序对应 @Image1、@Image2，合计最多 9 张。<template v-if="selectedModel.mode?.includes('text')">没有图片和链接时为文生视频。</template></div>
+          <div class="referenceHint">本地图片连线会通过「设置 → 素材存储」中的阿里云 OSS 自动上传；也可在下方每行填写一个 HTTPS 图片直链。<template v-if="frameMode">先按上方图片顺序，再按链接顺序作为首帧、尾帧，{{ selectedMode === "startEndRequired" ? "合计必须为两张" : "合计最多两张" }}。</template><template v-else>先按上方图片顺序，再按链接顺序对应 @Image1、@Image2，合计最多 9 张。</template><template v-if="selectedModel.mode?.includes('text')">没有图片和链接时为文生视频。</template></div>
           <el-input v-model="data.referenceImageUrlsText" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :disabled="generating || deleting || pendingTask || taskChecking" placeholder="https://example.com/reference.png" aria-label="参考图片 HTTPS 直链" />
         </template>
         <div v-if="selectedModel?.referenceAudioInput === 'url'" class="referenceHint">连接音频节点作为参考音频，按上方音频引用顺序使用；本地音频会通过「设置 → 素材存储」中的阿里云 OSS 自动上传。</div>
@@ -254,9 +254,9 @@ watch([selectedModel, matchingModes, () => data.value.mode], ([choice, matches])
 watch([selectedModel, () => data.value.duration], ([choice]) => {
   if (!choice) return;
   const durations = getDurations(choice);
-  if (!durations.includes(data.value.duration!)) data.value.duration = durations[0];
+  if (!durations.includes(data.value.duration!)) data.value.duration = durations.includes(choice.defaultDuration!) ? choice.defaultDuration : durations[0];
   const resolutions = getResolutions(choice, data.value.duration);
-  if (!resolutions.includes(data.value.resolution)) data.value.resolution = resolutions[0] ?? "";
+  if (!resolutions.includes(data.value.resolution)) data.value.resolution = resolutions.includes(choice.defaultResolution!) ? choice.defaultResolution! : resolutions[0] ?? "";
   if (!ratioOptions.value.includes(data.value.ratio)) data.value.ratio = ratioOptions.value.includes("9:16") ? "9:16" : ratioOptions.value[0]!;
   if (choice.audio !== "optional") data.value.generateAudio = choice.audio === true;
 }, { flush: "sync" });
@@ -313,6 +313,7 @@ async function startGeneration() {
   const referenceImageUrls = referenceUrls(choice);
   validateReferenceUrls(referenceImageUrls);
   const imageCount = images.length + referenceImageUrls.length;
+  const frames = [...images, ...referenceImageUrls.map(url => ({ url }))];
   if (choice.minReferenceImages !== undefined && imageCount < choice.minReferenceImages) throw new Error(`当前模型至少需要 ${choice.minReferenceImages} 张参考图片`);
   if (choice.referenceImageInput === "url" && imageCount > 9) throw new Error("本地参考图与 HTTPS 链接合计最多 9 张");
   if (choice.mode?.length && !matchingModes.value.length) throw new Error("当前模型没有适合这些参考素材的生成模式，请更换模型或调整引用");
@@ -331,9 +332,9 @@ async function startGeneration() {
     ...(choice.supportsSeed === true && data.value.seed != null ? { seed: data.value.seed } : {}),
     outputDirectory: `assets/${id}`,
     images: frameMode.value ? undefined : images,
-    ...(choice.referenceImageInput === "url" ? { referenceImageUrls } : {}),
-    firstFrame: frameMode.value && (selectedMode.value !== "startFrameOptional" || images.length > 1) ? images[0] : undefined,
-    lastFrame: frameMode.value ? images[selectedMode.value === "startFrameOptional" && images.length === 1 ? 0 : 1] : undefined,
+    ...(choice.referenceImageInput === "url" && !frameMode.value ? { referenceImageUrls } : {}),
+    firstFrame: frameMode.value && (selectedMode.value !== "startFrameOptional" || frames.length > 1) ? frames[0] : undefined,
+    lastFrame: frameMode.value ? frames[selectedMode.value === "startFrameOptional" && frames.length === 1 ? 0 : 1] : undefined,
     videos: refList.value.flatMap((item) => item.dataType === "VIDEO" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []),
     audios: refList.value.flatMap((item) => item.dataType === "AUDIO" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []),
   };
@@ -505,10 +506,10 @@ nodeTools.register({
     if (args.ratio !== undefined && !ratios.includes(args.ratio)) throw new Error(`当前模型不支持比例 ${args.ratio}，可选：${ratios.join("、")}`);
     const durations = getDurations(choice);
     if (args.duration !== undefined && !durations.includes(args.duration)) throw new Error(`当前模型不支持时长 ${args.duration}，可选：${durations.join("、")}`);
-    const duration = args.duration ?? (durations.includes(data.value.duration!) ? data.value.duration : durations[0]);
+    const duration = args.duration ?? (durations.includes(data.value.duration!) ? data.value.duration : durations.includes(choice.defaultDuration!) ? choice.defaultDuration : durations[0]);
     const resolutions = getResolutions(choice, duration);
     if (args.resolution !== undefined && !resolutions.includes(args.resolution)) throw new Error(`当前时长不支持分辨率 ${args.resolution}，可选：${resolutions.join("、")}`);
-    const resolution = args.resolution ?? (resolutions.includes(data.value.resolution) ? data.value.resolution : resolutions[0] ?? "");
+    const resolution = args.resolution ?? (resolutions.includes(data.value.resolution) ? data.value.resolution : resolutions.includes(choice.defaultResolution!) ? choice.defaultResolution! : resolutions[0] ?? "");
     if (args.mode !== undefined && !getMatchingModes(choice, urls).some((item) => JSON.stringify(item) === JSON.stringify(args.mode))) throw new Error("所选模式不受当前模型支持或不适用于当前引用，请根据模型能力及已连接素材选择");
     if (args.generateAudio !== undefined && choice.audio !== "optional" && args.generateAudio !== (choice.audio === true)) throw new Error("当前模型不支持切换声音，请查看 getConfig 返回的 audio 能力");
     data.value.model = JSON.stringify([choice.providerId, choice.modelId]);

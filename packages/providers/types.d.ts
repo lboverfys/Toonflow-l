@@ -22,12 +22,14 @@ interface ProviderModel {
   imageSizes?: string[];
   imageRatios?: string[];
   videoRatios?: string[];
-  /** 仅接受公网图片链接的渠道，使用节点的链接输入。 */
+  /** 图片和首尾帧须使用公网链接，本地图片由宿主上传。 */
   referenceImageInput?: "url";
   /** 参考音频须由宿主上传为公网链接。 */
   referenceAudioInput?: "url";
   supportsSeed?: boolean;
   minReferenceImages?: number;
+  defaultDuration?: number;
+  defaultResolution?: string;
   durationResolutionMap?: { duration: number[]; resolution: string[] }[];
   /** 此模型必须使用宿主的持久化操作记录。 */
   taskRecovery?: boolean;

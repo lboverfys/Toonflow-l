@@ -1,6 +1,7 @@
 const rules = [
   { type: "input", field: "apiKey" as const, title: "Token", value: "", props: { type: "password", showPassword: true, autocomplete: "off" }, validate: [{ required: true, message: "请填写 AutoDL ComfyUI Token" }] },
-  { type: "input", field: "workflowId" as const, title: "工作流 ID", value: "minimax_h3_zm_u08", validate: [{ required: true, message: "请填写工作流 ID" }] },
+  { type: "input", field: "workflowId" as const, title: "图生视频工作流 ID", value: "minimax_h3_zm_u08", validate: [{ required: true, message: "请填写图生视频工作流 ID" }] },
+  { type: "input", field: "firstLastWorkflowId" as const, title: "首尾帧工作流 ID", value: "minimax_h3_lightx2v", validate: [{ required: true, message: "请填写首尾帧工作流 ID" }] },
   { type: "input", field: "seed" as const, title: "默认 seed（选填）", value: "", props: { placeholder: "节点 seed 优先；两处留空则由平台决定" } },
 ];
 
@@ -24,7 +25,9 @@ function secureUrl(value: string) {
 }
 
 function createSnapshot(context: ProviderContext, request: VideoRequest): AutoDlSnapshot {
-  const workflowId = typeof context.config.workflowId === "string" ? context.config.workflowId.trim() : "";
+  const frameMode = request.model === "minimaxH3FirstLastFrame";
+  const configuredWorkflowId = frameMode ? context.config.firstLastWorkflowId : context.config.workflowId;
+  const workflowId = typeof configuredWorkflowId === "string" ? configuredWorkflowId.trim() : "";
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,199}$/.test(workflowId)) throw new Error("请填写有效的 AutoDL 工作流 ID");
   if (!request.prompt.trim() || request.prompt.length > 20000) throw new Error("AutoDL 提示词须为 1～20000 个字符，且不能全为空白");
   const duration = request.duration ?? 5;
@@ -34,9 +37,15 @@ function createSnapshot(context: ProviderContext, request: VideoRequest): AutoDl
   if (!["480p", "768p"].includes(resolution) || !["9:16", "16:9", "1:1"].includes(ratio)) throw new Error("AutoDL 仅支持 480p、768p，以及 9:16、16:9、1:1 比例");
   const images = request.images ?? [];
   const audios = request.audios ?? [];
-  if (!images.length || images.length > 9 || audios.length > 3) throw new Error("AutoDL 图生视频需要 1～9 张参考图片，最多 3 段参考音频");
-  if (request.videos?.length || request.firstFrame || request.lastFrame) throw new Error("此 AutoDL 工作流不支持参考视频或首尾帧模式");
-  if (request.mode && (!Array.isArray(request.mode) || request.mode.length !== 2 || !request.mode.includes("imageReference:9") || !request.mode.includes("audioReference:3"))) throw new Error("请选择 AutoDL 的图片与音频混合参考模式");
+  if (frameMode) {
+    if (!request.firstFrame || !request.lastFrame) throw new Error("AutoDL 首尾帧视频需要同时提供首帧和尾帧图片");
+    if (images.length || audios.length || request.videos?.length) throw new Error("AutoDL 首尾帧模式只接受两张帧图片，不支持额外参考图片、音频或视频");
+    if (request.mode && request.mode !== "startEndRequired") throw new Error("请选择 AutoDL 的首尾帧必填模式");
+  } else {
+    if (!images.length || images.length > 9 || audios.length > 3) throw new Error("AutoDL 图生视频需要 1～9 张参考图片，最多 3 段参考音频");
+    if (request.videos?.length || request.firstFrame || request.lastFrame) throw new Error("此 AutoDL 工作流不支持参考视频或首尾帧模式");
+    if (request.mode && (!Array.isArray(request.mode) || request.mode.length !== 2 || !request.mode.includes("imageReference:9") || !request.mode.includes("audioReference:3"))) throw new Error("请选择 AutoDL 的图片与音频混合参考模式");
+  }
   if (request.generateAudio !== undefined || request.watermark !== undefined) throw new Error("此 AutoDL 工作流未提供声音或水印开关");
   const body: AutoDlSnapshot["body"] = { prompt: request.prompt, duration, resolution: `${resolution}${ratio === "9:16" ? "竖" : ratio === "16:9" ? "横" : "(1:1)"}` };
   const rawSeed = request.seed ?? (typeof context.config.seed === "string" ? context.config.seed.trim() : context.config.seed);
@@ -46,11 +55,12 @@ function createSnapshot(context: ProviderContext, request: VideoRequest): AutoDl
     if (!Number.isSafeInteger(seed)) throw new Error("seed 须为 JavaScript 安全整数");
     body.seed = seed;
   }
-  for (const [kind, inputs] of [["image", images], ["audio", audios]] as const) {
-    for (const [index, input] of inputs.entries()) {
-      if (input.type !== "url") throw new Error("AutoDL 参考素材需要公网链接，请在素材存储中启用 OSS 后使用本地图片和音频");
-      body[`ref_${kind}_${index}`] = secureUrl(input.url);
-    }
+  const references: [string, MediaInput][] = frameMode
+    ? [["first_frame", request.firstFrame!], ["last_frame", request.lastFrame!]]
+    : [...images.map((input, index): [string, MediaInput] => [`ref_image_${index}`, input]), ...audios.map((input, index): [string, MediaInput] => [`ref_audio_${index}`, input])];
+  for (const [field, input] of references) {
+    if (input.type !== "url") throw new Error("AutoDL 参考素材需要公网链接，请在素材存储中启用 OSS 后使用本地图片和音频");
+    body[field] = secureUrl(input.url);
   }
   return { workflowId, body };
 }
@@ -100,7 +110,7 @@ async function submit(context: ProviderContext, snapshot: AutoDlSnapshot) {
   const task = context.videoTask!;
   if (task.state.phase !== "prepared") throw new Error("AutoDL 提交受理状态尚未确认且没有任务编号，请到平台核查；此操作不会重新提交生成");
   for (const [field, value] of Object.entries(snapshot.body)) {
-    if (!/^ref_(image|audio)_\d+$/.test(field) || typeof value !== "string") continue;
+    if (!/^(ref_(image|audio)_\d+|first_frame|last_frame)$/.test(field) || typeof value !== "string") continue;
     const params = new URL(secureUrl(value)).searchParams;
     if (params.get("x-oss-signature-version") !== "OSS4-HMAC-SHA256") continue;
     const timestamp = params.get("x-oss-date")?.replace(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/, "$1-$2-$3T$4:$5:$6Z");
@@ -191,13 +201,19 @@ async function poll(context: ProviderContext): Promise<string> {
 export default {
   id: "autoDl",
   label: "AutoDL 图生视频",
-  version: "1.0.0",
+  version: "1.1.0",
   apiUrl: "https://autodl.art",
-  readme: "使用 ComfyUI 分组的 Token，工作流 ID 可配置，默认 minimax_h3_zm_u08。仅支持相同参数协议的图生视频工作流：1～9 张图片、0～3 段音频，1～15 秒，480p/768p，9:16、16:9、1:1。图片可填 HTTPS 直链；本地图片和音频从画布节点连接，在「设置 → 素材存储」启用 OSS 后上传。图片支持 PNG/JPEG/WebP，音频支持 MP3/WAV/FLAC/MP4 音频容器，单个本地素材最多 20 MiB，合计 50 MiB。节点 seed 优先于此处默认值，0 有效，两处留空则不传。工作流、音频和 seed 按首次提交快照恢复；任务受理回执丢失时不会重复提交，请到平台核查。结果链接有效期较短，成功后立即下载保存。接口说明：https://autodl.art/docs/comfyui_api/",
+  readme: "使用 ComfyUI 分组的 Token，两个模型共用 Token 和默认 seed，各自配置工作流 ID。图生视频默认 minimax_h3_zm_u08，支持 1～9 张图片、0～3 段音频；首尾帧视频默认 minimax_h3_lightx2v，首帧和尾帧均必填，不支持额外参考图、音频或视频。两者均支持 1～15 秒、480p/768p、9:16、16:9、1:1，仅适用于各自相同参数协议的工作流。图片可填 HTTPS 直链；本地图片和音频从画布节点连接，在「设置 → 素材存储」启用 OSS 后上传。首尾帧按图片节点在前、链接在后的顺序使用两张图片。图片支持 PNG/JPEG/WebP，音频支持 MP3/WAV/FLAC/MP4 音频容器，单个本地素材最多 20 MiB，合计 50 MiB。节点 seed 优先于此处默认值，0 有效，两处留空则不传。工作流、素材和 seed 按首次提交快照恢复；任务受理回执丢失时不会重复提交，请到平台核查。结果链接有效期较短，成功后立即下载保存。接口说明：https://autodl.art/docs/comfyui_api/",
   rules,
   models: [{
     id: "minimaxH3", label: "MiniMax H3 图生视频", type: "video",
     mode: [["imageReference:9", "audioReference:3"]], referenceImageInput: "url", referenceAudioInput: "url", supportsSeed: true, minReferenceImages: 1,
+    taskRecovery: true, videoRatios: ["9:16", "16:9", "1:1"],
+    durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: ["768p", "480p"] }],
+  }, {
+    id: "minimaxH3FirstLastFrame", label: "MiniMax H3 首尾帧视频", type: "video",
+    mode: ["startEndRequired"], referenceImageInput: "url", supportsSeed: true,
+    defaultDuration: 5, defaultResolution: "768p",
     taskRecovery: true, videoRatios: ["9:16", "16:9", "1:1"],
     durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: ["768p", "480p"] }],
   }],
