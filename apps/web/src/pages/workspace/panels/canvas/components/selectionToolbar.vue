@@ -56,8 +56,8 @@ const canArrangeSelection = computed(() => !busy.value && !props.disabled && sel
     && Number.isFinite(node.dimensions.width) && node.dimensions.width > 0
     && Number.isFinite(node.dimensions.height) && node.dimensions.height > 0));
 const hasGroup = computed(() => flow.getSelectedNodes.value.some(node => node.type === "canvasGroup"));
-const visible = computed(() => !props.disabled && !flow.userSelectionActive.value && flow.getSelectedNodes.value.length > 0
-  && (flow.nodesSelectionActive.value || hasGroup.value));
+const visible = computed(() => !props.disabled && !flow.userSelectionActive.value
+  && (flow.getSelectedNodes.value.length > 1 || hasGroup.value));
 
 async function duplicateNodes(selection: GraphNode[], signal: AbortSignal, withEdges = true, positions?: Map<string, XYPosition>) {
   const nodes = getSelectionTree(selection, flow.getNodes.value);

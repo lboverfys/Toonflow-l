@@ -560,17 +560,20 @@ nodeTools.register({
 
 .promptCard {
   .docked & {
-    flex: 1;
     overflow: visible;
-    :deep(> .el-card__body) { display: flex; flex-direction: column; flex: 1; overflow: visible; }
+    :deep(> .el-card__body) { padding: 12px !important; }
+    :deep(.promptInputWrap) { margin: 0 0 12px; padding: 10px; border: 1px solid var(--el-border-color-light); border-radius: 8px; }
+    :deep(.chat-rich-text > [contenteditable]) { min-height: 120px !important; }
     .promptFooter {
       position: sticky;
       bottom: -12px;
       z-index: 2;
-      order: 1;
-      margin-top: auto;
-      padding: 12px 0;
+      padding: 8px 0;
       background: var(--el-bg-color-overlay);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      .modelSelect { min-width: 0; width: 100%; }
+      .generationActions { margin-left: 0; justify-content: space-between; gap: 8px; }
     }
   }
   .referenceHint {

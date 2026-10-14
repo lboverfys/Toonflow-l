@@ -28,7 +28,7 @@
     <teleport :to="slotDock?.top.value ?? 'body'" :disabled="!docked">
     <div
       v-if="documentTarget || (topVisible && slotsVisible)"
-      v-show="!editingLabel"
+      v-show="!editingLabel || docked"
       class="floatingSlot topSlot nodrag nopan nowheel"
       :class="{ docked }"
       :style="{ width: typeof topWidth === 'number' ? `${topWidth}px` : topWidth }"
@@ -38,38 +38,42 @@
       @keydown.stop
       @contextmenu.stop>
       <slot name="top">
-        <el-card class="mediaToolbar" shadow="never" :bodyStyle="{ padding: '6px' }">
-          <el-button
-            :icon="IconFolderPlus"
-            :disabled="!assetOutputs.length || !saveNodeToAssets"
-            text
-            title="添加到素材库"
-            aria-label="添加到素材库"
-            @click.stop="handleCommand('saveAsset')">添加到素材库</el-button>
-          <slot name="topActions" />
-          <el-divider direction="vertical" />
-          <slot name="topRightActions" />
-          <el-button
-            :tag="downloadUrl ? 'a' : 'button'"
-            :href="downloadUrl || undefined"
-            :download="downloadName"
-            :icon="IconDownload"
-            :disabled="!downloadUrl"
-            :loading="downloading"
-            :aria-busy="downloading"
-            text
-            :title="downloading ? '正在保存…' : '下载'"
-            aria-label="下载"
-            @downloadstate="downloading = $event.detail"
-            @click.stop />
-          <el-button
-            v-if="fullscreenVisible"
-            :icon="IconMaximize"
-            :disabled="!downloadUrl"
-            text
-            :title="fullscreenLabel"
-            :aria-label="fullscreenLabel"
-            @click.stop="emit('fullscreen')" />
+        <el-card class="mediaToolbar" shadow="never" :bodyStyle="{ padding: docked ? '10px' : '6px' }">
+          <div class="mediaPrimaryActions">
+            <el-button
+              :icon="IconFolderPlus"
+              :disabled="!assetOutputs.length || !saveNodeToAssets"
+              text
+              title="添加到素材库"
+              aria-label="添加到素材库"
+              @click.stop="handleCommand('saveAsset')">添加到素材库</el-button>
+            <slot name="topActions" />
+          </div>
+          <el-divider v-if="!docked" direction="vertical" />
+          <div class="mediaSecondaryActions">
+            <slot name="topRightActions" />
+            <el-button
+              :tag="downloadUrl ? 'a' : 'button'"
+              :href="downloadUrl || undefined"
+              :download="downloadName"
+              :icon="IconDownload"
+              :disabled="!downloadUrl"
+              :loading="downloading"
+              :aria-busy="downloading"
+              text
+              :title="downloading ? '正在保存…' : '下载'"
+              aria-label="下载"
+              @downloadstate="downloading = $event.detail"
+              @click.stop />
+            <el-button
+              v-if="fullscreenVisible"
+              :icon="IconMaximize"
+              :disabled="!downloadUrl"
+              text
+              :title="fullscreenLabel"
+              :aria-label="fullscreenLabel"
+              @click.stop="emit('fullscreen')" />
+          </div>
         </el-card>
       </slot>
     </div>
@@ -77,7 +81,7 @@
     <teleport :to="slotDock?.bottom.value ?? 'body'" :disabled="!docked">
     <div
       v-if="$slots.bottom && (documentTarget || (bottomVisible && slotsVisible))"
-      v-show="!editingLabel"
+      v-show="!editingLabel || docked"
       class="floatingSlot bottomSlot nodrag nopan nowheel"
       :class="{ docked }"
       :style="{ width: typeof bottomWidth === 'number' ? `${bottomWidth}px` : bottomWidth }"
@@ -820,6 +824,8 @@ watch(
 }
 .floatingSlot {
   .mediaToolbar {
+    .mediaPrimaryActions, .mediaSecondaryActions { display: contents; }
+
     &:deep(.el-button) {
       width: auto;
       min-width: 32px;
@@ -841,12 +847,32 @@ watch(
     }
 
     .mediaToolbar {
-      &:deep(.el-card__body) {
+      .mediaPrimaryActions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+
+        &:deep(.el-button) {
+          justify-content: flex-start;
+          width: 100%;
+          height: auto;
+          min-height: 36px;
+          padding: 8px;
+          white-space: normal;
+          text-align: left;
+          background: var(--el-fill-color-light);
+          > span { min-width: 0; line-height: 1.4; }
+        }
+      }
+
+      .mediaSecondaryActions {
         display: flex;
+        justify-content: flex-end;
         flex-wrap: wrap;
-        align-items: center;
-        justify-content: center;
-        gap: 2px;
+        gap: 6px;
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid var(--el-border-color-lighter);
       }
 
       &:deep(.el-button) {
