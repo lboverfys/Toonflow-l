@@ -686,8 +686,8 @@ defineExpose({ flushSave, cancelSave, getDocument, openDocument, writeDocument, 
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  padding-top: 60px;
-  padding-right: var(--agentWidth, 0px);
+  padding-top: var(--workspaceHeaderHeight, 56px);
+  padding-left: var(--agentWidth, 0px);
   overflow: hidden;
   background: var(--el-bg-color);
   .documentLayout { width: 100%; height: 100%; border-top: 1px solid var(--el-border-color); }

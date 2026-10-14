@@ -8,6 +8,7 @@
     :overviewSrc="posterUrl"
     :overviewLabel="videoTask ? taskPhaseLabel : ''"
     :downloadName="outputFile?.url.split(/[\\/]/).at(-1)"
+    fullscreenLabel="预览视频"
     @fullscreen="player?.enterFullscreen()"
     :bottomWidth="660"
     :style="{ width: videoWidth ? `${videoWidth + 18}px` : undefined }">
@@ -609,6 +610,20 @@ nodeTools.register({
 }
 
 .promptCard {
+  .docked & {
+    flex: 1;
+    overflow: visible;
+    :deep(> .el-card__body) { display: flex; flex-direction: column; flex: 1; overflow: visible; }
+    .promptFooter {
+      position: sticky;
+      bottom: -12px;
+      z-index: 2;
+      order: 1;
+      margin-top: auto;
+      padding: 12px 0;
+      background: var(--el-bg-color-overlay);
+    }
+  }
   .referenceHint {
     margin: 8px 0;
     color: var(--el-text-color-secondary);

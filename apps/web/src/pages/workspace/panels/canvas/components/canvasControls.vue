@@ -17,8 +17,8 @@
           <icon-folders :size="17" />
         </el-button>
       </el-tooltip>
-      <el-tooltip :showArrow="false" content="整理画布" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-        <el-button class="toolButton" text :disabled="!canArrange" aria-label="整理画布" @click="arrangeNodes">
+      <el-tooltip :showArrow="false" content="整理画布" placement="bottom" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton optionalTool" text :disabled="!canArrange" aria-label="整理画布" @click="arrangeNodes">
           <icon-sitemap :size="17" />
         </el-button>
       </el-tooltip>
@@ -29,12 +29,12 @@
         </el-button>
       </el-tooltip>
       <el-tooltip :showArrow="false" :content="snapEnabled ? '关闭网格吸附' : '开启网格吸附'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-        <el-button class="toolButton" text :aria-pressed="snapEnabled" aria-label="网格吸附" @click="snapEnabled = !snapEnabled">
+        <el-button class="toolButton optionalTool" text :aria-pressed="snapEnabled" aria-label="网格吸附" @click="snapEnabled = !snapEnabled">
           <icon-magnet :size="17" />
         </el-button>
       </el-tooltip>
       <el-tooltip :showArrow="false" :content="showEdges ? '隐藏连线' : '显示连线'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-        <el-button class="toolButton" text :aria-pressed="showEdges" aria-label="显示或隐藏连线" @click="showEdges = !showEdges">
+        <el-button class="toolButton optionalTool" text :aria-pressed="showEdges" aria-label="显示或隐藏连线" @click="showEdges = !showEdges">
           <icon-arrow-guide :size="17" />
         </el-button>
       </el-tooltip>
@@ -57,7 +57,7 @@
         :triggerKeys="[]"
         :disabled="zoomMenuVisible">
         <span class="toolTrigger">
-          <el-popover v-model:visible="zoomMenuVisible" trigger="click" placement="top-start" :width="216">
+          <el-popover v-model:visible="zoomMenuVisible" trigger="click" placement="bottom-start" :width="216">
             <template #reference>
               <el-button
                 class="toolButton zoomButton"
@@ -90,7 +90,7 @@
       <span class="toolDivider" aria-hidden="true" />
       <el-tooltip :showArrow="false" content="帮助" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]" :disabled="helpVisible">
         <span class="toolTrigger">
-          <el-popover v-model:visible="helpVisible" trigger="click" placement="top-end" :width="196">
+          <el-popover v-model:visible="helpVisible" trigger="click" placement="bottom-end" :width="196">
             <template #reference>
               <el-button class="toolButton" text aria-label="帮助">
                 <icon-help :size="17" />
@@ -126,6 +126,16 @@
           </el-popover>
         </span>
       </el-tooltip>
+      <el-popover trigger="click" placement="bottom-end" :width="196">
+        <template #reference>
+          <el-button class="toolButton moreTools" text aria-label="更多画布工具" title="更多画布工具"><icon-dots :size="17" /></el-button>
+        </template>
+        <div class="helpMenu">
+          <el-button class="helpAction" text :disabled="!canArrange" @click="arrangeNodes">整理画布</el-button>
+          <el-button class="helpAction" text :aria-pressed="snapEnabled" @click="snapEnabled = !snapEnabled">{{ snapEnabled ? '关闭网格吸附' : '开启网格吸附' }}</el-button>
+          <el-button class="helpAction" text :aria-pressed="showEdges" @click="showEdges = !showEdges">{{ showEdges ? '隐藏连线' : '显示连线' }}</el-button>
+        </div>
+      </el-popover>
     </div>
   </div>
   <arrangeDialog ref="arrangeDialogRef" :active="active" :canvasId="canvasId" :directory="directory" :projectName="projectName" :batchHistory="batchHistory" />
@@ -263,12 +273,19 @@ async function requestArrange(signal?: AbortSignal) {
     flex-wrap: wrap;
     align-items: center;
     gap: 2px;
-    max-width: min(540px, calc(100vw - 44px));
-    padding: 4px;
-    border: 1px solid var(--el-border-color-light);
-    border-radius: var(--ui-radius-large);
+    max-width: 100%;
     background: var(--el-bg-color-overlay);
-    box-shadow: var(--floatingShadow);
+    .moreTools { display: none; }
+
+    @media (max-width: 1500px) {
+      .optionalTool { display: none; }
+      .moreTools { display: inline-flex; }
+      .toolDivider { margin: 0 2px; }
+    }
+
+    @media (max-width: 480px) {
+      .toolButton { width: 30px; }
+    }
 
     .toolTrigger { display: inline-flex; }
 

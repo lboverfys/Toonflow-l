@@ -7,6 +7,7 @@
     :overviewSrc="posterUrl"
     :downloadName="outputFile?.url.split(/[\\/]/).at(-1)"
     :style="{ width: videoWidth ? `${videoWidth + 18}px` : undefined }"
+    fullscreenLabel="预览视频"
     @fullscreen="player?.enterFullscreen()">
     <template #topActions>
       <el-button :icon="IconMusic" text :disabled="!outputFile || uploading || exporting || actions?.processing" @click.stop="actions?.open('extractAudio')">提取音轨</el-button>

@@ -3,12 +3,13 @@
     ref="canvasElement"
     class="canvas"
     :class="{ edgesHidden: !showEdges, handMode, compositingEnabled: generalSettings.canvasCompositingEnabled }"
-    :style="{ '--canvasEdgeColor': generalSettings.canvasEdgeColorMode === 'custom' ? generalSettings.canvasEdgeColor : 'var(--el-color-primary)' }"
+    :style="{ '--canvasEdgeColor': generalSettings.canvasEdgeColorMode === 'custom' ? generalSettings.canvasEdgeColor : 'var(--el-color-primary)', '--inspectorWidth': `${workspaceLayout.inspectorVisible.value && !workspaceLayout.compact.value ? Math.min(workspaceLayout.inspectorWidth.value, workspaceLayout.inspectorMaxWidth.value) : 0}px` }"
     @dblclick="openNodeMenu"
     @wheel.capture="zoomCanvas"
     @gesturestart.capture="zoomCanvas"
     @gesturechange.capture="zoomCanvas"
     @gestureend.capture="zoomCanvas"
+    @pointerdown.capture="cancelCanvasZoom"
     @pointermove="pointerPosition = { x: $event.clientX, y: $event.clientY }"
     @pointerleave="pointerPosition = undefined"
     @dragover="dragFilesOver"
@@ -62,13 +63,18 @@
           :loading="nodeLoads.has(type) || (nodeListLoading && !nodeTypes[type] && !nodeErrors[type])" />
       </template>
       <background :gap="16" pattern-color="var(--el-border-color)" />
-      <canvasMenu ref="canvasMenuRef" v-model:canvasId="canvasId" :directory="project?.directory" :initialCanvasId="initialCanvasId" :activateCanvas="activateCanvas" :flushSave="flushCanvases ?? flushCanvasSave" @loaded="resetSavedState" @reload="canvasReloading = $event">
-        <assetLibrary ref="assetLibraryRef" v-model="assetsVisible" :directory="project?.directory" />
-      </canvasMenu>
+      <teleport :to="workspaceLayout.menuTarget.value ?? 'body'" :disabled="!workspaceLayout.menuTarget.value">
+        <div v-show="active" class="canvasMenuHost">
+          <canvasMenu ref="canvasMenuRef" v-model:canvasId="canvasId" :directory="project?.directory" :initialCanvasId="initialCanvasId" :activateCanvas="activateCanvas" :flushSave="flushCanvases ?? flushCanvasSave" @loaded="resetSavedState" @reload="canvasReloading = $event">
+            <assetLibrary ref="assetLibraryRef" v-model="assetsVisible" :directory="project?.directory" />
+          </canvasMenu>
+        </div>
+      </teleport>
       <panel v-if="showMap" class="canvasMapPanel" position="top-right">
-        <canvasMap :active="active && !settingsVisible && !!canvasId && !!project?.directory" :navigation="navigation" @close="showMap = false" />
+        <canvasMap :active="active && !settingsVisible && !!canvasId && !!project?.directory" :navigation="navigation" @zoom="zoomCanvas($event, true)" @close="showMap = false" />
       </panel>
-      <panel class="canvasBottomBar" position="bottom-left">
+      <teleport :to="workspaceLayout.controlsTarget.value ?? 'body'" :disabled="!workspaceLayout.controlsTarget.value">
+        <div v-show="active" class="canvasControlsHost" @pointerdown.capture="cancelCanvasZoom">
         <canvasControls
           ref="canvasControlsRef"
           :active="active && !settingsVisible"
@@ -83,11 +89,8 @@
           :navigation="navigation"
           @search="nodeSearchRef?.open()"
           @update:showEdges="edgeDisconnect = undefined" />
-        <div ref="nodeDock" class="nodeDock">
-          <div ref="nodeDockTop" class="dockSlot" />
-          <div ref="nodeDockBottom" class="dockSlot" />
         </div>
-      </panel>
+      </teleport>
       <nodeMenu
         :key="JSON.stringify(['nodeMenu', project?.directory, canvasId])"
         ref="nodeMenuRef"
@@ -103,14 +106,23 @@
         @history="canvasHistory.commit"
         @undo="changeHistory('undo')"
         @redo="changeHistory('redo')" />
+      <teleport :to="nodeDockSelection ?? 'body'" :disabled="!nodeDockSelection">
       <selectionToolbar
         :key="JSON.stringify(['selectionToolbar', project?.directory, canvasId])"
         ref="selectionToolbarRef"
         :batchHistory="canvasHistory.batch"
         :getSignal="() => canvasController.signal"
         :disabled="!canvasId || !project?.directory" />
+      </teleport>
       <nodeSearch ref="nodeSearchRef" :disabled="!active || settingsVisible || !canvasId || !project?.directory" :nodeTypes="availableNodes" :focusNodes="navigation.focusNodes" />
     </vue-flow>
+    <nodeInspector v-show="workspaceLayout.inspectorVisible.value" v-model:width="workspaceLayout.inspectorWidth.value" :maxWidth="workspaceLayout.inspectorMaxWidth.value" :title="inspectorTitle" @close="workspaceLayout.inspectorVisible.value = false">
+      <div class="nodeDock">
+        <div ref="nodeDockSelection" class="dockSlot" />
+        <div ref="nodeDockTop" class="dockSlot" />
+        <div ref="nodeDockBottom" class="dockSlot" />
+      </div>
+    </nodeInspector>
     <teleport to="body">
       <el-button
         v-if="edgeDisconnect && findEdge(edgeDisconnect.id)"
@@ -155,7 +167,6 @@ import {
   ConnectionMode,
   SelectionMode,
   useVueFlow,
-  wheelDelta,
   isNode,
   type Node,
   type Edge,
@@ -186,6 +197,8 @@ import groupNode from "./components/groupNode.vue";
 import viewportEdge from "./components/viewportEdge.vue";
 import selectionToolbar from "./components/selectionToolbar.vue";
 import nodeSearch from "./components/nodeSearch.vue";
+import nodeInspector from "./components/nodeInspector.vue";
+import { workspaceLayoutKey } from "../../workspaceLayout";
 import { finishGroupDrag, getSelectionTree } from "./selectionNodes";
 import type { NodeOutput } from "@toonflow/nodes-scaffold/values";
 import type { NodeConnectionFeedback, NodeHandle } from "@toonflow/nodes-scaffold/connection";
@@ -215,21 +228,21 @@ const { project } = storeToRefs(useWorkspaceStore());
 const workspaceRefreshing = inject("workspaceRefreshing", ref(false));
 
 const canvasElement = ref<HTMLElement>();
-const nodeDock = ref<HTMLElement>();
+const workspaceLayout = inject(workspaceLayoutKey)!;
+const nodeDockSelection = ref<HTMLElement>();
 const nodeDockTop = ref<HTMLElement>();
 const nodeDockBottom = ref<HTMLElement>();
 provide("nodeSlotDock", { top: nodeDockTop, bottom: nodeDockBottom });
 provide("canvasFocusInsets", () => {
-  const canvas = canvasElement.value?.getBoundingClientRect();
-  const dock = nodeDock.value?.getBoundingClientRect();
-  // 聚焦节点时让出底部停靠区，避免节点落在提示词面板下方。
-  const bottom = canvas && dock?.height ? Math.max(80, canvas.bottom - dock.top + 16) : 80;
+  const canvas = flow.vueFlowRef.value?.getBoundingClientRect();
+  const bottom = 24;
+  const inspectorInset = workspaceLayout.compact.value && workspaceLayout.inspectorVisible.value ? Math.min(workspaceLayout.inspectorWidth.value, workspaceLayout.inspectorMaxWidth.value) : 0;
   const panel = document.getElementById("agentPanel")?.getClientRects()[0];
-  if (!canvas || !panel || panel.right <= canvas.left || panel.left >= canvas.right) return { left: 0, right: 0, top: 64, bottom };
+  if (!canvas || !panel || panel.right <= canvas.left || panel.left >= canvas.right) return { left: 0, right: inspectorInset, top: 24, bottom };
   const leftSpace = Math.max(0, panel.left - canvas.left - 20);
   const rightSpace = Math.max(0, canvas.right - panel.right - 20);
-  return leftSpace >= rightSpace ? { left: 0, right: canvas.width - leftSpace, top: 64, bottom }
-    : { left: canvas.width - rightSpace, right: 0, top: 64, bottom };
+  return leftSpace >= rightSpace ? { left: 0, right: Math.max(inspectorInset, canvas.width - leftSpace), top: 24, bottom }
+    : { left: canvas.width - rightSpace, right: inspectorInset, top: 24, bottom };
 });
 const flowData = ref<(Node | Edge)[]>([]);
 const canvasId = ref("");
@@ -263,13 +276,18 @@ let gestureScale: number | undefined;
 const isDesktop = new URLSearchParams(window.location.search).get("desktop") === "1";
 let copyingNodes = false;
 const showEdges = ref(true);
-const showMap = ref(true);
+const showMap = ref(false);
 provide("canvasActive", computed(() => props.active));
 provide("canvasShowEdges", showEdges);
 const assetsVisible = ref(false);
 const assetLibraryRef = ref<InstanceType<typeof assetLibrary>>();
 const edgeDisconnect = ref<{ id: string; x: number; y: number }>();
 const flow = useVueFlow(props.runtimeKey);
+const inspectorTitle = computed(() => flow.getSelectedNodes.value.length > 1 ? `已选中 ${flow.getSelectedNodes.value.length} 个节点` : flow.getSelectedNodes.value[0]?.data.label || "节点设置");
+watch(() => flow.getSelectedNodes.value.map(node => node.id).join(","), ids => {
+  if (ids && props.active) workspaceLayout.inspectorVisible.value = true;
+});
+flow.onNodeClick(() => { if (props.active) workspaceLayout.inspectorVisible.value = true; });
 const canvasOverview = ref(false);
 watch(() => flow.viewport.value.zoom, zoom => {
   if (zoom < 0.35) canvasOverview.value = true;
@@ -987,74 +1005,88 @@ async function pasteClipboardNode(position: { x: number; y: number }, command?: 
   }
 }
 let zoomFrame = 0;
-const zoomSteps: { factor: number; point?: XYPosition }[] = [];
+let zoomDelta = 0;
+let zoomPoint: XYPosition | undefined;
+let zoomTime = 0;
+let wheelGesture: { time: number; ctrlKey: boolean; deltaMode: number; pinching: boolean } | undefined;
 
 function cancelCanvasZoom() {
   cancelAnimationFrame(zoomFrame);
   zoomFrame = 0;
-  zoomSteps.length = 0;
+  zoomDelta = 0;
+  zoomPoint = undefined;
+  wheelGesture = undefined;
   gestureScale = undefined;
 }
 
-function flushCanvasZoom() {
-  cancelAnimationFrame(zoomFrame);
+function flushCanvasZoom(time: number) {
   zoomFrame = 0;
   const bounds = flow.d3Selection.value?.node()?.getBoundingClientRect();
   if (!bounds || !props.active || props.settingsVisible || document.fullscreenElement || flow.userSelectionActive.value) {
-    zoomSteps.length = 0;
+    cancelCanvasZoom();
     return;
   }
-  const next = { ...viewport.value };
-  // 同一帧只提交一次变换；逐步保留光标锚点和缩放上下限，不能只取最后一个滚轮事件。
-  for (const { factor, point } of zoomSteps) {
-    const zoom = Math.min(flow.maxZoom.value, Math.max(flow.minZoom.value, next.zoom * factor));
-    const x = point ? point.x - bounds.left : bounds.width / 2;
-    const y = point ? point.y - bounds.top : bounds.height / 2;
-    next.x = x - (x - next.x) * zoom / next.zoom;
-    next.y = y - (y - next.y) * zoom / next.zoom;
-    next.zoom = zoom;
-  }
-  zoomSteps.length = 0;
-  void flow.setViewport(next);
+  // ACT: 按时间推进，60/120Hz 使用相同速度；卡顿后最多补 64ms，避免一次追赶全部输入。
+  const delta = Math.sign(zoomDelta) * Math.min(Math.abs(zoomDelta), Math.max(0, Math.min(64, time - zoomTime)) * 0.0012);
+  zoomTime = time;
+  const current = viewport.value;
+  const zoom = Math.min(flow.maxZoom.value, Math.max(flow.minZoom.value, current.zoom * 2 ** delta));
+  const x = zoomPoint ? zoomPoint.x - bounds.left : bounds.width / 2;
+  const y = zoomPoint ? zoomPoint.y - bounds.top : bounds.height / 2;
+  zoomDelta -= delta;
+  if (zoomDelta < 0 && zoom === flow.minZoom.value || zoomDelta > 0 && zoom === flow.maxZoom.value) zoomDelta = 0;
+  void flow.setViewport({ x: x - (x - current.x) * zoom / current.zoom, y: y - (y - current.y) * zoom / current.zoom, zoom });
+  if (zoomDelta) zoomFrame = requestAnimationFrame(flushCanvasZoom);
+  else zoomPoint = undefined;
 }
 
 watch([() => props.active, () => props.settingsVisible, canvasId], cancelCanvasZoom, { flush: "sync" });
 onScopeDispose(cancelCanvasZoom);
 
-function zoomCanvas(event: WheelEvent | (Event & { scale: number })) {
-  if (event.type === "gestureend") { gestureScale = undefined; if (zoomFrame) flushCanvasZoom(); }
+function zoomCanvas(event: WheelEvent | (Event & { scale: number }), fromMap = false) {
+  if (event.type === "gestureend") gestureScale = undefined;
   if (!props.active || props.settingsVisible || document.fullscreenElement || flow.userSelectionActive.value) return;
-  if (!(event.target instanceof Element) || !event.target.closest(".vue-flow__pane, .vue-flow__node, .vue-flow__edge, .vue-flow__nodesselection")) return;
-  let factor: number;
+  if (!fromMap && (!(event.target instanceof Element) || !event.target.closest(".vue-flow__pane, .vue-flow__node, .vue-flow__edge, .vue-flow__nodesselection"))) return;
+  let delta: number;
   let point = pointerPosition;
   if ("scale" in event) {
     if (!Number.isFinite(event.scale) || event.scale <= 0) return;
-    factor = event.type === "gesturechange" && gestureScale !== undefined ? event.scale / gestureScale : 1;
+    delta = event.type === "gesturechange" && gestureScale !== undefined ? Math.log2(event.scale / gestureScale) : 0;
     gestureScale = event.type === "gestureend" ? undefined : event.scale;
   } else {
-    // ACT: Chromium 捏合发送 Ctrl+wheel，但不发送 Control 按键；WebKit 使用上方原生 gesture 事件。
-    const pinching = event.ctrlKey && !pressedCodes.has("ControlLeft") && !pressedCodes.has("ControlRight");
-    if (!pinching && !shortcutPressed(event, generalSettings.value.canvasShortcuts.zoom, pressedCodes)) {
+    const time = performance.now();
+    const controlPressed = pressedCodes.has("ControlLeft") || pressedCodes.has("ControlRight");
+    if (event.deltaY && (!wheelGesture || time - wheelGesture.time > 200 || wheelGesture.ctrlKey !== event.ctrlKey
+      || wheelGesture.deltaMode !== event.deltaMode || controlPressed)) {
+      // ACT: Chromium 不提供设备类型；仅以起始小幅小数像素识别捏合，整数输入按滚轮处理，原生来源可用时再替换。
+      const pinching = event.ctrlKey && !controlPressed && event.deltaMode === 0 && Math.abs(event.deltaY) < 4 && !Number.isInteger(event.deltaY);
+      wheelGesture = { time, ctrlKey: event.ctrlKey, deltaMode: event.deltaMode, pinching };
+    }
+    if (wheelGesture) wheelGesture.time = time;
+    if (!fromMap && !wheelGesture?.pinching && !shortcutPressed(event, generalSettings.value.canvasShortcuts.zoom, pressedCodes)) {
       if (!event.ctrlKey) return;
       // 实体 Ctrl 未绑定缩放时，阻止 Vue Flow 和节点骨架将它误判为捏合。
-      factor = 1;
-    } else if (pinching) {
-      factor = gestureScale === undefined ? 2 ** (-event.deltaY * 0.02) : 1;
+      delta = 0;
     } else {
-      // 实体按键滚轮不使用捏合加速；减小步幅并限制单次跳变，方便微调比例。
-      const delta = wheelDelta({ deltaY: event.deltaY, deltaMode: event.deltaMode, ctrlKey: false });
-      factor = 2 ** Math.max(-0.08, Math.min(0.08, delta * 0.25));
+      const pixels = event.deltaY * (event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? flow.dimensions.value.height : 1);
+      delta = gestureScale === undefined ? -pixels * (wheelGesture?.pinching ? 0.02 : 0.0005) : 0;
     }
-    point = { x: event.clientX, y: event.clientY };
+    point = fromMap ? undefined : { x: event.clientX, y: event.clientY };
   }
   const zoom = flow.d3Zoom.value;
   const selection = flow.d3Selection.value;
   if (!zoom || !selection) return;
   event.preventDefault();
   event.stopPropagation();
-  if (factor === 1) return;
-  zoomSteps.push({ factor, point });
-  if (!zoomFrame) zoomFrame = requestAnimationFrame(flushCanvasZoom);
+  if (!delta) return;
+  if (zoomDelta * delta < 0) zoomDelta = 0;
+  // 最多保留约 100ms 的缩放，反向输入直接取消旧方向余量，不积累长尾动画。
+  zoomDelta = Math.max(-0.12, Math.min(0.12, zoomDelta + Math.max(-0.08, Math.min(0.08, delta))));
+  zoomPoint = point;
+  if (!zoomFrame) {
+    zoomTime = performance.now();
+    zoomFrame = requestAnimationFrame(flushCanvasZoom);
+  }
 }
 
 function updateCanvasKeys(event: KeyboardEvent) {
@@ -1080,7 +1112,10 @@ function updateCanvasKeys(event: KeyboardEvent) {
   panKeyPressed.value = !!inCanvas && !editing && !event.isComposing
     && (controlPanPressed || shortcutPressed(event, shortcuts.pan, pressedCodes));
   if (target instanceof Element && target.closest(".mapViewport") && !event.ctrlKey && !event.metaKey && !event.altKey
-    && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(event.key)) return;
+    && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(event.key)) {
+    cancelCanvasZoom();
+    return;
+  }
   if (event.type === "keyup" || event.defaultPrevented || event.isComposing || !inCanvas || (editing && !navigationAction)) return;
   const action = navigationAction ?? ([
     "group", "mergeGroup", "ungroup", "addNode", "moveTool", "handTool", "arrange", "search",
@@ -1100,6 +1135,7 @@ function updateCanvasKeys(event: KeyboardEvent) {
   if (!isDesktop && action === "paste" && event.code === "KeyV" && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) return;
   event.preventDefault();
   if (event.repeat) return;
+  cancelCanvasZoom();
   if (action === "delete") {
     const nodes = [...flow.getSelectedNodes.value];
     const menu = nodeMenuRef.value;
@@ -1315,9 +1351,12 @@ const defaultEdgeOptions = markRaw({
 
 <style lang="scss" scoped>
 .canvas {
+  position: relative;
   width: 100%;
   height: 100%;
   container-type: inline-size;
+
+  > .vue-flow { width: calc(100% - var(--inspectorWidth)); }
 
   &.compositingEnabled :deep(.vue-flow__transformationpane) {
     will-change: transform;
@@ -1367,54 +1406,18 @@ const defaultEdgeOptions = markRaw({
     border-radius: 4px;
   }
 
-  // 地图放在右上角，让开工作区顶栏（15px 外边距 + 38px 按钮 + 10px 间距）；顶栏按同一画布宽度在 560px 以下换到第二行，地图随之下移。
   .canvasMapPanel.vue-flow__panel {
-    top: 48px;
-
-    @container (max-width: 560px) {
-      top: 94px;
-    }
+    top: 0;
   }
 
   // 改名时仅隐藏停靠区，保留提示词编辑器及其状态。
-  &:has(.labelInput) .canvasBottomBar.vue-flow__panel .nodeDock {
+  &:has(.labelInput) .nodeDock {
     display: none;
   }
 
-  // 底栏横跨画布，空白处放行指针给画布；左侧为画布工具，选中节点的工具栏与提示词停靠在剩余空间居中。
-  .canvasBottomBar.vue-flow__panel {
-    right: 0;
-    display: flex;
-    // 反向换行时交叉轴起点在底部，flex-start 才是贴底对齐；空间不足时停靠区换到工具上方。
-    flex-wrap: wrap-reverse;
-    align-items: flex-start;
-    gap: 12px;
-    pointer-events: none !important;
-
-    .nodeDock {
-      display: flex;
-      flex: 1 1 640px;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      min-width: 0;
-
-      .dockSlot {
-        display: flex;
-        justify-content: center;
-        width: 100%;
-
-        &:empty {
-          display: none;
-        }
-
-        :deep(.floatingSlot) {
-          pointer-events: auto;
-        }
-      }
-    }
-  }
 }
+.canvasControlsHost, .canvasMenuHost { min-width: 0; }
+.canvasMenuHost { display: flex; align-items: center; }
 .edgeDisconnect {
   position: fixed;
   z-index: 1000;

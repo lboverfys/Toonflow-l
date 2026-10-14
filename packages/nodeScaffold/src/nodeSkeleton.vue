@@ -67,8 +67,8 @@
             :icon="IconMaximize"
             :disabled="!downloadUrl"
             text
-            title="全屏"
-            aria-label="全屏"
+            :title="fullscreenLabel"
+            :aria-label="fullscreenLabel"
             @click.stop="emit('fullscreen')" />
         </el-card>
       </slot>
@@ -225,6 +225,7 @@ const props = withDefaults(
       downloadUrl?: string;
       downloadName?: string;
       fullscreenVisible?: boolean;
+      fullscreenLabel?: string;
     }
   >(),
   {
@@ -234,6 +235,7 @@ const props = withDefaults(
     previewReady: true,
     previewDetailed: true,
     fullscreenVisible: true,
+    fullscreenLabel: "全屏",
     topWidth: "20vw",
     bottomWidth: "20vw",
   }

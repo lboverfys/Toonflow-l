@@ -1,5 +1,5 @@
 <template>
-  <panel class="canvasMenuPanel" position="top-left">
+  <div class="canvasMenuPanel">
     <el-card class="canvasMenu" shadow="never" :bodyStyle="{ padding: '3px 4px 3px 6px' }">
       <div class="menuContent">
         <el-input v-model="projectNameDraft" class="workspaceNameInput" :style="{ '--workspaceName': JSON.stringify(projectNameDraft || ' ') }" size="small" :title="directory" :disabled="!workspaceStore.project" aria-label="项目名称"
@@ -38,7 +38,7 @@
       </div>
     </el-card>
     <div class="menuExtension"><slot /></div>
-  </panel>
+  </div>
   <el-dropdown ref="itemMenu" trigger="contextmenu" virtualTriggering :virtualRef="menuAnchor" placement="bottom-start" :showArrow="false" :hideOnClick="false" :appendTo="canvasPicker" popperClass="canvasActionMenu" @command="handleItemCommand" @visibleChange="(opened: boolean) => { if (!opened) moveVisible = false; }">
     <template #dropdown>
       <el-dropdown-menu v-if="menuEntry">
@@ -64,7 +64,7 @@
 import axios from "axios";
 import { translate } from "@toonflow/i18n/vue";
 import { computed, inject, nextTick, ref, shallowRef, watch, type ShallowRef } from "vue";
-import { Panel, useVueFlow, type FlowExportObject } from "@vue-flow/core";
+import { useVueFlow, type FlowExportObject } from "@vue-flow/core";
 import { ElMessage, ElMessageBox, type DropdownInstance, type FilterNodeMethodFunction, type InputInstance } from "element-plus";
 import { IconArtboard, IconCheck, IconChevronDown, IconChevronRight, IconDots, IconFolder, IconFolderFilled, IconFolderPlus, IconPlus, IconSearch } from "@tabler/icons-vue";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -729,8 +729,9 @@ defineExpose({ getCanvases, addCanvas, switchCanvas, renameCanvas, syncCanvasPat
 </script>
 
 <style lang="scss" scoped>
-.canvasMenuPanel.vue-flow__panel {
-  left: 0;
+.canvasMenuPanel {
+  position: relative;
+  min-width: 0;
 }
 
 .canvasPicker {
@@ -805,11 +806,9 @@ defineExpose({ getCanvases, addCanvas, switchCanvas, renameCanvas, syncCanvasPat
   left: 0;
 }
 
-// 左侧让出工作区菜单（退出、设置）的宽度，两组胶囊按钮并排显示。
 .canvasMenu {
-  margin-left: 78px;
-  border-radius: var(--ui-radius-large);
-  box-shadow: var(--floatingShadow);
+  border: 0;
+  box-shadow: none;
 
   .menuContent {
     display: flex;
@@ -824,7 +823,7 @@ defineExpose({ getCanvases, addCanvas, switchCanvas, renameCanvas, syncCanvasPat
     .workspaceNameInput {
       width: auto;
       min-width: 2em;
-      max-width: 240px;
+      max-width: clamp(70px, 12vw, 220px);
       overflow: hidden;
       font-weight: 600;
 

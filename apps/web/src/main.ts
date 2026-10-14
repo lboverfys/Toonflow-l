@@ -1,5 +1,5 @@
-import { createApp, h, nextTick, ref } from "vue";
-import { ElButton, ElResult } from "element-plus";
+import { createApp, h, nextTick, ref, shallowRef } from "vue";
+import { ElButton, ElResult, ElMessage, ElMessageBox } from "element-plus";
 import { createPinia } from "pinia";
 import { createPersistedState } from "pinia-plugin-persistedstate";
 import App from "./App.vue";
@@ -21,12 +21,42 @@ import { registerLanguage } from "@/lib/i18n";
 import { locale, translate } from "@toonflow/i18n/vue";
 
 const app = createApp(App);
+const closeMediaPreview = shallowRef<(() => Promise<void>)>();
+app.provide("closeMediaPreview", closeMediaPreview);
 window.addEventListener("toonflow:prepare-close", async event => {
   const requestId = (event as CustomEvent<string>).detail;
-  let error: string | undefined;
-  try { await flushWorkspaceSave(); await flushSettings(); }
-  catch (cause) { error = cause instanceof Error ? cause.message : "保存失败，请重试"; }
-  await fetch("/api/desktop/closePrepared", { method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-desktop": "1" }, body: JSON.stringify({ requestId, error }) });
+  async function respond(action: "wait" | "cancel" | "close", error?: string) {
+    const response = await fetch("/api/desktop/closePrepared", { method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-desktop": "1" }, body: JSON.stringify({ requestId, action, error }) });
+    if (!response.ok) throw new Error("无法通知应用关闭结果，请重试");
+  }
+  try {
+    const closePreview = closeMediaPreview.value;
+    if (closePreview) {
+      await respond("wait");
+      if (document.fullscreenElement) await document.exitFullscreen();
+      const decision = await ElMessageBox.confirm("你正在预览视频，要返回画布，还是退出整个应用？", "关闭视频或退出应用", {
+        confirmButtonText: "返回画布",
+        cancelButtonText: "退出应用",
+        showClose: false,
+        closeOnClickModal: false,
+        closeOnPressEscape: false,
+        autofocus: true,
+        distinguishCancelAndClose: true,
+      }).then(() => "return", action => action === "cancel" ? "exit" : "cancel");
+      if (decision !== "exit") {
+        await respond("cancel");
+        if (decision === "return") await closePreview();
+        return;
+      }
+    }
+    let error: string | undefined;
+    try { await flushWorkspaceSave(); await flushSettings(); }
+    catch (cause) { error = cause instanceof Error ? cause.message : "保存失败，请重试"; }
+    await respond("close", error);
+  } catch (cause) {
+    ElMessage.error(cause instanceof Error ? cause.message : "关闭应用失败，请重试");
+    await respond("cancel").catch(error => console.error("取消关闭失败", error));
+  }
 });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flushSettings().catch(error => console.error("设置保存失败：", error)); });
 router.beforeEach(async () => { await flushSettings(); });

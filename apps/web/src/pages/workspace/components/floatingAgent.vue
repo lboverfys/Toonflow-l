@@ -31,11 +31,11 @@
           <el-button
             text
             circle
-            :aria-label="docked ? '切换为悬浮' : '停靠到右侧'"
-            :title="docked ? '切换为悬浮' : '停靠到右侧'"
+            :aria-label="docked ? '切换为悬浮' : '停靠到左侧'"
+            :title="docked ? '切换为悬浮' : '停靠到左侧'"
             @click="docked = !docked">
             <icon-app-window-bottom-right v-if="docked" :size="17" aria-hidden="true" />
-            <icon-layout-sidebar-right v-else :size="17" aria-hidden="true" />
+            <icon-layout-sidebar v-else :size="17" aria-hidden="true" />
           </el-button>
         </template>
       </agent>
@@ -45,38 +45,38 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from "vue";
-import { IconLayoutSidebarRight, IconAppWindowBottomRight } from "@tabler/icons-vue";
+import { IconLayoutSidebar, IconAppWindowBottomRight } from "@tabler/icons-vue";
 import agent from "@/components/agent/index.vue";
 
 const visible = defineModel<boolean>({ default: false });
+const props = defineProps<{ topOffset: number; maxDockedWidth: number }>();
 const emit = defineEmits<{ resize: [width: number] }>();
 const docked = ref(true);
 const viewport = reactive({ width: window.innerWidth, height: window.innerHeight });
 const gap = computed(() => Math.min(15, viewport.width / 2, viewport.height / 2));
-const maxWidth = computed(() => Math.max(0, viewport.width - (docked.value ? 0 : gap.value * 2)));
-const preferredWidth = ref(420);
+const maxWidth = computed(() => Math.max(0, docked.value ? Math.min(props.maxDockedWidth, viewport.width) : viewport.width - gap.value * 2));
+const preferredWidth = ref(360);
 const width = computed(() => Math.min(preferredWidth.value, maxWidth.value));
 const preferredHeight = ref<number>();
 const floatingHeight = computed(() => Math.min(preferredHeight.value ?? viewport.height * 0.8, viewport.height - gap.value * 2));
-const height = computed(() => (docked.value ? viewport.height : floatingHeight.value));
+const height = computed(() => (docked.value ? Math.max(0, viewport.height - props.topOffset) : floatingHeight.value));
 const resizeHandles = computed(
   () =>
     [
-      { edge: "left", label: "从左侧调整对话宽度" },
+      { edge: "right", label: "从右侧调整对话宽度" },
       ...(docked.value
         ? []
         : [
-            { edge: "right", label: "从右侧调整对话宽度" },
+            { edge: "left", label: "从左侧调整对话宽度" },
             { edge: "bottom", label: "从下方调整对话高度" },
           ]),
     ] as { edge: ResizeEdge; label: string }[]
 );
-const left = ref(viewport.width - width.value - gap.value);
-// 默认停靠时按悬浮高度预置位置，切换为悬浮后仍出现在右下角，不遮住顶栏。
+const left = ref(gap.value);
 const top = ref(viewport.height - floatingHeight.value - gap.value);
 const panelStyle = computed(() => ({
-  left: `${docked.value ? viewport.width - width.value : left.value}px`,
-  top: `${docked.value ? 0 : top.value}px`,
+  left: `${docked.value ? 0 : left.value}px`,
+  top: `${docked.value ? props.topOffset : top.value}px`,
   width: `${width.value}px`,
   height: `${height.value}px`,
 }));
@@ -100,11 +100,12 @@ function movePanel(x: number, y: number) {
 }
 
 function resizeAnchor(edge: ResizeEdge) {
-  if (docked.value) return viewport.width;
+  if (docked.value) return 0;
   return edge === "left" ? left.value + width.value : edge === "right" ? left.value : top.value;
 }
 
 function resizeLimit(edge: ResizeEdge, anchor = resizeAnchor(edge)) {
+  if (docked.value) return maxWidth.value;
   if (edge === "left") return Math.min(maxWidth.value, anchor - (docked.value ? 0 : gap.value));
   return Math.max(0, (edge === "right" ? viewport.width : viewport.height) - gap.value - anchor);
 }
@@ -133,7 +134,7 @@ function startMenuMove(event: PointerEvent) {
 }
 
 function startInteraction(event: PointerEvent, mode: "move" | ResizeEdge) {
-  if (event.button !== 0 || interaction.value || (docked.value && mode !== "left")) return;
+  if (event.button !== 0 || interaction.value || (docked.value && mode !== "right")) return;
   event.preventDefault();
   const element = event.currentTarget as HTMLElement;
   element.setPointerCapture(event.pointerId);
@@ -143,9 +144,9 @@ function startInteraction(event: PointerEvent, mode: "move" | ResizeEdge) {
     element,
     x: event.clientX,
     y: event.clientY,
-    left: left.value,
+    left: docked.value ? 0 : left.value,
     top: top.value,
-    right: docked.value ? viewport.width : left.value + width.value,
+    right: docked.value ? width.value : left.value + width.value,
     width: width.value,
     height: height.value,
   };
@@ -208,7 +209,7 @@ onBeforeUnmount(() => {
   box-shadow: var(--el-box-shadow-light);
 
   &.docked {
-    border-width: 0 0 0 1px;
+    border-width: 0 1px 0 0;
     border-radius: 0;
     background: var(--el-bg-color-overlay);
     box-shadow: none;

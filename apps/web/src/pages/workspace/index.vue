@@ -1,5 +1,5 @@
 <template>
-  <main class="workspacePage" :style="{ '--agentWidth': `${agentVisible ? agentWidth : 0}px` }">
+  <main class="workspacePage" :style="{ '--agentWidth': `${compact ? 0 : agentWidth}px`, '--workspaceHeaderHeight': `${headerHeight}px` }">
     <canvasPanel
       :key="workspaceStore.project?.directory"
       ref="canvasPanelRef"
@@ -24,8 +24,10 @@
         :fileAction="performFileAction"
         :saveNode="saveDocumentNode" />
     </keep-alive>
-    <div class="workspaceChrome">
+    <header ref="headerElement" class="workspaceChrome">
       <workspaceMenu class="workspaceMenu" @openSettings="settingsVisible = true" />
+      <div v-show="activePanel === 'canvas'" ref="menuTarget" class="canvasMenuTarget" :inert="refreshing" />
+      <div v-show="activePanel === 'canvas'" ref="controlsTarget" class="canvasControlsTarget" :inert="refreshing" />
       <div class="workspaceActions">
         <el-segmented :modelValue="activePanel" class="panelSwitcher" :options="panelOptions" aria-label="切换面板" @change="switchPanel">
           <template #default="{ item }">
@@ -44,20 +46,23 @@
           :saveError="canvasPanelRef?.saveError"
           @resolveSave="canvasPanelRef?.showSaveConflict()"
           @refresh="refreshProject" />
-        <el-tooltip v-if="!agentVisible" content="Toonflow Agent" placement="bottom-end" :showArrow="false" :hideAfter="0">
+        <el-tooltip content="AI 助手" placement="bottom-end" :showArrow="false" :hideAfter="0">
           <el-button
             class="agentButton"
-            type="primary"
+            :type="agentVisible ? 'primary' : 'default'"
             :aria-expanded="agentVisible"
-            aria-label="Toonflow Agent"
+            aria-label="显示或收起 AI 助手"
             aria-controls="agentPanel"
             @click="agentVisible = !agentVisible">
             <icon-sparkles :size="18" aria-hidden="true" />
           </el-button>
         </el-tooltip>
+        <el-button v-if="activePanel === 'canvas'" class="agentButton" :type="inspectorVisible ? 'primary' : 'default'" :aria-expanded="inspectorVisible" aria-label="显示或收起节点面板" title="节点面板" @click="inspectorVisible = !inspectorVisible">
+          <icon-layout-sidebar-right :size="18" aria-hidden="true" />
+        </el-button>
       </div>
-    </div>
-    <floatingAgent v-if="agentMounted" v-model="agentVisible" :inert="refreshing" @resize="agentWidth = $event" />
+    </header>
+    <floatingAgent v-if="agentMounted" v-model="agentVisible" :topOffset="headerHeight" :maxDockedWidth="agentMaxWidth" :inert="refreshing" @resize="agentWidth = $event" />
     <settings v-model="settingsVisible" />
   </main>
 </template>
@@ -66,7 +71,7 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, onScopeDispose, provide, ref, shallowRef, watch, type ComponentPublicInstance } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import axios from "axios";
-import { IconLayoutDashboard, IconFileText, IconSparkles } from "@tabler/icons-vue";
+import { IconLayoutDashboard, IconFileText, IconSparkles, IconLayoutSidebarRight } from "@tabler/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import settings from "@/components/settings/index.vue";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -77,6 +82,7 @@ import canvasPanel from "./panels/canvas/canvasHost.vue";
 import type { DocumentNodeOptions } from "./panels/canvas/canvasFiles";
 import workspaceMenu from "./components/workspaceMenu.vue";
 import workspacePresence from "./components/workspacePresence.vue";
+import { workspaceLayoutKey } from "./workspaceLayout";
 const floatingAgent = defineAsyncComponent(() => import("./components/floatingAgent.vue"));
 const agentMounted = ref(false);
 let agentMountTimer: ReturnType<typeof setTimeout> | undefined;
@@ -93,8 +99,29 @@ const panelOptions = [
   { label: "文档", value: "document", icon: IconFileText },
 ];
 const agentVisible = ref(true);
-// 与 Agent 默认停靠宽度一致；Agent 延迟挂载期间先让出位置，避免画布宽度跳变。
-const agentWidth = ref(Math.min(420, window.innerWidth));
+const agentWidth = ref(Math.min(360, window.innerWidth));
+const headerElement = ref<HTMLElement>();
+const headerHeight = ref(56);
+const viewportWidth = ref(window.innerWidth);
+const compact = computed(() => viewportWidth.value < 1360);
+const menuTarget = ref<HTMLElement>();
+const controlsTarget = ref<HTMLElement>();
+const inspectorVisible = ref(false);
+const inspectorWidth = ref(420);
+const agentMaxWidth = computed(() => compact.value ? Math.min(520, viewportWidth.value) : Math.min(520, viewportWidth.value - 560 - (inspectorVisible.value && activePanel.value === "canvas" ? 420 : 0)));
+const inspectorMaxWidth = computed(() => compact.value ? Math.min(600, viewportWidth.value) : Math.min(600, viewportWidth.value - agentWidth.value - 560));
+provide(workspaceLayoutKey, { menuTarget, controlsTarget, compact, inspectorVisible, inspectorWidth, inspectorMaxWidth });
+watch(inspectorVisible, visible => { if (visible && compact.value) agentVisible.value = false; });
+watch(agentVisible, visible => { if (visible && compact.value) inspectorVisible.value = false; });
+watch(compact, value => { if (value && inspectorVisible.value) agentVisible.value = false; });
+onMounted(() => {
+  const observer = new ResizeObserver(() => {
+    headerHeight.value = headerElement.value?.offsetHeight ?? 56;
+    viewportWidth.value = window.innerWidth;
+  });
+  observer.observe(headerElement.value!);
+  onScopeDispose(() => observer.disconnect());
+});
 const settingsVisible = ref(false);
 const refreshing = ref(false);
 provide("workspaceRefreshing", refreshing);
@@ -281,7 +308,7 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
 
   .canvasPanel {
     position: absolute;
-    inset: 0 var(--agentWidth) 0 0;
+    inset: var(--workspaceHeaderHeight) 0 0 var(--agentWidth);
     width: auto;
     height: auto;
 
@@ -292,33 +319,31 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
     }
   }
 
-  // 顶部浮层只覆盖 Agent 停靠后剩余的区域，按实际可用宽度收紧标签。
   .workspaceChrome {
     position: absolute;
     top: 0;
-    right: var(--agentWidth);
+    right: 0;
     left: 0;
-    z-index: 5;
-    height: 0;
-    container-type: inline-size;
-    pointer-events: none;
+    z-index: 1002;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 56px;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--el-border-color-light);
+    background: var(--el-bg-color);
 
-    .workspaceMenu,
+    .workspaceMenu { flex-shrink: 0; }
+    .canvasMenuTarget { min-width: 0; }
+    .canvasControlsTarget { flex: 1; min-width: 0; }
+
     .workspaceActions {
-      position: absolute;
-      top: 15px;
-      pointer-events: auto;
-    }
-
-    .workspaceMenu {
-      left: 15px;
-    }
-
-    .workspaceActions {
-      right: 15px;
       display: flex;
       align-items: center;
       gap: 8px;
+      margin-left: auto;
     }
 
     .panelSwitcher {
@@ -369,7 +394,7 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
       }
     }
 
-    @container (max-width: 760px) {
+    @media (max-width: 1500px) {
       .panelSwitcher .optionLabel,
       .workspaceActions :deep(.presenceSummary) {
         position: absolute;
@@ -381,10 +406,10 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
       }
     }
 
-    @container (max-width: 560px) {
-      .workspaceActions {
-        top: 61px;
-      }
+    @media (max-width: 760px) {
+      .canvasControlsTarget { flex: 1 0 100%; order: 1; }
+      .canvasMenuTarget { flex: 1 0 160px; }
+      .workspaceActions { gap: 4px; }
     }
   }
 }
