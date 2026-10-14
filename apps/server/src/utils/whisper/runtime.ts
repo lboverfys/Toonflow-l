@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeAtomic } from "@toonflow/file";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeAtomic } from "@toonflow/file";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import conf from "@/utils/conf";
 import { getStatus } from "@/utils/ffmpeg";
@@ -82,7 +82,7 @@ async function resolvePython(pythonPath?: string) {
   const requested = pythonPath?.trim();
   const path = requested ? isAbsolute(requested) ? requested : Bun.which(requested) : Bun.which("python");
   if (!path) return { error: requested ? `找不到 Python：${requested}` : "找不到 Python，请安装 Python 或配置路径" };
-  const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+  const info = await stat(path).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;
     throw error;
   });
