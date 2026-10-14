@@ -1,5 +1,6 @@
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeAtomic } from "@toonflow/file";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { parseSrt, serializeSrt } from "@toonflow/node-shared/subtitleSrt";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import conf from "@/utils/conf";
 import { getStatus } from "@/utils/ffmpeg";
 import { isWithin, lockWorkspaceFiles } from "@/utils/workspace/files";
@@ -149,6 +150,7 @@ export async function checkWhisper(pythonPath?: string): Promise<WhisperCheckRes
   const errors = [pythonError, whisperError, torchError, ffmpegError, ffprobeError].filter((error): error is string => Boolean(error));
   const torchAvailable = Boolean(probe?.torchVersion) && !torchError;
   return {
+    models: whisperModels,
     python: { path: python.path, available: !pythonError, error: pythonError },
     whisper: { available: Boolean(probe?.whisper), error: whisperError },
     torch: { available: torchAvailable, version: probe?.torchVersion, cuda: probe?.torchCuda ?? false, error: torchError },
@@ -206,10 +208,12 @@ async function runWhisper(entry: WhisperTaskEntry, input: WhisperStartInput) {
     if (results.length !== 1) throw new Error(results.length ? "Whisper 生成了多个 SRT 文件" : "Whisper 未生成 SRT 文件");
     const content = await readFile(join(entry.temporaryDirectory, results[0].name), "utf8");
     throwIfCancelled(entry);
-    if (!content.trim()) throw new Error("Whisper 生成了空字幕");
+    const segments = parseSrt(content);
+    if (!segments.length) throw new Error("Whisper 生成了空字幕");
+    const normalized = serializeSrt(segments);
     // ACT: writing 是不可取消的提交边界；开始排他原子写入后，取消请求只等待真实结果。
     updateTask(entry, "writing");
-    await writeAtomic(entry.outputPath, content, { exclusive: true });
+    await writeAtomic(entry.outputPath, normalized, { exclusive: true });
     await finishTask(entry, "completed");
   } catch (error) {
     try { entry.child?.kill(); }
@@ -253,11 +257,20 @@ export async function startWhisper(input: WhisperStartInput): Promise<WhisperTas
   if (!isAbsolute(input.sourcePath) || !isAbsolute(input.outputPath) || !isAbsolute(input.directory)) throw new Error("Whisper 输入路径必须是绝对路径");
   if (!isWithin(input.directory, input.sourcePath) || !isWithin(input.directory, input.outputPath)) throw new Error("Whisper 文件必须位于工作区内");
   if (resolve(input.sourcePath).toLowerCase() === resolve(input.outputPath).toLowerCase()) throw new Error("Whisper 输出不能覆盖源文件");
+  if (extname(input.outputPath).toLowerCase() !== ".srt") throw Object.assign(new Error("Whisper 输出必须是 SRT 文件"), { status: 400 });
   if (activeTask) throw Object.assign(new Error("Whisper 任务正在运行，请等待完成"), { status: 409, code: "EBUSY" });
   activeTask = true;
   let release: (() => void) | undefined;
   let temporaryDirectory: string | undefined;
   try {
+    const source = await lstat(input.sourcePath);
+    if (!source.isFile()) throw Object.assign(new Error("Whisper 源文件必须是普通文件"), { status: 400 });
+    if (!(await stat(dirname(input.outputPath))).isDirectory()) throw Object.assign(new Error("Whisper 输出目录不存在"), { status: 400 });
+    const output = await lstat(input.outputPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (output) throw Object.assign(new Error("Whisper 输出文件已存在"), { code: "EEXIST" });
     const check = await checkWhisper(input.pythonPath);
     if (!check.ready || !check.python.path || !check.ffmpeg.tools.ffmpeg.path) throw new Error(check.errors.join("；") || "Whisper 运行环境不可用");
     release = lockWorkspaceFiles([input.outputPath]);

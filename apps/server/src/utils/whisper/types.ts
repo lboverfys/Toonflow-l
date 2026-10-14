@@ -21,12 +21,32 @@ export type WhisperStartInput = {
   pythonPath?: string;
 };
 
+export type WhisperRequest = {
+  directory: string;
+  source: string;
+  output: string;
+  model?: WhisperModel;
+  language?: string;
+};
+
+export type WhisperToolStatus = {
+  path: string | null;
+  version: string | null;
+  error: string | null;
+};
+
 export type WhisperCheckResult = {
+  models: readonly WhisperModel[];
+  defaultModel?: WhisperModel;
   python: { path?: string; available: boolean; error?: string };
   whisper: { available: boolean; error?: string };
   torch: { available: boolean; version?: string; cuda: boolean; error?: string };
   device: "cuda" | "cpu" | "unavailable";
-  ffmpeg: Awaited<ReturnType<typeof import("@/utils/ffmpeg").getStatus>>;
+  ffmpeg: {
+    supported: boolean;
+    version: string;
+    tools: { ffmpeg: WhisperToolStatus; ffprobe: WhisperToolStatus };
+  };
   cacheDirectory: string;
   ready: boolean;
   errors: string[];

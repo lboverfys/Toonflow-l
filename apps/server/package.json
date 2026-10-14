@@ -13,6 +13,7 @@
     "./browser": "./src/utils/browser/index.ts",
     "./agent/types": "./src/agent/runtime/types.ts",
     "./singleAgent/types": "./src/utils/singleAgent/types.ts",
+    "./whisper/types": "./src/utils/whisper/types.ts",
     "./agent/mentionSources": "./src/agent/mentionSources.ts",
     "./i18n": "./src/lib/i18n.ts"
   },
@@ -31,6 +32,7 @@
     "@toonflow/ffmpeg": "workspace:*",
     "@toonflow/file": "workspace:*",
     "@toonflow/mcp": "workspace:*",
+    "@toonflow/node-shared": "workspace:*",
     "@toonflow/providers": "workspace:*",
     "@toonflow/teams-scaffold": "workspace:*",
     "@toonflow/tool-asset-operator": "workspace:*",
