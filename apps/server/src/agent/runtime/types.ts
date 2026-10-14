@@ -1,4 +1,4 @@
-import type { CanvasToolCall, QuestionRequest, ToolCall } from "@toonflow/tools-scaffold/runtime";
+import type { CanvasToolCall, ClientFileRequest, QuestionRequest, ToolCall } from "@toonflow/tools-scaffold/runtime";
 
 export type AgentToolCall = ToolCall & { question?: QuestionRequest & { callId: string } };
 
@@ -36,6 +36,7 @@ export type AgentEvent =
   | { type: "compaction"; active: boolean }
   | { type: "tool"; blockId: string; tool: AgentToolCall }
   | ({ type: "canvasCall"; callId: string } & CanvasToolCall)
+  | { type: "clientFileCall"; runId: string; directoryId: string; callId: string; request: ClientFileRequest }
   | ({ type: "question"; callId: string; toolCallId: string } & QuestionRequest)
   | { type: "error"; message: string }
   | { type: "session"; file: string }

@@ -9,14 +9,14 @@ import {
   defineTool, createReadToolDefinition, createWriteToolDefinition, createEditToolDefinition, createLsToolDefinition,
   detectSupportedImageMimeTypeFromFile, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { CanvasContext, QuestionContext, ToolContext, ToolFiles } from "@toonflow/tools-scaffold/runtime";
+import type { CanvasContext, ClientFileContext, QuestionContext, ToolContext, ToolFiles } from "@toonflow/tools-scaffold/runtime";
 import conf from "@/utils/conf";
 import { isWithin, resolveWorkspacePath, writeWorkspaceFile, renameWorkspaceFile, lockWorkspaceFiles, protectWorkspaceRoot } from "@/utils/workspace/files";
 import { listTools, loadTool, validateToolConfig } from "@/utils/plugins/tools";
 import { createSkillContext } from "@/agent/skills";
 import { createAssetContext } from "@/agent/assets";
 
-export function createAgentToolContext(cwd: string, config: Record<string, unknown> = {}, canvas?: CanvasContext, question?: QuestionContext, workspaceAvailable = true): ToolContext {
+export function createAgentToolContext(cwd: string, config: Record<string, unknown> = {}, canvas?: CanvasContext, question?: QuestionContext, workspaceAvailable = true, clientFiles?: ClientFileContext): ToolContext {
   const skillsDirectory = join(dirname(conf.path), "skills");
   const requireWorkspace = () => { if (!workspaceAvailable) throw new Error("此对话未提供工作目录，无法使用文件或媒体操作"); };
   const resolvePath = async (path: string, readOnly = false) => {
@@ -62,7 +62,7 @@ export function createAgentToolContext(cwd: string, config: Record<string, unkno
     }),
   };
   return {
-    cwd, config, files, resolvePath, writeFile: files.writeFile, canvas, question,
+    cwd, config, files, resolvePath, writeFile: files.writeFile, canvas, question, clientFiles,
     skills: workspaceAvailable ? createSkillContext(cwd) : undefined, assets: workspaceAvailable ? createAssetContext(cwd) : undefined,
     browser: createBrowserContext(cwd),
     ffmpeg: signal => { requireWorkspace(); return createWorkspaceFfmpeg(cwd, signal); },
@@ -79,10 +79,10 @@ export function createAgentToolContext(cwd: string, config: Record<string, unkno
   };
 }
 
-export async function createAgentTools(cwd: string, canvas?: CanvasContext, question?: QuestionContext): Promise<ToolDefinition[]> {
+export async function createAgentTools(cwd: string, canvas?: CanvasContext, question?: QuestionContext, clientFiles?: ClientFileContext): Promise<ToolDefinition[]> {
   const tools: ToolDefinition[] = [];
   const names = new Set<string>();
-  const context = createAgentToolContext(cwd, {}, canvas, question);
+  const context = createAgentToolContext(cwd, {}, canvas, question, true, clientFiles);
   for (const item of await listTools()) {
     if (!item.enabled) continue;
     if (item.loadError) throw new Error(`${item.displayName}：${item.loadError}`);

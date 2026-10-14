@@ -2,7 +2,7 @@ import { t } from "@/lib/i18n";
 import { join } from "node:path";
 import { z } from "zod";
 import { SessionManager, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { CanvasContext } from "@toonflow/tools-scaffold/runtime";
+import type { CanvasContext, ClientFileContext } from "@toonflow/tools-scaffold/runtime";
 import { teamResourcePathSchema } from "@toonflow/teams-scaffold/runtime";
 import { createAgentToolContext } from "@/agent/tools";
 import { addUsage, emptyUsage, runSubAgent, type SubAgentModel } from "@/agent/runtime/subAgent";
@@ -23,8 +23,9 @@ export async function createTeamRunner(options: SubAgentModel & {
   cwd: string;
   tools: ToolDefinition[];
   canvas?: CanvasContext;
+  clientFiles?: ClientFileContext;
 }) {
-  const { name, cwd, tools, canvas, ...modelOptions } = options;
+  const { name, cwd, tools, canvas, clientFiles, ...modelOptions } = options;
   const { directory, manifest, files, enabled } = await readTeam(name);
   if (!enabled) throw new Error(t`团队 ${name} 已禁用`);
   const hostTools = tools.filter(tool => !["subAgent", "report", "askUser", "delegate", "teamResources", "requestInput"].includes(tool.name));
@@ -37,7 +38,7 @@ export async function createTeamRunner(options: SubAgentModel & {
   for (const [memberName, member] of Object.entries(manifest.members)) {
     const available = new Map(hostTools.map(tool => [tool.name, tool]));
     for (const { plugin, metadata, config } of privatePlugins) {
-      const definitions = await plugin.createTools(createAgentToolContext(cwd, config, canvas));
+      const definitions = await plugin.createTools(createAgentToolContext(cwd, config, canvas, undefined, true, clientFiles));
       for (const tool of definitions) {
         if (!tool.name || typeof tool.execute !== "function" || ["subAgent", "askUser", "delegate", "teamResources", "requestInput"].includes(tool.name) || available.has(tool.name)) {
           throw new Error(t`团队私有工具无效或名称重复：${tool.name}`);
