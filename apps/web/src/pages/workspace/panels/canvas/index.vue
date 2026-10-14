@@ -262,10 +262,12 @@ const assetLibraryRef = ref<InstanceType<typeof assetLibrary>>();
 const edgeDisconnect = ref<{ id: string; x: number; y: number }>();
 const flow = useVueFlow(props.runtimeKey);
 const inspectorTitle = computed(() => flow.getSelectedNodes.value.length > 1 ? `已选中 ${flow.getSelectedNodes.value.length} 个节点` : flow.getSelectedNodes.value[0]?.data.label || "节点设置");
-watch(() => flow.getSelectedNodes.value.map(node => node.id).join(","), ids => {
-  if (ids && props.active) workspaceLayout.inspectorVisible.value = true;
-});
-flow.onNodeClick(() => { if (props.active) workspaceLayout.inspectorVisible.value = true; });
+watch([() => props.active, () => flow.getSelectedNodes.value.map(node => node.id).join(","), () => flow.userSelectionActive.value], ([active, ids, selecting]) => {
+  if (!active || selecting) return;
+  workspaceLayout.inspectorAvailable.value = !!ids;
+  workspaceLayout.inspectorVisible.value = !!ids;
+}, { immediate: true });
+flow.onNodeClick(() => { if (props.active && flow.getSelectedNodes.value.length) workspaceLayout.inspectorVisible.value = true; });
 const { nodeTypes, nodeLoads, nodeErrors, nodeListLoading, remoteNodeTypes, availableNodes, ensureNodeType, prepareNodeMenu } = useRemoteNodes(flow, {
   signal: () => canvasController.signal, revision: () => canvasSave.revision,
 });
@@ -1015,11 +1017,6 @@ const defaultEdgeOptions = markRaw({
 
   .canvasMapPanel.vue-flow__panel {
     top: 0;
-  }
-
-  // 改名时仅隐藏停靠区，保留提示词编辑器及其状态。
-  &:has(.labelInput) .nodeDock {
-    display: none;
   }
 
 }

@@ -1,5 +1,5 @@
 <template>
-  <main class="workspacePage" :style="{ '--agentWidth': `${compact ? 0 : agentWidth}px`, '--workspaceHeaderHeight': `${headerHeight}px` }">
+  <main class="workspacePage" :style="{ '--agentWidth': `${compact || !agentVisible ? 0 : agentWidth}px`, '--workspaceHeaderHeight': `${headerHeight}px` }">
     <canvasPanel
       :key="workspaceStore.project?.directory"
       ref="canvasPanelRef"
@@ -57,7 +57,7 @@
             <icon-sparkles :size="18" aria-hidden="true" />
           </el-button>
         </el-tooltip>
-        <el-button v-if="activePanel === 'canvas'" class="agentButton" :type="inspectorVisible ? 'primary' : 'default'" :aria-expanded="inspectorVisible" aria-label="显示或收起节点面板" title="节点面板" @click="inspectorVisible = !inspectorVisible">
+        <el-button v-if="activePanel === 'canvas'" class="agentButton" :type="inspectorVisible ? 'primary' : 'default'" :disabled="!inspectorAvailable" :aria-expanded="inspectorVisible" aria-label="显示或收起节点面板" :title="inspectorAvailable ? '节点面板' : '选择节点后查看操作'" @click="inspectorVisible = !inspectorVisible">
           <icon-layout-sidebar-right :size="18" aria-hidden="true" />
         </el-button>
       </div>
@@ -103,14 +103,16 @@ const agentWidth = ref(Math.min(360, window.innerWidth));
 const headerElement = ref<HTMLElement>();
 const headerHeight = ref(56);
 const viewportWidth = ref(window.innerWidth);
-const compact = computed(() => viewportWidth.value < 1360);
+const compact = computed(() => viewportWidth.value < 960);
 const menuTarget = ref<HTMLElement>();
 const controlsTarget = ref<HTMLElement>();
+const inspectorAvailable = ref(false);
 const inspectorVisible = ref(false);
 const inspectorWidth = ref(420);
-const agentMaxWidth = computed(() => compact.value ? Math.min(520, viewportWidth.value) : Math.min(520, viewportWidth.value - 560 - (inspectorVisible.value && activePanel.value === "canvas" ? 420 : 0)));
-const inspectorMaxWidth = computed(() => compact.value ? Math.min(600, viewportWidth.value) : Math.min(600, viewportWidth.value - agentWidth.value - 560));
-provide(workspaceLayoutKey, { menuTarget, controlsTarget, compact, inspectorVisible, inspectorWidth, inspectorMaxWidth });
+const agentMaxWidth = computed(() => compact.value ? Math.min(520, viewportWidth.value) : Math.min(520, viewportWidth.value - 320
+  - (inspectorVisible.value && activePanel.value === "canvas" ? Math.min(inspectorWidth.value, viewportWidth.value - 640) : 0)));
+const inspectorMaxWidth = computed(() => compact.value ? Math.min(600, viewportWidth.value) : Math.min(600, viewportWidth.value - (agentVisible.value ? agentWidth.value : 0) - 320));
+provide(workspaceLayoutKey, { menuTarget, controlsTarget, compact, inspectorAvailable, inspectorVisible, inspectorWidth, inspectorMaxWidth });
 watch(inspectorVisible, visible => { if (visible && compact.value) agentVisible.value = false; });
 watch(agentVisible, visible => { if (visible && compact.value) inspectorVisible.value = false; });
 watch(compact, value => { if (value && inspectorVisible.value) agentVisible.value = false; });

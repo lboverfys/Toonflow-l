@@ -82,15 +82,13 @@ onBeforeUnmount(stopResize);
     overflow-x: hidden;
     overscroll-behavior: contain;
     padding: 12px;
+    background: var(--el-fill-color-extra-light);
 
-    :deep(.nodeDock) { display: flex; flex-direction: column; min-height: 100%; }
+    :deep(.nodeDock) { display: flex; flex-direction: column; gap: 12px; }
     :deep(.dockSlot:empty) { display: none; }
-    :deep(.dockSlot + .dockSlot:not(:empty)) { margin-top: 12px; }
-    :deep(.dockSlot:last-child:not(:empty)) { display: flex; flex: 1; min-width: 0; }
-    :deep(.bottomSlot) { display: flex; flex-direction: column; flex: 1; }
+    :deep(.dockSlot) { min-width: 0; }
     :deep(.floatingSlot) { width: 100% !important; min-width: 0; }
-    :deep(.floatingSlot > .el-card) { border: 0; box-shadow: none; }
-    :deep(.mediaToolbar .el-card__body) { justify-content: flex-start; }
+    :deep(.floatingSlot > .el-card) { border: 1px solid var(--el-border-color-lighter); box-shadow: none; border-radius: 10px; }
   }
 }
 </style>

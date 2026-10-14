@@ -20,6 +20,7 @@
       :preload="metadata?.duration && metadata.width && metadata.height ? 'none' : 'metadata'"
       draggable="false"
       :aria-label="label"
+      @click="playFromSurface"
       @loadedmetadata="readMetadata"
       @loadeddata="readPreview"
       @timeupdate="currentTime = video?.currentTime ?? 0"
@@ -258,6 +259,11 @@ async function togglePlayback() {
   }
 }
 
+function playFromSurface(event: MouseEvent) {
+  if (previewing.value || !ready.value || event.defaultPrevented || event.detail > 1) return;
+  void togglePlayback();
+}
+
 function seek(value: number | number[]) {
   if (!video.value || !Number.isFinite(value)) return;
   video.value.currentTime = Math.min(duration.value, Math.max(0, Number(value)));
@@ -426,7 +432,7 @@ async function captureFrame(command: "current" | "first" | "last") {
     max-height: 240px;
     object-fit: contain;
     border-radius: var(--el-border-radius-base);
-    pointer-events: none;
+    cursor: pointer;
 
     &:fullscreen {
       height: 100%;

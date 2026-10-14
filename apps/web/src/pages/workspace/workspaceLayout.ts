@@ -4,6 +4,7 @@ export const workspaceLayoutKey: InjectionKey<{
   menuTarget: Ref<HTMLElement | undefined>;
   controlsTarget: Ref<HTMLElement | undefined>;
   compact: ComputedRef<boolean>;
+  inspectorAvailable: Ref<boolean>;
   inspectorVisible: Ref<boolean>;
   inspectorWidth: Ref<number>;
   inspectorMaxWidth: ComputedRef<number>;
