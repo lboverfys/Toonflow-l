@@ -1,26 +1,38 @@
 <template>
-  <div class="videoPlayer">
+  <div v-if="previewing" class="videoPlaceholder" :style="{ height: `${previewHeight}px` }" />
+  <teleport :to="previewTarget ?? 'body'" :disabled="!previewing || !previewTarget">
+  <div ref="playerElement" class="videoPlayer" :class="{ previewing }" @fullscreenchange="readFullscreen">
+    <div v-if="previewing" class="previewHeader" @pointerdown.stop @mousedown.stop @click.stop @dblclick.stop>
+      <el-button text :icon="IconArrowLeft" @click="closePreview">返回画布</el-button>
+      <span class="previewTitle" :title="node.data.label || label">{{ node.data.label || label }}</span>
+      <el-button text :icon="fullscreen ? IconMinimize : IconMaximize" :aria-label="fullscreen ? '退出全屏' : '进入全屏'" @click="toggleFullscreen">{{ fullscreen ? '退出全屏' : '全屏' }}</el-button>
+      <el-button text :icon="IconX" aria-label="关闭视频预览" @click="closePreview">关闭预览</el-button>
+    </div>
     <video
       ref="video"
       class="videoPreview"
-      :class="{ nodrag: fullscreen }"
+      :class="{ nodrag: previewing }"
       :src="src"
       :poster="cachedPoster || poster"
-      :controls="fullscreen"
+      :controls="previewing"
+      controlsList="nofullscreen"
       playsinline
       :preload="metadata?.duration && metadata.width && metadata.height ? 'none' : 'metadata'"
       draggable="false"
       :aria-label="label"
-      @fullscreenchange="fullscreen = !!video?.matches(':fullscreen')"
       @loadedmetadata="readMetadata"
       @loadeddata="readPreview"
       @timeupdate="currentTime = video?.currentTime ?? 0"
-      @play="playing = true"
+      @play="playing = true; ended = false"
       @pause="playing = false"
-      @ended="playing = false"
+      @ended="playing = false; ended = true"
       @volumechange="readVolume"
       @error="mediaError" />
-    <div v-show="!fullscreen" class="playerControls nodrag nopan nowheel" @pointerdown.stop @mousedown.stop @dblclick.stop @keydown.stop>
+    <div v-if="previewing && ended" class="playbackEnded">
+      <el-button type="primary" :icon="IconPlayerPlay" @click="replay">重新播放</el-button>
+      <el-button @click="closePreview">返回画布</el-button>
+    </div>
+    <div v-show="!previewing" class="playerControls nodrag nopan nowheel" @pointerdown.stop @mousedown.stop @dblclick.stop @keydown.stop>
       <el-button class="playerButton playButton" text circle :icon="playing ? IconPlayerPause : IconPlayerPlay" :disabled="!ready" :aria-label="playing ? '暂停视频' : '播放视频'" :title="playing ? '暂停' : '播放'" @click="togglePlayback" />
       <span class="currentTime">{{ formatTime(currentTime) }}</span>
       <el-slider class="progressSlider" :modelValue="currentTime" :min="0" :max="duration || 1" :step="0.01" :disabled="!ready || !duration" :formatTooltip="formatTime" aria-label="视频播放进度" @input="seek" />
@@ -48,13 +60,17 @@
       </el-dropdown>
     </div>
   </div>
+  </teleport>
+  <el-dialog v-model="previewing" class="videoPreviewDialog" width="min(1440px, calc(100vw - 48px))" top="24px" appendToBody :showClose="false" :closeOnClickModal="false" :closeOnPressEscape="false" :style="{ padding: '0', background: 'var(--el-bg-color-overlay)' }" aria-label="视频预览" @closed="restoreFocus">
+    <div ref="previewTarget" class="previewTarget" />
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { inject, onBeforeUnmount, ref, watch, type Ref } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, ref, watch, type Ref, type ShallowRef } from "vue";
 import { useNode, useVueFlow } from "@vue-flow/core";
-import { ElButton, ElDropdown, ElDropdownMenu, ElDropdownItem, ElMessage, ElPopover, ElSlider } from "element-plus";
-import { IconPlayerPlay, IconPlayerPause, IconVolume, IconVolumeOff, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
+import { ElButton, ElDialog, ElDropdown, ElDropdownMenu, ElDropdownItem, ElMessage, ElPopover, ElSlider } from "element-plus";
+import { IconPlayerPlay, IconPlayerPause, IconVolume, IconVolumeOff, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward, IconArrowLeft, IconX, IconMinimize, IconMaximize } from "@tabler/icons-vue";
 import { useNodeFiles } from "@toonflow/nodes-scaffold/runtime";
 import type { NodeDocumentContext } from "@toonflow/nodes-scaffold/nodeDocument";
 
@@ -62,6 +78,14 @@ const { src, previewSrc, metadata, label = "节点视频" } = defineProps<{ src:
 const emit = defineEmits<{ loadedmetadata: [event: Event] }>();
 const video = ref<HTMLVideoElement>();
 const fullscreen = ref(false);
+const previewing = ref(false);
+const ended = ref(false);
+const playerElement = ref<HTMLElement>();
+const previewTarget = ref<HTMLElement>();
+const previewHeight = ref(144);
+const closeMediaPreview = inject<ShallowRef<(() => Promise<void>) | undefined> | undefined>("closeMediaPreview", undefined);
+let previousFocus: HTMLElement | undefined;
+let fullscreenExitTime = -Infinity;
 const ready = ref(false);
 const poster = ref("");
 const cachedPoster = ref("");
@@ -97,20 +121,26 @@ watch(() => src, () => {
   playing.value = false;
   currentTime.value = 0;
   duration.value = 0;
+  ended.value = false;
 }, { flush: "sync" });
 watch([() => src, () => metadata], () => {
   if (metadata?.duration && metadata.width && metadata.height) { ready.value = true; duration.value = metadata.duration; }
 }, { immediate: true });
-onBeforeUnmount(() => captureController?.abort());
+onBeforeUnmount(() => {
+  captureController?.abort();
+  video.value?.pause();
+  if (closeMediaPreview?.value === closePreview) closeMediaPreview.value = undefined;
+});
 watch(() => canvasActive?.value !== false || documentContext?.targets.has(node.id), visible => {
   const element = video.value;
-  if (!visible && element && document.fullscreenElement !== element && document.pictureInPictureElement !== element) element.pause();
+  if (!visible && previewing.value) void closePreview();
+  if (!visible && element && document.pictureInPictureElement !== element) element.pause();
 }, { flush: "post" });
 watch(video, (element, _previous, onCleanup) => {
   if (!element || typeof IntersectionObserver === "undefined") return;
   const observer = new IntersectionObserver(entries => {
     const entry = entries.at(-1);
-    if (!entry || entry.isIntersecting || document.fullscreenElement === element || document.pictureInPictureElement === element) return;
+    if (!entry || entry.isIntersecting || previewing.value || document.pictureInPictureElement === element) return;
     // ACT: 离屏仅暂停，保留进度和节点状态；全屏及画中画继续播放。
     element.pause();
   });
@@ -120,16 +150,64 @@ watch(video, (element, _previous, onCleanup) => {
 
 async function enterFullscreen() {
   if (!video.value) return;
-  fullscreen.value = true;
+  if (closeMediaPreview?.value && closeMediaPreview.value !== closePreview) await closeMediaPreview.value();
+  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+  previewHeight.value = playerElement.value?.offsetHeight ?? 144;
+  previewing.value = true;
+  await nextTick();
+}
+
+async function toggleFullscreen() {
   try {
-    await video.value.requestFullscreen();
+    if (fullscreen.value) await document.exitFullscreen();
+    else await playerElement.value?.requestFullscreen();
   } catch {
-    fullscreen.value = false;
-    ElMessage.error("无法进入视频全屏");
+    ElMessage.error("无法切换视频全屏");
   }
 }
 
-defineExpose({ enterFullscreen, ready, capturing, captureFrame, playing, fullscreen });
+function readFullscreen() {
+  const active = document.fullscreenElement === playerElement.value;
+  if (fullscreen.value && !active) fullscreenExitTime = performance.now();
+  fullscreen.value = active;
+}
+
+async function closePreview() {
+  if (document.fullscreenElement === playerElement.value) {
+    try { await document.exitFullscreen(); }
+    catch { ElMessage.error("无法退出全屏，请先按 Esc 再关闭预览"); return; }
+  }
+  video.value?.pause();
+  previewing.value = false;
+}
+
+function restoreFocus() { if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }); }
+
+async function replay() {
+  if (!video.value) return;
+  video.value.currentTime = 0;
+  try { await video.value.play(); }
+  catch { ElMessage.error("视频无法播放，请检查文件或重试"); }
+}
+
+watch(previewing, (visible, _previous, onCleanup) => {
+  if (!visible) {
+    video.value?.pause();
+    if (closeMediaPreview?.value === closePreview) closeMediaPreview.value = undefined;
+    return;
+  }
+  if (closeMediaPreview) closeMediaPreview.value = closePreview;
+  const escape = (event: KeyboardEvent) => {
+    if (event.key !== "Escape" || event.isComposing || fullscreen.value || performance.now() - fullscreenExitTime < 250) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    void closePreview();
+  };
+  window.addEventListener("keydown", escape, true);
+  onCleanup(() => window.removeEventListener("keydown", escape, true));
+}, { flush: "sync" });
+
+defineExpose({ enterFullscreen, ready, capturing, captureFrame, playing, fullscreen: computed(() => previewing.value || fullscreen.value) });
 
 function formatTime(value: number) {
   const seconds = Math.floor(Number.isFinite(value) ? Math.max(0, value) : 0);
@@ -307,6 +385,41 @@ async function captureFrame(command: "current" | "first" | "last") {
   cursor: grab;
 
   &:active { cursor: grabbing; }
+  &.previewing {
+    display: flex;
+    flex-direction: column;
+    height: min(900px, calc(100dvh - 72px));
+    min-width: 0;
+    background: #000;
+    cursor: default;
+    &:fullscreen { height: 100%; border-radius: 0; }
+
+    .previewHeader {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 12px;
+      background: var(--el-bg-color-overlay);
+      color: var(--el-text-color-primary);
+      .el-button { margin: 0; }
+      .previewTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    }
+    .videoPreview { flex: 1; min-height: 0; max-height: none; pointer-events: auto; }
+    .playbackEnded {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      display: flex;
+      gap: 8px;
+      transform: translate(-50%, -50%);
+      padding: 16px;
+      border-radius: var(--el-border-radius-base);
+      background: var(--el-bg-color-overlay);
+      white-space: nowrap;
+      .el-button { margin: 0; }
+    }
+  }
   .videoPreview {
     display: block;
     width: 100%;
@@ -404,6 +517,8 @@ async function captureFrame(command: "current" | "first" | "last") {
     pointer-events: auto;
   }
 }
+.previewTarget { min-width: 0; }
+:global(.videoPreviewDialog .el-dialog__header) { display: none; }
 .volumePanel {
   display: flex;
   flex-direction: column;

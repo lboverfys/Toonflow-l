@@ -1,11 +1,9 @@
 <template>
   <el-card
     v-if="visible"
-    ref="toolbar"
     class="selectionToolbar nodrag nopan nowheel"
     shadow="never"
     :bodyStyle="{ padding: '4px' }"
-    :style="toolbarStyle"
     @pointerdown.stop
     @mousedown.stop
     @click.stop
@@ -46,7 +44,6 @@ const props = defineProps<{
   disabled?: boolean;
 }>();
 const flow = useVueFlow();
-const toolbar = ref<InstanceType<typeof ElCard>>();
 const busy = ref(false);
 const layoutActions = [
   { mode: "horizontal", label: "水平排列", icon: IconLayoutColumns },
@@ -61,16 +58,6 @@ const canArrangeSelection = computed(() => !busy.value && !props.disabled && sel
 const hasGroup = computed(() => flow.getSelectedNodes.value.some(node => node.type === "canvasGroup"));
 const visible = computed(() => !props.disabled && !flow.userSelectionActive.value && flow.getSelectedNodes.value.length > 0
   && (flow.nodesSelectionActive.value || hasGroup.value));
-const toolbarStyle = computed(() => {
-  const bounds = getRectOfNodes(flow.getSelectedNodes.value);
-  const { x, y, zoom } = flow.viewport.value;
-  const width = toolbar.value?.$el.offsetWidth ?? 0;
-  const height = toolbar.value?.$el.offsetHeight ?? 0;
-  const left = Math.max(width / 2 + 8, Math.min(x + (bounds.x + bounds.width / 2) * zoom, flow.dimensions.value.width - width / 2 - 8));
-  // ACT: 顶部导航约占 56px，留出 8px 间隔；高度变化时再按导航实际尺寸定位。
-  const top = Math.max(height + 64, Math.min(y + bounds.y * zoom - 12 - (hasGroup.value ? 30 * zoom : 0), flow.dimensions.value.height - 8));
-  return { left: `${left}px`, top: `${top}px` };
-});
 
 async function duplicateNodes(selection: GraphNode[], signal: AbortSignal, withEdges = true, positions?: Map<string, XYPosition>) {
   const nodes = getSelectionTree(selection, flow.getNodes.value);
@@ -303,15 +290,12 @@ defineExpose({ operate, startDragCopy, busy });
 
 <style scoped lang="scss">
 .selectionToolbar {
-  position: absolute;
-  z-index: 6;
-  width: max-content;
+  width: 100%;
   border-radius: var(--ui-radius-large);
-  box-shadow: var(--floatingShadow);
-  transform: translate(-50%, -100%);
 
   .toolbarActions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: center;
     gap: 2px;

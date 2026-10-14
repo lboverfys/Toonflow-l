@@ -74,7 +74,7 @@ import { IconArrowsMaximize, IconArrowsMinimize, IconX } from "@tabler/icons-vue
 import type { CanvasNavigation } from "../useCanvasNavigation";
 
 const props = defineProps<{ active: boolean; navigation: CanvasNavigation }>();
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; zoom: [event: WheelEvent] }>();
 const flow = useVueFlow();
 const mapElement = ref<HTMLElement>();
 const expanded = ref(false);
@@ -210,9 +210,7 @@ function zoomMap(event: WheelEvent) {
   if (!wheelTimer) props.navigation.rememberView();
   clearTimeout(wheelTimer);
   wheelTimer = setTimeout(() => { wheelTimer = undefined; }, 200);
-  const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? mapSize.value.height : 1);
-  const zoom = flow.viewport.value.zoom * Math.exp(-Math.max(-240, Math.min(240, delta)) * 0.002);
-  void props.navigation.centerOn(viewportCenter(), { zoom, remember: false, animate: false });
+  emit("zoom", event);
 }
 
 function navigateMap(event: KeyboardEvent) {

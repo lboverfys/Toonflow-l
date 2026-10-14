@@ -3,7 +3,7 @@ import { z } from "zod";
 import { validateFields } from "@/lib/middleware";
 import { success } from "@/lib/responseFormat";
 
-export default Router().post("/", validateFields({ requestId: z.uuid(), error: z.string().max(4096).optional() }), (req, res) => {
-  res.once("finish", () => req.app.locals.desktop.closePrepared(req.body.requestId, req.body.error));
+export default Router().post("/", validateFields({ requestId: z.uuid(), error: z.string().max(4096).optional(), action: z.enum(["wait", "cancel", "close"]).optional() }), (req, res) => {
+  res.once("finish", () => req.app.locals.desktop.closePrepared(req.body.requestId, req.body.error, req.body.action));
   res.json(success(null));
 });

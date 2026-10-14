@@ -179,13 +179,17 @@ async function start() {
         void Utils.showMessageBox({ type: "error", title: t`打开链接失败`, message: t`请检查默认浏览器设置后重试。` });
       }
     });
-    // 页面重载时监听器随旧页面销毁，安装请求等新页面 ready 后再投递。
-    Electrobun.events.on(`will-navigate-${mainWindow.webview.id}`, () => { deliverInstall = undefined; });
     let isShowing = false;
     let pageReady = false;
     let closeRequest: string | undefined;
     let closeTimer: ReturnType<typeof setTimeout> | undefined;
     let allowClose = false;
+    // 页面重载后原关闭确认已不存在，清理请求以允许重新关闭。
+    Electrobun.events.on(`will-navigate-${mainWindow.webview.id}`, () => {
+      deliverInstall = undefined;
+      clearTimeout(closeTimer);
+      closeRequest = undefined;
+    });
     mainWindow.on("will-close", event => {
       if (!pageReady || allowClose) return;
       (event as { response: { allow: boolean } }).response = { allow: false };
@@ -198,10 +202,12 @@ async function start() {
       }, 20000);
     });
     app.locals.desktop = {
-      closePrepared(requestId, error) {
+      closePrepared(requestId, error, action = "close") {
         if (requestId !== closeRequest) return;
         clearTimeout(closeTimer);
+        if (action === "wait") return;
         closeRequest = undefined;
+        if (action === "cancel") return;
         if (error) { void Utils.showMessageBox({ type: "error", title: "保存失败", message: error }); return; }
         allowClose = true;
         mainWindow.close();
