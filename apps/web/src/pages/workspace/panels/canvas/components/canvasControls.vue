@@ -1,158 +1,133 @@
 <template>
-  <panel position="bottom-left">
-    <div class="canvasControlStack" @dblclick.stop>
-      <canvasMap v-if="showMap" :active="canNavigate" :navigation="navigation" @close="showMap = false" />
-      <el-card shadow="never" :bodyStyle="{ padding: '4px' }">
-        <div class="canvasControls">
-          <el-tooltip :showArrow="false" :content="shortcutHint('搜索节点与分组', 'search')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-            <el-button class="toolButton" text :disabled="!canNavigate" aria-label="搜索节点与分组" @click="emit('search')">
-              <icon-search :size="17" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip :showArrow="false" :content="shortcutHint('返回上一视图', 'returnView')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-            <el-button class="toolButton" text :disabled="!navigation.canGoBack.value" aria-label="返回上一视图" @click="navigation.goBack()">
-              <icon-arrow-back-up :size="17" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip :showArrow="false" :content="assetsVisible ? '关闭素材库' : '打开素材库'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-            <el-button
-              class="toolButton"
-              text
-              :type="assetsVisible ? 'primary' : 'default'"
-              :aria-pressed="assetsVisible"
-              aria-label="素材库"
-              @click="assetsVisible = !assetsVisible">
-              <icon-folders :size="17" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip :showArrow="false" content="整理画布" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-            <el-button class="toolButton" text :disabled="!canArrange" aria-label="整理画布" @click="arrangeNodes">
-              <icon-sitemap :size="17" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip :showArrow="false" :content="shortcutHint(showMap ? '隐藏地图' : '显示地图', 'toggleMap')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-            <el-button
-              class="toolButton"
-              text
-              :type="showMap ? 'primary' : 'default'"
-              :aria-pressed="showMap"
-              aria-label="显示或隐藏地图"
-              @click="toggleMap">
-              <icon-map :size="17" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip :showArrow="false" :content="snapEnabled ? '关闭网格吸附' : '开启网格吸附'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-            <el-button
-              class="toolButton"
-              text
-              :type="snapEnabled ? 'primary' : 'default'"
-              :aria-pressed="snapEnabled"
-              aria-label="网格吸附"
-              @click="snapEnabled = !snapEnabled">
-              <icon-magnet :size="17" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip :showArrow="false" :content="showEdges ? '隐藏连线' : '显示连线'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-            <el-button
-              class="toolButton"
-              text
-              :type="showEdges ? 'primary' : 'default'"
-              :aria-pressed="showEdges"
-              aria-label="显示或隐藏连线"
-              @click="showEdges = !showEdges">
-              <icon-arrow-guide :size="17" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip :showArrow="false" :content="shortcutHint('聚焦选中节点', 'focusSelection')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-            <el-button class="toolButton" text :disabled="!canFocusSelection" aria-label="聚焦选中节点" @click="focusSelection">
-              <icon-zoom-scan :size="17" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip :showArrow="false" :content="shortcutHint('查看整个画布', 'fitView')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
-            <el-button class="toolButton" text :disabled="!canShowAll" aria-label="查看整个画布" @click="navigation.showAll()">
-              <icon-focus-centered :size="17" />
-            </el-button>
-          </el-tooltip>
-          <el-tooltip :showArrow="false"
-            content="缩放菜单（滚轮调整缩放）"
-            placement="top"
-            :hideAfter="0"
-            :enterable="false"
-            :triggerKeys="[]"
-            :disabled="zoomMenuVisible">
-            <span class="toolTrigger">
-              <el-popover v-model:visible="zoomMenuVisible" trigger="click" placement="top-start" :width="216">
-                <template #reference>
-                  <el-button
-                    class="toolButton"
-                    text
-                    aria-label="缩放菜单"
-                    @wheel.stop.prevent="$event.deltaY && applyZoom(Math.min(800, Math.max(2, zoomPercent - Math.sign($event.deltaY))))">
-                    {{ zoomPercent }}%
-                  </el-button>
-                </template>
-                <div class="zoomMenu">
-                  <el-input-number
-                    class="zoomInput"
-                    :modelValue="zoomPercent"
-                    :min="2"
-                    :max="800"
-                    :controls="false"
-                    aria-label="缩放百分比"
-                    @change="applyZoom">
-                    <template #suffix>%</template>
-                  </el-input-number>
-                  <el-button class="zoomAction" text @click="zoomIn()">放大</el-button>
-                  <el-button class="zoomAction" text @click="zoomOut()">缩小</el-button>
-                  <el-button class="zoomAction" text :disabled="!canNavigate" @click="navigation.resetZoom()">实际大小 · 100%</el-button>
-                  <el-button class="zoomAction" text :disabled="!canFocusSelection" @click="focusSelection">聚焦选中节点</el-button>
-                  <el-button class="zoomAction" text :disabled="!canShowAll" @click="navigation.showAll()">查看整个画布</el-button>
-                </div>
-              </el-popover>
-            </span>
-          </el-tooltip>
-          <el-tooltip :showArrow="false" content="帮助" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]" :disabled="helpVisible">
-            <span class="toolTrigger">
-              <el-popover v-model:visible="helpVisible" trigger="click" placement="top-end" :width="196">
-                <template #reference>
-                  <el-button class="toolButton" text aria-label="帮助">
-                    <icon-help :size="17" />
-                  </el-button>
-                </template>
-                <div class="helpMenu">
-                  <el-button
-                    class="helpAction"
-                    tag="a"
-                    text
-                    :icon="IconBook"
-                    href="https://qcn7xdsqgc4z.feishu.cn/docx/RXFqdgR2Xo0dXZxGfd0cZCGgnwf"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    @click="helpVisible = false">
-                    使用教程
-                  </el-button>
-                  <el-button
-                    class="helpAction"
-                    tag="a"
-                    text
-                    :icon="IconBug"
-                    href="https://docs.qq.com/smartsheet/form/EmvmQBrmlPmr%2Fss_vsqk2v%2FvhiGzE?tab=ss_vsqk2v"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Toonflow 需求/BUG反馈表"
-                    @click="helpVisible = false">
-                    汇报 BUG
-                  </el-button>
-                  <el-button class="helpAction" text :icon="IconBrandWechat" @click="showContact('community')">加入交流群</el-button>
-                  <el-button class="helpAction" text :icon="IconBriefcase" @click="showContact('business')">商务合作</el-button>
-                </div>
-              </el-popover>
-            </span>
-          </el-tooltip>
-        </div>
-      </el-card>
+  <div class="canvasControlStack" @dblclick.stop>
+    <div class="canvasControls">
+      <el-tooltip :showArrow="false" :content="shortcutHint('搜索节点与分组', 'search')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton" text :disabled="!canNavigate" aria-label="搜索节点与分组" @click="emit('search')">
+          <icon-search :size="17" />
+        </el-button>
+      </el-tooltip>
+      <el-tooltip :showArrow="false" :content="shortcutHint('返回上一视图', 'returnView')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton" text :disabled="!navigation.canGoBack.value" aria-label="返回上一视图" @click="navigation.goBack()">
+          <icon-arrow-back-up :size="17" />
+        </el-button>
+      </el-tooltip>
+      <span class="toolDivider" aria-hidden="true" />
+      <el-tooltip :showArrow="false" :content="assetsVisible ? '关闭素材库' : '打开素材库'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton" text :aria-pressed="assetsVisible" aria-label="素材库" @click="assetsVisible = !assetsVisible">
+          <icon-folders :size="17" />
+        </el-button>
+      </el-tooltip>
+      <el-tooltip :showArrow="false" content="整理画布" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton" text :disabled="!canArrange" aria-label="整理画布" @click="arrangeNodes">
+          <icon-sitemap :size="17" />
+        </el-button>
+      </el-tooltip>
+      <span class="toolDivider" aria-hidden="true" />
+      <el-tooltip :showArrow="false" :content="shortcutHint(showMap ? '隐藏地图' : '显示地图', 'toggleMap')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton" text :aria-pressed="showMap" aria-label="显示或隐藏地图" @click="toggleMap">
+          <icon-map :size="17" />
+        </el-button>
+      </el-tooltip>
+      <el-tooltip :showArrow="false" :content="snapEnabled ? '关闭网格吸附' : '开启网格吸附'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton" text :aria-pressed="snapEnabled" aria-label="网格吸附" @click="snapEnabled = !snapEnabled">
+          <icon-magnet :size="17" />
+        </el-button>
+      </el-tooltip>
+      <el-tooltip :showArrow="false" :content="showEdges ? '隐藏连线' : '显示连线'" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton" text :aria-pressed="showEdges" aria-label="显示或隐藏连线" @click="showEdges = !showEdges">
+          <icon-arrow-guide :size="17" />
+        </el-button>
+      </el-tooltip>
+      <span class="toolDivider" aria-hidden="true" />
+      <el-tooltip :showArrow="false" :content="shortcutHint('聚焦选中节点', 'focusSelection')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton" text :disabled="!canFocusSelection" aria-label="聚焦选中节点" @click="focusSelection">
+          <icon-zoom-scan :size="17" />
+        </el-button>
+      </el-tooltip>
+      <el-tooltip :showArrow="false" :content="shortcutHint('查看整个画布', 'fitView')" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]">
+        <el-button class="toolButton" text :disabled="!canShowAll" aria-label="查看整个画布" @click="navigation.showAll()">
+          <icon-focus-centered :size="17" />
+        </el-button>
+      </el-tooltip>
+      <el-tooltip :showArrow="false"
+        content="缩放菜单（滚轮调整缩放）"
+        placement="top"
+        :hideAfter="0"
+        :enterable="false"
+        :triggerKeys="[]"
+        :disabled="zoomMenuVisible">
+        <span class="toolTrigger">
+          <el-popover v-model:visible="zoomMenuVisible" trigger="click" placement="top-start" :width="216">
+            <template #reference>
+              <el-button
+                class="toolButton zoomButton"
+                text
+                aria-label="缩放菜单"
+                @wheel.stop.prevent="$event.deltaY && applyZoom(Math.min(800, Math.max(2, zoomPercent - Math.sign($event.deltaY))))">
+                {{ zoomPercent }}%
+              </el-button>
+            </template>
+            <div class="zoomMenu">
+              <el-input-number
+                class="zoomInput"
+                :modelValue="zoomPercent"
+                :min="2"
+                :max="800"
+                :controls="false"
+                aria-label="缩放百分比"
+                @change="applyZoom">
+                <template #suffix>%</template>
+              </el-input-number>
+              <el-button class="zoomAction" text @click="zoomIn()">放大</el-button>
+              <el-button class="zoomAction" text @click="zoomOut()">缩小</el-button>
+              <el-button class="zoomAction" text :disabled="!canNavigate" @click="navigation.resetZoom()">实际大小 · 100%</el-button>
+              <el-button class="zoomAction" text :disabled="!canFocusSelection" @click="focusSelection">聚焦选中节点</el-button>
+              <el-button class="zoomAction" text :disabled="!canShowAll" @click="navigation.showAll()">查看整个画布</el-button>
+            </div>
+          </el-popover>
+        </span>
+      </el-tooltip>
+      <span class="toolDivider" aria-hidden="true" />
+      <el-tooltip :showArrow="false" content="帮助" placement="top" :hideAfter="0" :enterable="false" :triggerKeys="[]" :disabled="helpVisible">
+        <span class="toolTrigger">
+          <el-popover v-model:visible="helpVisible" trigger="click" placement="top-end" :width="196">
+            <template #reference>
+              <el-button class="toolButton" text aria-label="帮助">
+                <icon-help :size="17" />
+              </el-button>
+            </template>
+            <div class="helpMenu">
+              <el-button
+                class="helpAction"
+                tag="a"
+                text
+                :icon="IconBook"
+                href="https://qcn7xdsqgc4z.feishu.cn/docx/RXFqdgR2Xo0dXZxGfd0cZCGgnwf"
+                target="_blank"
+                rel="noopener noreferrer"
+                @click="helpVisible = false">
+                使用教程
+              </el-button>
+              <el-button
+                class="helpAction"
+                tag="a"
+                text
+                :icon="IconBug"
+                href="https://docs.qq.com/smartsheet/form/EmvmQBrmlPmr%2Fss_vsqk2v%2FvhiGzE?tab=ss_vsqk2v"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Toonflow 需求/BUG反馈表"
+                @click="helpVisible = false">
+                汇报 BUG
+              </el-button>
+              <el-button class="helpAction" text :icon="IconBrandWechat" @click="showContact('community')">加入交流群</el-button>
+              <el-button class="helpAction" text :icon="IconBriefcase" @click="showContact('business')">商务合作</el-button>
+            </div>
+          </el-popover>
+        </span>
+      </el-tooltip>
     </div>
-  </panel>
+  </div>
   <arrangeDialog ref="arrangeDialogRef" :active="active" :canvasId="canvasId" :directory="directory" :projectName="projectName" :batchHistory="batchHistory" />
   <el-dialog v-model="contactVisible" :title="contactInfo.title" width="min(360px, calc(100vw - 32px))" alignCenter appendToBody>
     <div class="contactContent">
@@ -173,12 +148,11 @@
 <script setup lang="ts">
 import tdesignProvider from "@/components/tdesignProvider.vue";
 import { computed, ref } from "vue";
-import { Panel, useVueFlow } from "@vue-flow/core";
+import { useVueFlow } from "@vue-flow/core";
 import { IconMap, IconMagnet, IconFocusCentered, IconHelp, IconBook, IconBug, IconBrandWechat, IconBriefcase } from "@tabler/icons-vue";
 import { ElMessage } from "element-plus";
 import { QRCode } from "tdesign-vue-next";
 import arrangeDialog from "./arrangeDialog.vue";
-import canvasMap from "./canvasMap.vue";
 import type { CanvasNavigation } from "../useCanvasNavigation";
 import { generalSettings } from "@/stores/settings";
 import { shortcutLabel, type CanvasShortcutAction } from "@/lib/canvasShortcuts";
@@ -194,8 +168,8 @@ const props = defineProps<{
 const snapEnabled = defineModel<boolean>("snapEnabled", { required: true });
 const showEdges = defineModel<boolean>("showEdges", { required: true });
 const assetsVisible = defineModel<boolean>("assetsVisible", { default: false });
+const showMap = defineModel<boolean>("showMap", { default: true });
 const emit = defineEmits<{ search: [] }>();
-const showMap = ref(true);
 const zoomMenuVisible = ref(false);
 const helpVisible = ref(false);
 const contactVisible = ref(false);
@@ -231,7 +205,7 @@ const canArrange = computed(() => {
     nodes.every((node) => node.dimensions.width > 0 && node.dimensions.height > 0)
   );
 });
-defineExpose({ arrangeNodes, requestArrange, toggleMap });
+defineExpose({ arrangeNodes, requestArrange });
 
 function shortcutHint(label: string, action: CanvasShortcutAction) {
   const binding = shortcutLabel(generalSettings.value.canvasShortcuts[action]);
@@ -278,24 +252,60 @@ async function requestArrange(signal?: AbortSignal) {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 12px;
+  gap: 10px;
   max-width: calc(100vw - 32px);
+
+  > * {
+    pointer-events: auto;
+  }
 
   .canvasControls {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     max-width: min(540px, calc(100vw - 44px));
+    padding: 4px;
+    border: 1px solid var(--el-border-color-light);
+    border-radius: var(--ui-radius-large);
+    background: var(--el-bg-color-overlay);
+    box-shadow: var(--floatingShadow);
 
     .toolTrigger { display: inline-flex; }
 
+    .toolDivider {
+      width: 1px;
+      height: 18px;
+      margin: 0 4px;
+      background: var(--el-border-color);
+    }
+
     .toolButton {
-      width: 40px;
-      height: 40px;
+      width: 34px;
+      height: 34px;
       flex-shrink: 0;
       margin-left: 0;
       padding: 0;
+      border-radius: var(--ui-radius);
+      color: var(--el-text-color-regular);
+
+      &:hover:not(.is-disabled) {
+        background: var(--el-fill-color-light);
+        color: var(--el-text-color-primary);
+      }
+
+      &[aria-pressed="true"] {
+        background: var(--el-fill-color);
+        color: var(--el-color-primary);
+      }
+
+      &.zoomButton {
+        width: auto;
+        min-width: 50px;
+        padding: 0 6px;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
     }
   }
 }

@@ -144,7 +144,7 @@ import {
   IconCheck,
   IconRestore,
 } from "@tabler/icons-vue";
-import { defaultUiSettings, uiSettings, updateUiSettings } from "@/stores/settings";
+import { defaultUiSettings, inkColor, uiSettings, updateUiSettings } from "@/stores/settings";
 import { isMobile } from "@/lib/mobile";
 import languageSelect from "@/components/languageSelect.vue";
 
@@ -163,6 +163,7 @@ const themes = [
   { value: "system", label: "跟随系统", description: "自动切换", icon: IconDeviceDesktop },
 ];
 const colors = [
+  { value: inkColor, label: "石墨黑" },
   { value: "#409eff", label: "天空蓝" },
   { value: "#6366f1", label: "鸢尾紫" },
   { value: "#a855f7", label: "薰衣紫" },
@@ -298,6 +299,7 @@ function changeTheme(value: string) {
         border: 0;
         color: #fff;
         background: var(--swatchColor);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--el-text-color-primary) 14%, transparent);
 
         &[aria-pressed="true"] {
           outline: 2px solid var(--swatchColor);

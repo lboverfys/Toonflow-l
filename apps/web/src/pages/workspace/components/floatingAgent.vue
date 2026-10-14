@@ -50,16 +50,15 @@ import agent from "@/components/agent/index.vue";
 
 const visible = defineModel<boolean>({ default: false });
 const emit = defineEmits<{ resize: [width: number] }>();
-const docked = ref(false);
+const docked = ref(true);
 const viewport = reactive({ width: window.innerWidth, height: window.innerHeight });
 const gap = computed(() => Math.min(15, viewport.width / 2, viewport.height / 2));
 const maxWidth = computed(() => Math.max(0, viewport.width - (docked.value ? 0 : gap.value * 2)));
 const preferredWidth = ref(420);
 const width = computed(() => Math.min(preferredWidth.value, maxWidth.value));
 const preferredHeight = ref<number>();
-const height = computed(() =>
-  docked.value ? viewport.height : Math.min(preferredHeight.value ?? viewport.height * 0.8, viewport.height - gap.value * 2)
-);
+const floatingHeight = computed(() => Math.min(preferredHeight.value ?? viewport.height * 0.8, viewport.height - gap.value * 2));
+const height = computed(() => (docked.value ? viewport.height : floatingHeight.value));
 const resizeHandles = computed(
   () =>
     [
@@ -73,7 +72,8 @@ const resizeHandles = computed(
     ] as { edge: ResizeEdge; label: string }[]
 );
 const left = ref(viewport.width - width.value - gap.value);
-const top = ref(viewport.height - height.value - gap.value);
+// 默认停靠时按悬浮高度预置位置，切换为悬浮后仍出现在右下角，不遮住顶栏。
+const top = ref(viewport.height - floatingHeight.value - gap.value);
 const panelStyle = computed(() => ({
   left: `${docked.value ? viewport.width - width.value : left.value}px`,
   top: `${docked.value ? 0 : top.value}px`,

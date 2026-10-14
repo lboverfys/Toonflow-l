@@ -42,7 +42,7 @@ import { ElMessage, useZIndex } from "element-plus";
 import type { updateSnapshot } from "@toonflow/server/desktop";
 import { elementLocale } from "@/lib/i18n";
 import { isMobile } from "@/lib/mobile";
-import { saveSettings, settings, uiSettings } from "@/stores/settings";
+import { inkColor, saveSettings, settings, uiSettings } from "@/stores/settings";
 import { desktopUpdateSnapshot, stopDesktopUpdateObservation } from "@/stores/desktopUpdate";
 import { useMcpControl } from "@/lib/mcpControl";
 import ffmpegRequired from "@/components/settings/ffmpegRequired.vue";
@@ -136,20 +136,23 @@ onBeforeUnmount(() => systemTheme.removeEventListener("change", updateSystemThem
 watchEffect(() => {
   const { theme, primaryColor, fontScale, radius } = uiSettings.value;
   const dark = theme === "system" ? systemDark.value : theme === "dark";
+  const ink = primaryColor.toLowerCase() === inkColor;
+  const color = ink && dark ? "#ececec" : primaryColor;
   const root = document.documentElement;
   root.classList.toggle("dark", dark);
+  root.classList.toggle("inkPrimary", ink);
   root.setAttribute("theme-mode", dark ? "dark" : "light");
   root.style.colorScheme = dark ? "dark" : "light";
   root.style.fontSize = `${(16 * fontScale) / 100}px`;
   root.style.setProperty("--ui-radius", `${radius}px`);
-  root.style.setProperty("--el-color-primary", primaryColor);
+  root.style.setProperty("--el-color-primary", color);
   for (let level = 1; level <= 9; level++) {
     root.style.setProperty(
       `--el-color-primary-light-${level}`,
-      `color-mix(in srgb, ${primaryColor} ${100 - level * 10}%, ${dark ? "#141414" : "#fff"})`
+      `color-mix(in srgb, ${color} ${100 - level * 10}%, ${dark ? "#181818" : "#fff"})`
     );
   }
-  root.style.setProperty("--el-color-primary-dark-2", `color-mix(in srgb, ${primaryColor} 80%, ${dark ? "#fff" : "#000"})`);
+  root.style.setProperty("--el-color-primary-dark-2", `color-mix(in srgb, ${color} 80%, ${dark ? "#fff" : "#000"})`);
 });
 </script>
 

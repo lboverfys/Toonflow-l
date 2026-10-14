@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" title="设置" width="min(1080px, calc(100vw - 32px))" alignCenter appendToBody>
+  <el-dialog v-model="visible" class="settingsDialog" title="设置" width="min(1080px, calc(100vw - 32px))" alignCenter appendToBody>
     <div class="settings">
       <aside class="sidebar" aria-label="设置分类">
         <template v-for="item in settingsPanels" :key="item.id">
@@ -93,22 +93,55 @@ const visible = defineModel<boolean>({ default: false });
 </script>
 
 <style lang="scss" scoped>
+// 对话框去掉内边距，侧栏通栏铺满；标题压在侧栏顶部，关闭按钮保留在右上角。选择器需高于 main.scss 的全局对话框变量。
+:global(html .el-dialog.settingsDialog) {
+  --el-dialog-padding-primary: 0px;
+  overflow: hidden;
+}
+
+:global(.settingsDialog .el-dialog__header) {
+  height: 0;
+  padding: 0;
+}
+
+:global(html .el-dialog.settingsDialog .el-dialog__title) {
+  position: absolute;
+  top: 22px;
+  left: 24px;
+  z-index: 1;
+  font-size: 15px;
+}
+
+:global(.settingsDialog .el-dialog__headerbtn) {
+  top: 10px;
+  right: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--ui-radius);
+}
+
+:global(.settingsDialog .el-dialog__headerbtn:hover) {
+  background: var(--el-fill-color-light);
+}
+
 .settings {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr);
-  height: min(72vh, calc(100dvh - 140px));
+  grid-template-columns: 216px minmax(0, 1fr);
+  height: min(76vh, calc(100dvh - 96px));
   overflow: hidden;
 
   .sidebar {
     min-height: 0;
     overflow-y: auto;
-    padding: 2px;
+    padding: 60px 10px 16px;
+    border-inline-end: 1px solid var(--el-border-color-lighter);
+    background: var(--el-fill-color-extra-light);
 
     .settingsGroupLabel {
-      margin: 14px 12px 6px;
-      color: var(--el-text-color-secondary);
+      margin: 16px 10px 6px;
+      color: var(--el-text-color-placeholder);
       font-size: 12px;
-      font-weight: 400;
+      font-weight: 500;
       line-height: 1.5;
     }
 
@@ -117,19 +150,23 @@ const visible = defineModel<boolean>({ default: false });
       align-items: center;
       gap: 10px;
       width: 100%;
-      padding: 10px 12px;
-      margin-bottom: 4px;
+      min-height: 34px;
+      padding: 7px 10px;
+      margin-bottom: 2px;
       border: 0;
       border-radius: var(--el-border-radius-base);
       background: transparent;
       color: var(--el-text-color-regular);
       font: inherit;
+      font-size: 13px;
       text-align: start;
       cursor: pointer;
+      transition: background-color 0.15s, color 0.15s;
 
       .panelIcon {
         display: inline-flex;
         flex-shrink: 0;
+        color: var(--el-text-color-secondary);
       }
 
       > span {
@@ -139,15 +176,22 @@ const visible = defineModel<boolean>({ default: false });
 
       &:hover {
         background: var(--el-fill-color-light);
+        color: var(--el-text-color-primary);
       }
 
       &[aria-pressed="true"] {
-        background: var(--el-color-primary-light-9);
-        color: var(--el-color-primary);
+        background: var(--el-fill-color);
+        color: var(--el-text-color-primary);
+        font-weight: 500;
+
+        .panelIcon {
+          color: var(--el-text-color-primary);
+        }
       }
 
       &:focus-visible {
         outline: 2px solid var(--el-color-primary);
+        outline-offset: -2px;
       }
     }
   }
@@ -156,13 +200,15 @@ const visible = defineModel<boolean>({ default: false });
     display: flex;
     flex-direction: column;
     min-height: 0;
-    padding: 0 20px;
+    padding: 24px 28px 0 32px;
     overflow: hidden;
 
     .panelTitle {
       flex-shrink: 0;
-      margin: 0 0 20px;
-      font-size: 18px;
+      margin: 0 40px 20px 0;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
     }
 
     .panelContent {
@@ -183,9 +229,11 @@ const visible = defineModel<boolean>({ default: false });
   }
 
   @media (max-width: 700px) {
-    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-columns: 56px minmax(0, 1fr);
 
     .sidebar {
+      padding: 56px 6px 12px;
+
       .settingsGroupLabel {
         margin: 12px 0 6px;
         text-align: center;
@@ -193,7 +241,7 @@ const visible = defineModel<boolean>({ default: false });
 
       .settingsItem {
         justify-content: center;
-        padding: 12px;
+        padding: 10px;
         span {
           display: none;
         }
@@ -201,8 +249,14 @@ const visible = defineModel<boolean>({ default: false });
     }
 
     .content {
-      padding: 0 8px 0 16px;
+      padding: 20px 8px 0 16px;
     }
+  }
+}
+
+@media (max-width: 700px) {
+  :global(html .el-dialog.settingsDialog .el-dialog__title) {
+    display: none;
   }
 }
 </style>

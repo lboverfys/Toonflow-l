@@ -31,7 +31,10 @@ export const settingsStorage = {
   },
 };
 
-export const defaultUiSettings = { theme: "light", language: "system", primaryColor: "#409eff", fontScale: 100, mobileScale: 75, radius: 8, startupAnimation: true };
+// 墨色在深色模式下由 App.vue 换成浅色墨水，其他主题色两种模式保持一致。
+export const inkColor = "#171717";
+export const defaultUiSettings = { theme: "light", language: "system", primaryColor: inkColor, fontScale: 100, mobileScale: 75, radius: 8, startupAnimation: true };
+export const defaultCanvasEdgeColor = "#409eff";
 export const uiSettings = computed(() => {
   const raw = settings.value.ui;
   const ui = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
@@ -65,7 +68,7 @@ export const generalSettings = computed(() => {
     canvasCompositingEnabled: general.canvasCompositingEnabled === true,
     canvasEdgeAnimationEnabled: general.canvasEdgeAnimationEnabled !== false,
     canvasEdgeColorMode: general.canvasEdgeColorMode === "none" || general.canvasEdgeColorMode === "custom" ? general.canvasEdgeColorMode : "theme",
-    canvasEdgeColor: typeof general.canvasEdgeColor === "string" && /^#[\da-f]{6}$/i.test(general.canvasEdgeColor) ? general.canvasEdgeColor : defaultUiSettings.primaryColor,
+    canvasEdgeColor: typeof general.canvasEdgeColor === "string" && /^#[\da-f]{6}$/i.test(general.canvasEdgeColor) ? general.canvasEdgeColor : defaultCanvasEdgeColor,
     canvasShortcuts: Object.fromEntries(canvasShortcutFields.map(field => {
       if (savedBindings.has(field.id)) return [field.id, savedBindings.get(field.id)];
       const binding = defaultCanvasShortcuts[field.id];

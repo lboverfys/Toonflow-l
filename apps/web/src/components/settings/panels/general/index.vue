@@ -56,7 +56,7 @@
             :modelValue="generalSettings.canvasEdgeColor"
             colorFormat="hex"
             aria-label="节点连线自选颜色"
-            @change="(value) => updateGeneralSettings({ canvasEdgeColor: value || defaultUiSettings.primaryColor })" />
+            @change="(value) => updateGeneralSettings({ canvasEdgeColor: value || defaultCanvasEdgeColor })" />
         </div>
       </div>
     </section>
@@ -65,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { defaultUiSettings, generalSettings, uiSettings, updateGeneralSettings, updateUiSettings } from "@/stores/settings";
+import { defaultCanvasEdgeColor, generalSettings, uiSettings, updateGeneralSettings, updateUiSettings } from "@/stores/settings";
 import canvasShortcuts from "./canvasShortcuts.vue";
 </script>
 

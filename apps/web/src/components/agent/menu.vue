@@ -185,13 +185,14 @@ async function renameHistory(item: AgentHistory) {
 </script>
 
 <style lang="scss" scoped>
+// 顶部留白与工作区顶栏按钮的垂直中线对齐。
 .agentMenu {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-shrink: 0;
   min-width: 0;
-  padding: 12px 12px 0;
+  padding: 19px 12px 4px 16px;
 
   .backButton {
     flex-shrink: 0;
@@ -209,7 +210,7 @@ async function renameHistory(item: AgentHistory) {
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 600;
 
     .conversationTitle {
       cursor: text;
@@ -221,7 +222,7 @@ async function renameHistory(item: AgentHistory) {
   .menuActions {
     display: flex;
     flex-shrink: 0;
-    gap: 4px;
+    gap: 2px;
 
     .subAgentTrigger {
       position: relative;
@@ -246,11 +247,16 @@ async function renameHistory(item: AgentHistory) {
     }
 
     :deep(.el-button) {
-      width: 28px;
-      height: 28px;
+      width: 30px;
+      height: 30px;
       margin: 0;
       padding: 0;
+      border-radius: var(--ui-radius);
       color: var(--el-text-color-secondary);
+
+      &:hover {
+        color: var(--el-text-color-primary);
+      }
     }
   }
 }

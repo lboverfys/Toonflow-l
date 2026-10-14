@@ -395,6 +395,8 @@ defineExpose({ openSave });
 .assetLibrary {
   width: min(320px, calc(100vw - 30px));
   max-height: calc(100dvh - 140px);
+  border-radius: var(--ui-radius-large);
+  box-shadow: var(--floatingShadow);
 
   :deep(.el-card__body) {
     display: flex;

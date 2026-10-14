@@ -272,12 +272,19 @@ onBeforeUnmount(() => {
 .workspacePresence {
   display: flex;
   align-items: center;
+  gap: 2px;
   max-width: calc(100vw - 30px);
-  padding: 5px 6px;
+  height: 38px;
+  padding: 3px;
   border: 1px solid var(--el-border-color-light);
-  border-radius: var(--el-border-radius-base);
+  border-radius: var(--ui-radius-large);
   background: var(--el-bg-color-overlay);
-  box-shadow: var(--el-box-shadow-lighter);
+  box-shadow: var(--floatingShadow);
+
+  .el-button {
+    border-radius: var(--ui-radius);
+    color: var(--el-text-color-regular);
+  }
 
   .saveWarning {
     display: flex;
@@ -295,8 +302,8 @@ onBeforeUnmount(() => {
   }
 
   .refreshButton {
-    width: 28px;
-    height: 28px;
+    width: 30px;
+    height: 30px;
     margin: 0;
     padding: 0;
     flex-shrink: 0;
@@ -305,9 +312,9 @@ onBeforeUnmount(() => {
   .presenceButton {
     min-width: 0;
     flex-shrink: 1;
-    height: 28px;
+    height: 30px;
     margin: 0;
-    padding: 0 6px;
+    padding: 0 8px;
     font-size: 12px;
 
     &.unavailable {

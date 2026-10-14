@@ -306,6 +306,8 @@ defineExpose({ operate, startDragCopy, busy });
   position: absolute;
   z-index: 6;
   width: max-content;
+  border-radius: var(--ui-radius-large);
+  box-shadow: var(--floatingShadow);
   transform: translate(-50%, -100%);
 
   .toolbarActions {
@@ -316,9 +318,15 @@ defineExpose({ operate, startDragCopy, busy });
     white-space: nowrap;
 
     .el-button {
-      height: 28px;
+      height: 30px;
       margin: 0;
-      padding: 0 8px;
+      padding: 0 10px;
+      border-radius: var(--ui-radius);
+      color: var(--el-text-color-regular);
+
+      &:hover:not(.is-disabled) {
+        color: var(--el-text-color-primary);
+      }
     }
 
     .toolbarDivider {

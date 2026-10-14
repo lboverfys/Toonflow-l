@@ -836,9 +836,10 @@ watch(() => !props.initialSession?.parentFile && !!workspaceStore.pendingAgentMe
           flex-shrink: 0;
           width: 42px;
           height: 42px;
+          border: 1px solid var(--el-border-color-light);
           border-radius: var(--ui-radius-large);
-          background: var(--el-color-primary-light-9);
-          color: var(--el-color-primary);
+          background: var(--el-fill-color-lighter);
+          color: var(--el-text-color-primary);
 
           .welcomeLogo {
             width: 28px;
@@ -865,9 +866,17 @@ watch(() => !props.initialSession?.parentFile && !!workspaceStore.pendingAgentMe
           height: auto;
           margin: 0;
           padding: 12px;
+          border: 1px solid var(--el-border-color-lighter);
+          border-radius: var(--ui-radius-large);
+          background: transparent;
           text-align: left;
           white-space: normal;
           line-height: 1.5;
+
+          &:hover:not(.is-disabled) {
+            border-color: var(--el-border-color);
+            background: var(--el-fill-color-extra-light);
+          }
 
           > span { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; }
           svg { flex-shrink: 0; color: var(--el-text-color-secondary); }
@@ -1058,13 +1067,14 @@ watch(() => !props.initialSession?.parentFile && !!workspaceStore.pendingAgentMe
     position: relative;
     flex-shrink: 0;
     margin: 0 12px 8px;
-    border: 1px solid var(--el-border-color-light);
-    border-radius: calc(var(--ui-radius) * 2.75);
-    background: var(--el-bg-color);
-    box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
+    border: 1px solid var(--el-border-color);
+    border-radius: calc(var(--ui-radius) * 2.25);
+    background: var(--el-bg-color-overlay);
+    box-shadow: var(--floatingShadow);
+    transition: border-color 0.2s;
 
     &:focus-within {
-      border-color: var(--el-color-primary-light-5);
+      border-color: var(--el-border-color-darker);
     }
 
     .senderResizeHandle {
