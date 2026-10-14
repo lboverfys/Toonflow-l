@@ -31,9 +31,9 @@ export function formatSrtTime(seconds: number): string {
 
 export function parseSrt(source: string): SubtitleSegment[] {
   if (typeof source !== "string") throw new Error("SRT 内容必须是字符串");
-  const normalized = source.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
-  if (!normalized) return [];
-  const blocks = normalized.split(/\n[ \t]*\n/);
+  const normalized = source.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  const blocks = normalized.split(/\n[ \t]*\n/).filter((block) => block.trim());
+  if (!blocks.length) return [];
   const segments: SubtitleSegment[] = [];
   let previousStart = 0;
   blocks.forEach((block, index) => {
@@ -57,7 +57,7 @@ export function serializeSrt(segments: SubtitleSegment[]): string {
   if (!Array.isArray(segments)) throw new Error("SRT 分段必须是数组");
   let previousStart = 0;
   const blocks = segments.map((segment, index) => {
-    if (!segment.text.trim()) throw new Error(`第 ${index + 1} 个 SRT 分段文本为空`);
+    if (typeof segment.text !== "string" || !segment.text.trim()) throw new Error(`第 ${index + 1} 个 SRT 分段文本为空`);
     if (!Number.isFinite(segment.start) || !Number.isFinite(segment.end) || segment.start < 0 || segment.end < 0) throw new Error(`第 ${index + 1} 个 SRT 分段时间无效`);
     if (!(segment.start < segment.end)) throw new Error(`第 ${index + 1} 个 SRT 分段时间范围无效`);
     if (index && segment.start < previousStart) throw new Error("SRT 分段必须按开始时间递增");
