@@ -1,5 +1,5 @@
 import { IntlMessageFormat } from "intl-messageformat";
-import type { MessageDescriptor } from "./index";
+import type { MessageDescriptor } from "./core";
 
 export function messageError(message: MessageDescriptor, options?: ErrorOptions): Error & { i18nMessage: MessageDescriptor } {
   const text = message.values

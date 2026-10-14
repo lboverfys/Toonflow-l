@@ -2623,5 +2623,12 @@
   "Android 暂不支持在文件管理器中定位项目文件，请使用下载或导出保存文件。": "Android belum menyokong pencarian fail projek dalam pengurus fail. Gunakan muat turun atau eksport untuk menyimpan fail.",
   "API Key 已保存，部分模型获取失败：{0}": "API Key disimpan, tetapi gagal mendapatkan beberapa model: {0}",
   "assets 是节点素材目录，请使用其他文件夹名称": "assets ialah folder aset nod, sila gunakan nama folder lain",
-  "TF-Router API Key 已配置完成": "Konfigurasi TF-Router API Key selesai"
+  "TF-Router API Key 已配置完成": "Konfigurasi TF-Router API Key selesai",
+  "请在桌面端或服务器本机管理供应商": "Sila urus penyedia dalam aplikasi desktop atau secara setempat pada mesin pelayan",
+  "剪贴板文件总大小不能超过 100 MB": "Jumlah saiz fail papan klip tidak boleh melebihi 100 MB",
+  "临时对话不存在或已关闭，请重新打开对话": "Perbualan sementara tiada atau telah ditutup. Sila buka semula",
+  "配对设备不能使用 FFmpeg 原始参数或滤镜": "Peranti berpasangan tidak boleh menggunakan argumen atau penapis FFmpeg mentah",
+  "滤镜不在允许范围内，请使用结构化参数与工作区相对路径": "Penapis ini tidak dibenarkan. Gunakan parameter berstruktur dan laluan relatif kepada ruang kerja",
+  "原始参数不在允许范围内，请使用专用方法": "Argumen mentah ini tidak dibenarkan. Gunakan kaedah khusus",
+  "不允许通过媒体清单间接访问文件": "Akses fail tidak langsung melalui manifes media tidak dibenarkan"
 }

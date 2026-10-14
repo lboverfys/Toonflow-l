@@ -4,7 +4,7 @@ import { parse } from "@babel/parser";
 import type { Node } from "@babel/types";
 import { parse as parseSfc } from "@vue/compiler-sfc";
 import { collectMessages } from "./transform";
-import { escapeMessageText } from "./index";
+import { escapeMessageText } from "./core";
 
 const root = resolve(import.meta.dirname, "../../..");
 const catalog = new Map<string, Set<string>>();

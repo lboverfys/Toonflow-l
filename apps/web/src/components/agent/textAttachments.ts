@@ -1,4 +1,4 @@
-import { translate } from "@toonflow/i18n";
+import { translate } from "@toonflow/i18n/core";
 import useWorkspaceFiles from "@/lib/workspaceFiles";
 import type { AgentAttachment } from "./types";
 

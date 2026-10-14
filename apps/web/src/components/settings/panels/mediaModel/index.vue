@@ -41,14 +41,14 @@
 </template>
 
 <script setup lang="ts">
-import axios from "axios";
+import api, { errorMessage } from "@/lib/api";
 import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref, shallowRef, type Component } from "vue";
 import { ElMessage } from "element-plus";
 import { IconPlus, IconSettings, IconEdit, IconTrash, IconDownload } from "@tabler/icons-vue";
 import logoUrl from "@toonflow/assets/logo.svg";
 import type { MediaProvider } from "./types";
 import { settings, saveSettings } from "@/stores/settings";
-import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
+import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeModels";
 import tfAccount from "../../tfAccount.vue";
 
 const { visible = true } = defineProps<{ visible?: boolean }>();
@@ -96,10 +96,10 @@ onBeforeUnmount(() => {
 async function loadProviders() {
   const request = ++loadRequest;
   try {
-    const { data } = await axios.get<{ data: MediaProvider[] }>("/api/providers/media/list");
+    const { data } = await api.get<{ data: MediaProvider[] }>("/api/providers/media/list");
     if (request === loadRequest) providers.value = data.data;
   } catch (error) {
-    if (request === loadRequest) ElMessage.error(axios.isAxiosError(error) ? error.response?.data?.message || error.message : "读取媒体供应商失败");
+    if (request === loadRequest) ElMessage.error(errorMessage(error, "读取媒体供应商失败"));
   } finally {
     if (request === loadRequest) loaded.value = true;
   }
@@ -122,15 +122,15 @@ async function fetchModels(provider: MediaProvider) {
   if (fetchingFile.value || deletingFile.value || !provider.modelsUrl || !provider.revision || provider.loadError) return;
   fetchingFile.value = provider.fileName;
   try {
-    const { data } = await axios.post<{ code: number; data: MediaProvider; message: string }>("/api/providers/media/models", {
+    const { data } = await api.post<{ code: number; data: MediaProvider; message: string }>("/api/providers/media/models", {
       fileName: provider.fileName, revision: provider.revision,
     }, { timeout: 35000 });
-    if (data.code !== 200 || !data.data) throw new Error(data.message || "获取模型失败");
+    if (!data.data) throw new Error(data.message || "获取模型失败");
     saveProviderItem(data.data);
     invalidateNodeModels("media");
     ElMessage.success("模型列表已更新");
   } catch (error) {
-    ElMessage.error(axios.isAxiosError(error) ? error.response?.data?.message || error.message : error instanceof Error ? error.message : "获取模型失败，请重试");
+    ElMessage.error(errorMessage(error, "获取模型失败，请重试"));
   } finally { fetchingFile.value = ""; }
 }
 
@@ -139,7 +139,7 @@ async function deleteProvider(provider: MediaProvider) {
   deletingFile.value = provider.fileName;
   let deleted = false;
   try {
-    await axios.delete("/api/providers/media/delete", { data: { fileName: provider.fileName, revision: provider.revision } });
+    await api.delete("/api/providers/media/delete", { data: { fileName: provider.fileName, revision: provider.revision } });
     deleted = true;
     loadRequest++;
     invalidateNodeModels("media");
@@ -152,7 +152,7 @@ async function deleteProvider(provider: MediaProvider) {
       return { mediaProviderConfigs: current };
     });
   } catch (error) {
-    const message = axios.isAxiosError(error) ? error.response?.data?.message || error.message : error instanceof Error ? error.message : "删除失败，请重试";
+    const message = errorMessage(error, "删除失败，请重试");
     ElMessage.error(deleted ? `供应商已删除，连接配置未清理：${message}` : message);
   } finally { deletingFile.value = ""; }
 }

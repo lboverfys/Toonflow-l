@@ -1,8 +1,7 @@
 import logger from "morgan";
 import express from "express";
-import cors from "cors";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { basename, resolve, sep } from "node:path";
 import { readFile } from "@toonflow/file";
 import { mediaProviders } from "@toonflow/providers";
 import type { Request, Response, NextFunction } from "express";
@@ -26,6 +25,7 @@ export async function createApp({
   skillsRoot,
   agentsRoot,
   pluginRevision,
+  allowedHosts: hostnames,
 }: {
   webRoot: string;
   appVersion?: string;
@@ -37,12 +37,16 @@ export async function createApp({
   skillsRoot?: string;
   agentsRoot?: string;
   pluginRevision?: string;
+  allowedHosts?: string[];
 }) {
   // conf 由下方的路由动态加载，必须先确定整个进程共用的数据目录。
   if (dataDirectory) process.env.TOONFLOW_DATA_DIR = resolve(dataDirectory);
   const { default: conf } = await import("@/utils/conf");
-  setLocaleFallback(() => normalizeLocale((conf.get("settings", {}).ui as { language?: unknown } | undefined)?.language)
-    ?? detectLocale([Intl.DateTimeFormat().resolvedOptions().locale]));
+  const systemLocale = detectLocale([Intl.DateTimeFormat().resolvedOptions().locale]);
+  const readLocale = () => normalizeLocale((conf.get("settings", {}).ui as { language?: unknown } | undefined)?.language) ?? systemLocale;
+  let fallbackLocale = readLocale();
+  conf.onDidChange("settings", () => { fallbackLocale = readLocale(); });
+  setLocaleFallback(() => fallbackLocale);
   if (dataDirectory && toolsRoot)
     await initializePlugins(resolve(dataDirectory, "tools"), toolsRoot, /^[a-z][a-zA-Z0-9]*\.tool\.js$/, pluginRevision);
   if (dataDirectory && nodesRoot) await initializePlugins(resolve(dataDirectory, "nodes"), nodesRoot, /^[a-z][a-zA-Z0-9]*\.umd\.js$/, pluginRevision);
@@ -78,12 +82,19 @@ export async function createApp({
     await buildRoute();
     app.use(logger("dev"));
   }
-  app.use(cors());
+  const { sameOriginOnly, allowedHosts } = await import("@/lib/middleware");
   app.use(languageRequest);
+  if (hostnames) app.use(allowedHosts(hostnames));
+  app.use(sameOriginOnly);
   app.use("/a2a", express.json({ limit: "2mb" }));
   app.use(["/api/workspaces/files/write", "/api/assets/save"], express.raw({ type: "application/octet-stream", limit: "100mb" }));
-  app.use(express.json({ limit: "100mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "100mb" }));
+  // ACT: 源码、Base64 安装包、画布快照和含媒体的对话保留原上限，其余 JSON 限制为 10 MB。
+  app.use([
+    "/api/tools/install", "/api/nodes/install", "/api/ext/install", "/api/skills/install", "/api/agents/install",
+    "/api/skills/save", "/api/agents/save", "/api/workspaces/canvas/save", "/api/workspaces/canvas/recovery/save",
+    "/api/ai/generate", "/api/providers/debug/run", "/api/agent", "/api/singleAgent/toolResult", "/api/mcp/control/result",
+  ], express.json({ limit: "100mb" }));
+  app.use(express.json({ limit: "10mb" }));
   app.use("/api/desktop", desktopRequest);
 
   const { default: initializeProviderModels } = await import("@/utils/ai/initialize");
@@ -103,7 +114,10 @@ export async function createApp({
   }));
   const { createA2aRouter } = await import("@/agent/a2a");
   app.use("/a2a", createA2aRouter());
-  app.use(express.static(webRoot));
+  const assetsRoot = resolve(webRoot, "assets") + sep;
+  app.use(express.static(webRoot, { setHeaders(res, path) {
+    if (path.startsWith(assetsRoot) && /-[\w-]{8,}\.[\w]+$/.test(basename(path))) res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  } }));
 
   // 错误处理
   app.use((err: Error & { status?: number }, request: Request, response: Response, next: NextFunction) => {

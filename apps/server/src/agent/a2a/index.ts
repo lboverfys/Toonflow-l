@@ -11,7 +11,10 @@ import { authenticateA2a, getA2aSettings, getA2aSignal, getA2aUrl, resolveA2aWor
 
 export function createA2aRouter() {
   const router = Router();
-  const endpoints = new Map<string, { router: Router; card: ReturnType<typeof createTeamAgentCard>; signal: AbortSignal }>();
+  const endpoints = new Map<string, { router: Router; card: ReturnType<typeof createTeamAgentCard>; signal: AbortSignal; collectIdle(): void }>();
+  // ACT: 等待补充输入的上下文空闲 30 分钟后释放；正在执行的任务由自己的取消信号管理。
+  const taskIdleTimeout = 30 * 60_000;
+  setInterval(() => { for (const endpoint of endpoints.values()) endpoint.collectIdle(); }, 60_000).unref();
   router.use("/:name", async (req, res, next) => {
     try {
       if (!getA2aSettings().enabled) { res.sendStatus(404); return; }
@@ -25,7 +28,7 @@ export function createA2aRouter() {
       const card = createTeamAgentCard(team.manifest, `${getA2aUrl(req)}/${name}`);
       if (!endpoint || endpoint.signal !== configurationSignal) {
         // ACT: 任务由 SDK 保存在单进程内存；仅等待补充的协调者额外保留 Pi 上下文，重启后需重新发起任务。
-        const pending = new Map<string, { runner: Awaited<ReturnType<typeof createTeamRunner>>; userId: string }>();
+        const pending = new Map<string, { runner: Awaited<ReturnType<typeof createTeamRunner>>; userId: string; lastUsedAt: number; running: boolean }>();
         const execute = async (request: TeamA2aRequest) => {
           try {
             const signal = AbortSignal.any([request.signal, configurationSignal]);
@@ -49,13 +52,15 @@ export function createA2aRouter() {
                 call: (call, callSignal) => callControl(connection.id, call.name, call.args, callSignal ?? signal, cwd),
               } : undefined;
               const tools = await createAgentTools(cwd, canvas);
-              current = { userId: request.userId, runner: await createTeamRunner({
+              current = { userId: request.userId, lastUsedAt: Date.now(), running: false, runner: await createTeamRunner({
                 name, cwd, tools, canvas, modelRuntime: runtime,
                 model: runtime.getModel(settings.providerId, settings.modelId), thinkingLevel: settings.thinkingLevel,
               }) };
               pending.set(request.taskId, current);
             }
-            const { result } = await current.runner.run(task, signal, text => request.emit({ type: "status", text }), true);
+            current.running = true;
+            const { result } = await current.runner.run(task, signal, text => request.emit({ type: "status", text }), true)
+              .finally(() => { current!.running = false; current!.lastUsedAt = Date.now(); });
             signal.throwIfAborted();
             if (result.status === "inputRequired") return { status: "inputRequired" as const, text: result.result };
             pending.delete(request.taskId);
@@ -65,7 +70,9 @@ export function createA2aRouter() {
             })] };
           } catch (error) { pending.delete(request.taskId); throw error; }
         };
-        endpoint = { card, signal: configurationSignal, router: createTeamA2aRouter({
+        endpoint = { card, signal: configurationSignal, collectIdle() {
+          for (const [id, task] of pending) if (!task.running && Date.now() - task.lastUsedAt > taskIdleTimeout) pending.delete(id);
+        }, router: createTeamA2aRouter({
           card, authenticate: authenticateA2a, execute,
           onCancel: taskId => { pending.delete(taskId); },
         }) };

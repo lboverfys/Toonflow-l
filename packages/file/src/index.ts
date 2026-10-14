@@ -151,7 +151,7 @@ export async function writeAtomic(path: string, content: string | Uint8Array, op
     try {
       const handle = await promises.open(temporary, "wx", options.mode ?? 0o600);
       created = true;
-      try { await handle.writeFile(content); }
+      try { await handle.writeFile(content); await handle.sync(); }
       catch (error) { failed = true; throw error; }
       finally {
         await handle.close().catch(error => {
@@ -159,6 +159,7 @@ export async function writeAtomic(path: string, content: string | Uint8Array, op
           console.warn(`临时文件关闭失败：${temporary}`, error);
         });
       }
+      // ACT: Windows 不支持目录 fsync；文件内容已刷盘，改名的持久化仍依赖文件系统日志。
       if (options.exclusive) {
         if (process.platform === "android") require("./android.ts").renameExclusive(temporary, path);
         else await promises.link(temporary, path);
@@ -182,7 +183,7 @@ export function writeAtomicSync(path: string, content: string | Uint8Array, opti
     try {
       const fd = native.openSync(temporary, "wx", options.mode ?? 0o600);
       created = true;
-      try { native.writeFileSync(fd, content); }
+      try { native.writeFileSync(fd, content); native.fsyncSync(fd); }
       catch (error) { failed = true; throw error; }
       finally {
         try { native.closeSync(fd); }
@@ -195,6 +196,7 @@ export function writeAtomicSync(path: string, content: string | Uint8Array, opti
         if (process.platform === "android") require("./android.ts").renameExclusive(temporary, path);
         else native.linkSync(temporary, path);
       }
+      // ACT: Windows 不支持目录 fsync；文件内容已刷盘，改名的持久化仍依赖文件系统日志。
       else stubborn.retry.renameSync(retryOptions)(temporary, path);
     } finally {
       try { if (created) native.unlinkSync(temporary); }

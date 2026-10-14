@@ -3,15 +3,12 @@ import { realpath, stat } from "@toonflow/file";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import conf from "@/utils/conf";
 import { getMobileLinkConfig, isMobileLinkRequest } from "@/utils/mobileLink";
+import { isLocalSocket, isLocalHost, isSameOrigin } from "@/lib/desktop";
 
 export function isLocalWorkspaceRequest(req: Request) {
   if (isMobileLinkRequest(req)) return false;
-  const localAddress = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress ?? "") && req.get("x-toonflow-local-client") !== "0";
-  const localHost = ["localhost", "127.0.0.1", "[::1]"].includes(req.hostname);
-  const origin = req.get("origin");
-  const localOrigin = `${req.protocol}://${req.get("host")}`;
-  const sameOrigin = origin === undefined ? req.get("referer")?.startsWith(`${localOrigin}/`) : origin === localOrigin;
-  return localAddress && localHost && sameOrigin && req.get("x-toonflow-workspace") === "1";
+  return isLocalSocket(req) && req.get("x-toonflow-local-client") !== "0" && isLocalHost(req)
+    && isSameOrigin(req) && req.get("x-toonflow-workspace") === "1";
 }
 
 export async function resolveWorkspace(req: Request, path: string) {

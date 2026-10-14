@@ -1,8 +1,8 @@
-import axios from "axios";
-import { normalizeLocale } from "@toonflow/i18n";
+import api from "@/lib/api";
+import { normalizeLocale } from "@toonflow/i18n/core";
 import { computed, nextTick, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
-import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
+import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeModels";
 import { canvasShortcutFields, defaultCanvasShortcuts, getShortcutBindings, isShortcutAllowed, normalizeShortcut, type CanvasShortcuts } from "@/lib/canvasShortcuts";
 import "element-plus/es/components/message/style/css";
 
@@ -106,9 +106,9 @@ export const modelChoices = computed(() => customProviders.value.flatMap(provide
 
 export async function loadSettings() {
   if (settingsReady) return;
-  const { data } = await axios.get("/api/settings/get", { headers: { "Cache-Control": "no-cache", "x-toonflow-workspace": "1" } });
+  const { data } = await api.get("/api/settings/get", { headers: { "Cache-Control": "no-cache" } });
   if (settingsReady) return;
-  if (data.code !== 200 || !data.data || typeof data.data !== "object" || Array.isArray(data.data)) {
+  if (!data.data || typeof data.data !== "object" || Array.isArray(data.data)) {
     throw new Error("读取设置失败");
   }
   settings.value = data.data;
@@ -128,10 +128,9 @@ export function saveSettings(update?: (current: Record<string, unknown>) => Reco
     if (!update) queuedAutoSave = undefined;
     const patch = update?.(settings.value);
     if (update && !patch) return false;
-    const { data } = await axios.put<{ code: number; data: { customProviders?: CustomProvider[]; mediaProvider?: { id: string }; modelRefreshErrors?: string[] } | null }>(
-      "/api/settings/save", { settings: { ...settings.value, ...patch } }, { headers: { "x-toonflow-workspace": "1" } },
+    const { data } = await api.put<{ code: number; data: { customProviders?: CustomProvider[]; mediaProvider?: { id: string }; modelRefreshErrors?: string[] } | null }>(
+      "/api/settings/save", { settings: { ...settings.value, ...patch } },
     );
-    if (data.code !== 200) throw new Error("保存设置失败");
     lastSaveError = undefined;
     const providers = data.data?.customProviders;
     if ((patch && Object.hasOwn(patch, "customProviders")) || providers) invalidateNodeModels("language");

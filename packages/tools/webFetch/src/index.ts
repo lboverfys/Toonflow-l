@@ -1,10 +1,15 @@
 import { TextDecoder } from "node:util";
+import { request, type IncomingMessage } from "node:http";
+import { request as requestSecure } from "node:https";
+import { Readable } from "node:stream";
 import { z } from "zod";
+import { resolveWebAddresses } from "@toonflow/tools-scaffold/network";
 import type { ToolDefinition, ToolPlugin } from "@toonflow/tools-scaffold/runtime";
 
 const configSchema = z.object({
   timeoutMs: z.number().int().min(1000).max(60000).default(20000),
   maxChars: z.number().int().min(1000).max(100000).default(40000),
+  allowPrivateNetwork: z.boolean().default(false),
 }).strict();
 const fetchSchema = z.object({ url: z.string().trim().min(1).max(8192).describe("公开 HTTP(S) 网页地址") }).strict();
 
@@ -16,15 +21,44 @@ function parseUrl(value: string, base?: URL) {
   return url;
 }
 
-async function fetchText(value: string, signal: AbortSignal) {
+async function requestPublicPage(url: URL, signal: AbortSignal, headers: Record<string, string>) {
+  const [address] = await resolveWebAddresses(url, signal);
+  const connection = new URL(url);
+  connection.hostname = address.family === 6 ? `[${address.address}]` : address.address;
+  return new Promise<Response>((resolve, reject) => {
+    let incoming: IncomingMessage | undefined;
+    // ACT: 固定校验后的 IP，Host 与 TLS 证书仍使用原域名，避免连接时再次解析 DNS。
+    const outgoing = (url.protocol === "https:" ? requestSecure : request)(connection, {
+      method: "GET", agent: false, servername: url.hostname.replace(/^\[|\]$/g, ""), headers: { ...headers, Host: url.host, "accept-encoding": "identity" },
+    });
+    const abort = () => { outgoing.destroy(); incoming?.destroy(); reject(signal.reason); };
+    const cleanup = () => signal.removeEventListener("abort", abort);
+    signal.addEventListener("abort", abort, { once: true });
+    outgoing.once("error", error => { cleanup(); reject(error); });
+    outgoing.once("response", response => {
+      incoming = response;
+      incoming.once("close", cleanup);
+      if (signal.aborted) { incoming.destroy(); abort(); return; }
+      const responseHeaders = new Headers();
+      for (const [name, value] of Object.entries(incoming.headers)) {
+        if (Array.isArray(value)) value.forEach(item => responseHeaders.append(name, item));
+        else if (value !== undefined) responseHeaders.set(name, value);
+      }
+      const status = incoming.statusCode!;
+      const body = [204, 205, 304].includes(status) ? null : Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
+      if (!body) incoming.resume();
+      resolve(new Response(body, { status, headers: responseHeaders }));
+    });
+    if (signal.aborted) abort();
+    else outgoing.end();
+  });
+}
+
+async function fetchText(value: string, signal: AbortSignal, allowPrivateNetwork: boolean) {
   let url = parseUrl(value);
   for (let redirects = 0; ; redirects++) {
-    // ACT: 交给运行环境处理 DNS/代理以兼容 Fake-IP；本工具不提供内网隔离，需由部署环境限制网络边界。
-    const response = await fetch(url, {
-      redirect: "manual",
-      signal,
-      headers: { "user-agent": "Toonflow/2.0", accept: "text/html, text/plain, application/json, application/xml;q=0.9, */*;q=0.5" },
-    });
+    const headers = { "user-agent": "Toonflow/2.0", accept: "text/html, text/plain, application/json, application/xml;q=0.9, */*;q=0.5" };
+    const response = allowPrivateNetwork ? await fetch(url, { redirect: "manual", signal, headers }) : await requestPublicPage(url, signal, headers);
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       await response.body?.cancel();
       if (redirects >= 5) throw new Error("网页重定向超过 5 次");
@@ -104,7 +138,7 @@ const plugin: ToolPlugin = {
       async execute(_id, params, signal) {
         const { url } = fetchSchema.parse(params);
         const timeout = AbortSignal.timeout(config.timeoutMs);
-        const result = await fetchText(url, signal ? AbortSignal.any([signal, timeout]) : timeout);
+        const result = await fetchText(url, signal ? AbortSignal.any([signal, timeout]) : timeout, config.allowPrivateNetwork);
         const text = result.html ? htmlText(result.content) : result.content;
         const truncated = result.truncated || text.length > config.maxChars;
         return {

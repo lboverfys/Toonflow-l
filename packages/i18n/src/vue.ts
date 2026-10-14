@@ -1,7 +1,7 @@
 import { shallowRef } from "vue";
-import * as core from "./index";
-export { supportedLocales, normalizeLocale, detectLocale, msg } from "./index";
-export type { Locale, MessageDescriptor } from "./index";
+import * as core from "./core";
+export { supportedLocales, normalizeLocale, detectLocale, msg } from "./core";
+export type { Locale, MessageDescriptor } from "./core";
 
 export const locale = shallowRef<core.Locale>(core.getLocale());
 core.subscribeLocale(value => { locale.value = value; });

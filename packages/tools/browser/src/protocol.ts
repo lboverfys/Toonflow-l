@@ -9,6 +9,7 @@ const ref = z.string().min(1).max(100);
 
 export const browserConfigSchema = z.strictObject({
   executablePath: z.string().trim().max(4096).default(""),
+  allowPrivateNetwork: z.boolean().default(false),
 });
 
 export const browserActionSchema = z.discriminatedUnion("action", [

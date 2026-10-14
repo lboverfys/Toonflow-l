@@ -1,161 +1,164 @@
 <template>
   <div class="agentConversation">
-    <div class="messageViewport t-chat t-chat--normal">
-      <div ref="messageList" class="messageList t-chat__list" role="region" aria-label="对话消息" tabindex="0">
-        <chat-item v-if="!messages.length && !disabled" role="assistant" variant="text">
-          <template #content>
-            <section class="welcomeMessage" aria-label="开始新对话">
-              <div class="welcomeHeader">
-                <span class="welcomeIcon" aria-hidden="true"><span class="welcomeLogo" :style="{ maskImage: `url(${logoUrl})` }" /></span>
-                <div>
-                  <p class="welcomeLabel">你好，我是 Toonflow 助手</p>
-                  <h3>从一个想法开始</h3>
+    <tdesignProvider>
+      <div class="messageViewport t-chat t-chat--normal">
+        <div ref="messageList" class="messageList t-chat__list" role="region" aria-label="对话消息" tabindex="0">
+          <chat-item v-if="!messages.length && !disabled" role="assistant" variant="text">
+            <template #content>
+              <section class="welcomeMessage" aria-label="开始新对话">
+                <div class="welcomeHeader">
+                  <span class="welcomeIcon" aria-hidden="true"><span class="welcomeLogo" :style="{ maskImage: `url(${logoUrl})` }" /></span>
+                  <div>
+                    <p class="welcomeLabel">你好，我是 Toonflow 助手</p>
+                    <h3>从一个想法开始</h3>
+                  </div>
                 </div>
-              </div>
-              <p class="welcomeDescription">聊聊你的故事、画面或镜头，让我们一起把想法落到画布上。</p>
-              <div class="welcomeSuggestions">
-                <el-button v-for="item in welcomeSuggestions" :key="item.label" class="welcomeSuggestion" text bg :disabled="locked" :aria-label="`填入提示：${item.label}`" @click="fillPrompt(item.prompt)">
-                  <component :is="item.icon" :size="19" aria-hidden="true" />
-                  <span class="suggestionContent"><strong>{{ item.label }}</strong><span>{{ item.description }}</span></span>
-                  <icon-arrow-up-right class="suggestionArrow" :size="15" aria-hidden="true" />
-                </el-button>
-              </div>
-              <p class="welcomeHint">点击填入提示，也可以直接输入，或粘贴图片、视频。</p>
-            </section>
-          </template>
-        </chat-item>
-        <div class="messageSpace" :style="{ height: `${messageVirtualizer.getTotalSize()}px` }">
-          <el-button v-if="before" class="earlierMessages" text :loading="earlierLoading" @click="loadEarlierMessages">加载更早的消息</el-button>
-          <div
-            v-for="{ item, row } in visibleMessages"
-            :key="item.id"
-            :ref="measureMessage"
-            :data-index="row.index"
-            :data-message-id="item.id"
-            :data-live-message="item.streaming || item.id === browserMessages.liveMessageId || undefined"
-            class="messageRow"
-            :style="{ transform: `translateY(${row.start}px)` }"
-            :class="{ userMessage: item.role === 'user', editingMessage: editingId === item.id }">
-            <chat-item :role="item.role" :variant="item.role === 'user' ? 'base' : 'text'" :textLoading="!!item.streaming && !compacting && !item.parts?.some(part => part.type === 'tool' || part.content)" animation="moving" @vue:updated="measureMessage($event.el?.parentElement ?? null)">
-              <template #content>
-                <div class="messageContent">
-                  <div v-if="item.report" class="reportHeader"><icon-users-group :size="14" />{{ item.report.name }} 上报</div>
-                  <template v-for="part in item.parts" :key="part.id">
-                    <chat-reasoning v-if="part.type === 'thinking' && part.content" class="messageReasoning" :collapsed="part.collapsed ?? true" expandIconPlacement="left" @update:collapsed="part.collapsed = $event">
-                      <template #header>
-                        <span class="reasoningHeader">
-                          <icon-atom :size="14" />
-                          <span>思考</span>
-                          <span v-if="part.duration !== undefined" class="thinkingDuration">{{ part.duration.toFixed(1) }} 秒</span>
-                        </span>
-                      </template>
-                      <messageMarkdown v-if="!(part.collapsed ?? true)" :content="part.content" :streaming="!!item.streaming" :directory="directory" />
-                    </chat-reasoning>
-                    <toolMessage v-else-if="part.type === 'tool' && !isBrowserTool(part.tool)" v-model:collapsed="part.collapsed" :tool="part.tool" :directory="directory" @copy="copyMessage" />
-                    <messageMarkdown v-else-if="part.type === 'text' && part.content" :content="part.content" :streaming="!!item.streaming" :directory="directory" />
-                  </template>
-                  <attachmentList v-if="item.attachments?.length" :attachments="item.attachments" :directory="directory" />
-                  <div v-if="item.role === 'user'" class="messageText"><mentionContent :content="item.content" :mentions="item.mentions" :directory="directory" /></div>
-                  <div v-if="item.error" class="messageError" role="alert">{{ item.error }}</div>
+                <p class="welcomeDescription">聊聊你的故事、画面或镜头，让我们一起把想法落到画布上。</p>
+                <div class="welcomeSuggestions">
+                  <el-button v-for="item in welcomeSuggestions" :key="item.label" class="welcomeSuggestion" text bg :disabled="locked" :aria-label="`填入提示：${item.label}`" @click="fillPrompt(item.prompt)">
+                    <component :is="item.icon" :size="19" aria-hidden="true" />
+                    <span class="suggestionContent"><strong>{{ item.label }}</strong><span>{{ item.description }}</span></span>
+                    <icon-arrow-up-right class="suggestionArrow" :size="15" aria-hidden="true" />
+                  </el-button>
                 </div>
-              </template>
-            </chat-item>
-            <div v-if="!item.streaming" class="messageActions">
-              <template v-if="editingId === item.id">
-                <el-button text size="small" :disabled="busy || deletingId !== undefined" @click="cancelEdit"><icon-x :size="14" />取消</el-button>
-                <span class="editingHint">正在下方编辑</span>
-              </template>
-              <template v-else>
-                <el-button v-if="item.content" class="messageAction" text circle aria-label="复制消息" title="复制消息" @click="copyMessage(mentionPlainText(item.content, item.mentions))"><icon-copy :size="14" /></el-button>
-                <template v-if="item.role === 'user'">
-                  <el-button class="messageAction" text circle :disabled="locked || remoteRunning" aria-label="编辑消息" title="编辑消息" @click="editMessage(item)"><icon-pencil :size="14" /></el-button>
+                <p class="welcomeHint">点击填入提示，也可以直接输入，或粘贴图片、视频。</p>
+              </section>
+            </template>
+          </chat-item>
+          <div class="messageSpace" :style="{ height: `${messageVirtualizer.getTotalSize()}px` }">
+            <el-button v-if="before" class="earlierMessages" text :loading="earlierLoading" @click="loadEarlierMessages">加载更早的消息</el-button>
+            <div
+              v-for="{ item, row } in visibleMessages"
+              :key="item.id"
+              :ref="measureMessage"
+              :data-index="row.index"
+              :data-message-id="item.id"
+              :data-live-message="item.streaming || item.id === browserMessages.liveMessageId || undefined"
+              class="messageRow"
+              :style="{ transform: `translateY(${row.start}px)` }"
+              :class="{ userMessage: item.role === 'user', editingMessage: editingId === item.id }">
+              <chat-item :role="item.role" :variant="item.role === 'user' ? 'base' : 'text'" :textLoading="!!item.streaming && !compacting && !item.parts?.some(part => part.type === 'tool' || part.content)" animation="moving" @vue:updated="measureMessage($event.el?.parentElement ?? null)">
+                <template #content>
+                  <div class="messageContent">
+                    <div v-if="item.report" class="reportHeader"><icon-users-group :size="14" />{{ item.report.name }} 上报</div>
+                    <template v-for="part in item.parts" :key="part.id">
+                      <chat-reasoning v-if="part.type === 'thinking' && part.content" class="messageReasoning" :collapsed="part.collapsed ?? true" expandIconPlacement="left" @update:collapsed="part.collapsed = $event">
+                        <template #header>
+                          <span class="reasoningHeader">
+                            <icon-atom :size="14" />
+                            <span>思考</span>
+                            <span v-if="part.duration !== undefined" class="thinkingDuration">{{ part.duration.toFixed(1) }} 秒</span>
+                          </span>
+                        </template>
+                        <messageMarkdown v-if="!(part.collapsed ?? true)" :content="part.content" :streaming="!!item.streaming" :directory="directory" />
+                      </chat-reasoning>
+                      <toolMessage v-else-if="part.type === 'tool' && !isBrowserTool(part.tool)" v-model:collapsed="part.collapsed" :tool="part.tool" :directory="directory" @copy="copyMessage" />
+                      <messageMarkdown v-else-if="part.type === 'text' && part.content" :content="part.content" :streaming="!!item.streaming" :directory="directory" />
+                    </template>
+                    <attachmentList v-if="item.attachments?.length" :attachments="item.attachments" :directory="directory" />
+                    <div v-if="item.role === 'user'" class="messageText"><mentionContent :content="item.content" :mentions="item.mentions" :directory="directory" /></div>
+                    <div v-if="item.error" class="messageError" role="alert">{{ item.error }}</div>
+                  </div>
                 </template>
-                <el-button v-if="!item.report" class="messageAction" text circle :loading="deletingId === item.id" :disabled="locked || remoteRunning" aria-label="删除消息" title="删除消息" @click="deleteMessage(item)"><icon-trash v-if="deletingId !== item.id" :size="14" /></el-button>
-              </template>
+              </chat-item>
+              <div v-if="!item.streaming" class="messageActions">
+                <template v-if="editingId === item.id">
+                  <el-button text size="small" :disabled="busy || deletingId !== undefined" @click="cancelEdit"><icon-x :size="14" />取消</el-button>
+                  <span class="editingHint">正在下方编辑</span>
+                </template>
+                <template v-else>
+                  <el-button v-if="item.content" class="messageAction" text circle aria-label="复制消息" title="复制消息" @click="copyMessage(mentionPlainText(item.content, item.mentions))"><icon-copy :size="14" /></el-button>
+                  <template v-if="item.role === 'user'">
+                    <el-button class="messageAction" text circle :disabled="locked || remoteRunning" aria-label="编辑消息" title="编辑消息" @click="editMessage(item)"><icon-pencil :size="14" /></el-button>
+                  </template>
+                  <el-button v-if="!item.report" class="messageAction" text circle :loading="deletingId === item.id" :disabled="locked || remoteRunning" aria-label="删除消息" title="删除消息" @click="deleteMessage(item)"><icon-trash v-if="deletingId !== item.id" :size="14" /></el-button>
+                </template>
+              </div>
+              <browserPanel v-if="browserMessages.tools.has(item.id)" class="browserPreview" :tools="browserMessages.tools.get(item.id)!" :directory="directory" :active="active" :live="item.id === browserMessages.liveMessageId" />
             </div>
-            <browserPanel v-if="browserMessages.tools.has(item.id)" class="browserPreview" :tools="browserMessages.tools.get(item.id)!" :directory="directory" :active="active" :live="item.id === browserMessages.liveMessageId" />
           </div>
         </div>
+        <el-button v-if="messages.length && !atLatestMessage" class="scrollBottom" circle aria-label="回到最新消息" title="回到最新消息" @click="messageVirtualizer.scrollToEnd()"><icon-arrow-down :size="18" /></el-button>
       </div>
-      <el-button v-if="messages.length && !atLatestMessage" class="scrollBottom" circle aria-label="回到最新消息" title="回到最新消息" @click="messageVirtualizer.scrollToEnd()"><icon-arrow-down :size="18" /></el-button>
-    </div>
-    <div v-if="compacting" class="compactionStatus" role="status">
-      <el-icon class="is-loading" aria-hidden="true"><icon-loader-2 :size="14" /></el-icon>
-      <span>正在压缩上下文…</span>
-    </div>
-    <div class="messageInput">
-      <div v-if="editingId" class="editingBanner"><span>编辑消息</span><el-button text size="small" :disabled="busy" @click="cancelEdit">取消</el-button></div>
-      <div
-        class="senderResizeHandle"
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="调整输入框高度"
-        aria-valuemin="44"
-        :aria-valuemax="senderMaxHeight"
-        :aria-valuenow="senderHeight"
-        tabindex="0"
-        title="拖动调整输入框高度"
-        @focus="senderHeight = sender?.chatElement.rollBox.clientHeight ?? 44"
-        @pointerdown="startSenderResize"
-        @pointermove="moveSenderResize"
-        @pointerup="stopSenderResize"
-        @pointercancel="stopSenderResize"
-        @lostpointercapture="stopSenderResize"
-        @keydown.up.prevent="setSenderHeight((sender?.chatElement.rollBox.clientHeight ?? 44) + 16)"
-        @keydown.down.prevent="setSenderHeight((sender?.chatElement.rollBox.clientHeight ?? 44) - 16)" />
-      <attachmentList v-if="draftAttachments.length" class="draftAttachments" :attachments="draftAttachments" :directory="directory" removable restorable :disabled="locked" @remove="draftAttachments.splice($event, 1)" @restore="restoreTextAttachment" />
-      <div ref="senderElement" class="senderEditor" @keydown.capture="handleSenderKeydown"></div>
-      <teleport v-for="target in draftMentionTargets" :key="target.key" :to="target.element"><mentionThumbnail v-bind="mentionThumbnailProps(target.mention)" :directory="directory"><icon-photo :size="14" /></mentionThumbnail></teleport>
-      <mentionContent ref="draftMentionPreview" :mentions="draftMentions" :directory="directory" removable @remove="removeDraftMention" />
-      <div class="senderActions">
-        <modelPopover v-model="selectedModel" v-model:reasoningEffort="reasoningEffort" :active="active" :disabled="disabled" />
-        <mentionMenu ref="mentionMenuRef" :directory="directory" :active="active" :disabled="locked || !directory" :query="mentionQuery" :editor="senderElement" :currentCanvasId="createCanvasContext?.()?.id" @open="captureMentionPosition" @select="insertMentions" @dismiss="mentionQuery = undefined" />
-        <skillMenu ref="skillMenuRef" :directory="directory" :active="active" :disabled="locked || !directory" :query="skillQuery" :editor="senderElement" @select="selectSkill" @dismiss="skillQuery = undefined" />
-        <el-popover
-          v-model:visible="contextMenuVisible"
-          trigger="click"
-          placement="top"
-          :width="280"
-          :offset="10"
-          :showArrow="false"
-          popperClass="agentContextPopover">
-          <template #reference>
-            <el-button class="contextButton" text circle aria-label="查看上下文用量" title="查看上下文用量">
-              <icon-circle-dashed :size="14" />
-            </el-button>
-          </template>
-          <div class="contextUsage">
-            <div class="contextHeader"><span>上下文用量</span><span class="contextHint">估算</span></div>
-            <template v-if="contextUsage?.tokens != null">
-              <div class="contextTokens">
-                <span>{{ contextUsage.tokens.toLocaleString() }} / {{ contextWindow.toLocaleString() }} tok</span>
-                <span>{{ contextPercent.toFixed(1) }}%</span>
-              </div>
-              <el-progress :percentage="Math.min(100, contextPercent)" :showText="false" />
+      <div v-if="compacting" class="compactionStatus" role="status">
+        <el-icon class="is-loading" aria-hidden="true"><icon-loader-2 :size="14" /></el-icon>
+        <span>正在压缩上下文…</span>
+      </div>
+      <div class="messageInput">
+        <div v-if="editingId" class="editingBanner"><span>编辑消息</span><el-button text size="small" :disabled="busy" @click="cancelEdit">取消</el-button></div>
+        <div
+          class="senderResizeHandle"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="调整输入框高度"
+          aria-valuemin="44"
+          :aria-valuemax="senderMaxHeight"
+          :aria-valuenow="senderHeight"
+          tabindex="0"
+          title="拖动调整输入框高度"
+          @focus="senderHeight = sender?.chatElement.rollBox.clientHeight ?? 44"
+          @pointerdown="startSenderResize"
+          @pointermove="moveSenderResize"
+          @pointerup="stopSenderResize"
+          @pointercancel="stopSenderResize"
+          @lostpointercapture="stopSenderResize"
+          @keydown.up.prevent="setSenderHeight((sender?.chatElement.rollBox.clientHeight ?? 44) + 16)"
+          @keydown.down.prevent="setSenderHeight((sender?.chatElement.rollBox.clientHeight ?? 44) - 16)" />
+        <attachmentList v-if="draftAttachments.length" class="draftAttachments" :attachments="draftAttachments" :directory="directory" removable restorable :disabled="locked" @remove="draftAttachments.splice($event, 1)" @restore="restoreTextAttachment" />
+        <div ref="senderElement" class="senderEditor" @keydown.capture="handleSenderKeydown"></div>
+        <teleport v-for="target in draftMentionTargets" :key="target.key" :to="target.element"><mentionThumbnail v-bind="mentionThumbnailProps(target.mention)" :directory="directory"><icon-photo :size="14" /></mentionThumbnail></teleport>
+        <mentionContent ref="draftMentionPreview" :mentions="draftMentions" :directory="directory" removable @remove="removeDraftMention" />
+        <div class="senderActions">
+          <modelPopover v-model="selectedModel" v-model:reasoningEffort="reasoningEffort" :active="active" :disabled="disabled" />
+          <mentionMenu ref="mentionMenuRef" :directory="directory" :active="active" :disabled="locked || !directory" :query="mentionQuery" :editor="senderElement" :currentCanvasId="createCanvasContext?.()?.id" @open="captureMentionPosition" @select="insertMentions" @dismiss="mentionQuery = undefined" />
+          <skillMenu ref="skillMenuRef" :directory="directory" :active="active" :disabled="locked || !directory" :query="skillQuery" :editor="senderElement" @select="selectSkill" @dismiss="skillQuery = undefined" />
+          <el-popover
+            v-model:visible="contextMenuVisible"
+            trigger="click"
+            placement="top"
+            :width="280"
+            :offset="10"
+            :showArrow="false"
+            popperClass="agentContextPopover">
+            <template #reference>
+              <el-button class="contextButton" text circle aria-label="查看上下文用量" title="查看上下文用量">
+                <icon-circle-dashed :size="14" />
+              </el-button>
             </template>
-            <span v-else class="contextHint">{{ contextUsage ? "等待下一次回复更新用量" : "尚无用量数据" }}</span>
-            <div v-if="stats" class="contextStats">
-              <div class="contextHeader">对话累计用量</div>
-              <div class="contextTokens"><span>输入</span><span>{{ inputTokens.toLocaleString() }} tok</span></div>
-              <div class="contextTokens"><span>输出</span><span>{{ stats.tokens.output.toLocaleString() }} tok</span></div>
-              <div v-if="inputTokens > 0" class="contextTokens"><span>缓存命中</span><span>{{ (stats.tokens.cacheRead / inputTokens * 100).toFixed(1) }}%</span></div>
-              <div v-if="stats.tokensPerSecond !== undefined" class="contextTokens"><span>生成速度</span><span>{{ stats.tokensPerSecond.toFixed(1) }} tok/s</span></div>
+            <div class="contextUsage">
+              <div class="contextHeader"><span>上下文用量</span><span class="contextHint">估算</span></div>
+              <template v-if="contextUsage?.tokens != null">
+                <div class="contextTokens">
+                  <span>{{ contextUsage.tokens.toLocaleString() }} / {{ contextWindow.toLocaleString() }} tok</span>
+                  <span>{{ contextPercent.toFixed(1) }}%</span>
+                </div>
+                <el-progress :percentage="Math.min(100, contextPercent)" :showText="false" />
+              </template>
+              <span v-else class="contextHint">{{ contextUsage ? "等待下一次回复更新用量" : "尚无用量数据" }}</span>
+              <div v-if="stats" class="contextStats">
+                <div class="contextHeader">对话累计用量</div>
+                <div class="contextTokens"><span>输入</span><span>{{ inputTokens.toLocaleString() }} tok</span></div>
+                <div class="contextTokens"><span>输出</span><span>{{ stats.tokens.output.toLocaleString() }} tok</span></div>
+                <div v-if="inputTokens > 0" class="contextTokens"><span>缓存命中</span><span>{{ (stats.tokens.cacheRead / inputTokens * 100).toFixed(1) }}%</span></div>
+                <div v-if="stats.tokensPerSecond !== undefined" class="contextTokens"><span>生成速度</span><span>{{ stats.tokensPerSecond.toFixed(1) }} tok/s</span></div>
+              </div>
             </div>
-          </div>
-        </el-popover>
-        <el-button class="sendButton" type="primary" circle :disabled="!busy && locked" :aria-label="busy ? '停止生成' : editingId ? '重发消息' : '发送消息'" :title="busy ? '停止生成' : editingId ? '重发消息' : '发送消息'" @click="busy ? stopMessage() : submitMessage()">
-          <icon-player-stop-filled v-if="busy" :size="14" />
-          <icon-arrow-up v-else :size="16" />
-        </el-button>
+          </el-popover>
+          <el-button class="sendButton" type="primary" circle :disabled="!busy && locked" :aria-label="busy ? '停止生成' : editingId ? '重发消息' : '发送消息'" :title="busy ? '停止生成' : editingId ? '重发消息' : '发送消息'" @click="busy ? stopMessage() : submitMessage()">
+            <icon-player-stop-filled v-if="busy" :size="14" />
+            <icon-arrow-up v-else :size="16" />
+          </el-button>
+        </div>
       </div>
-    </div>
+    </tdesignProvider>
   </div>
 </template>
 
 <script setup lang="ts">
+import tdesignProvider from "@/components/tdesignProvider.vue";
+import { chatLocale } from "@/lib/i18n";
 import { locale, t, translate } from "@toonflow/i18n/vue";
-import { computed, inject, nextTick, reactive, ref, shallowRef, watch, type ComponentPublicInstance } from "vue";
-import { defaultRangeExtractor, measureElement, observeElementRect, useVirtualizer } from "@tanstack/vue-virtual";
+import { computed, inject, nextTick, reactive, ref, shallowRef, watch } from "vue";
 import axios from "axios";
 import {
   IconArrowUp, IconArrowDown, IconAtom, IconCopy,
@@ -179,8 +182,9 @@ import anonymousData from "@/lib/anonymousData";
 import { modelChoices } from "@/stores/settings";
 import { useWorkspaceStore } from "@/stores/workspace";
 import type { AgentAttachment, AgentConversation, AgentMessage } from "./types";
-import type { AgentEvent, AgentMention, AgentToolCall } from "@toonflow/server/agent/types";
+import type { AgentEvent, AgentMention } from "@toonflow/server/agent/types";
 import { createConversationStream, readAgentEvents } from "./replyStream";
+import { useMessageList } from "./useMessageList";
 import type { CanvasContext } from "@toonflow/tool-canvas/runtime";
 import browserPanel from "@toonflow/tool-browser/panel";
 import { isBrowserTool } from "@toonflow/tool-browser/client";
@@ -214,33 +218,6 @@ async function loadEarlierMessages() {
   } catch (error) { ElMessage.error(error instanceof Error ? error.message : "读取历史消息失败"); }
   finally { earlierLoading.value = false; }
 }
-const browserMessages = computed(() => {
-  const groups = new Map<string, { id: string; tools: AgentToolCall[] }>();
-  let turnId: string | undefined;
-  let liveMessageId: string | undefined;
-  for (const message of messages.value) {
-    if (message.role === "user") {
-      turnId = message.entryId ?? message.id;
-      liveMessageId = undefined;
-      continue;
-    }
-    if (message.replyTo && message.replyTo !== turnId) {
-      turnId = message.replyTo;
-      liveMessageId = undefined;
-    }
-    const tools = message.parts?.flatMap(part => part.type === "tool" && isBrowserTool(part.tool) ? [part.tool] : []);
-    if (!tools?.length) continue;
-    const replyId = turnId ?? message.id;
-    let group = groups.get(replyId);
-    if (!group) { group = { id: message.id, tools: [] }; groups.set(replyId, group); }
-    group.tools.push(...tools);
-    liveMessageId = group.id;
-  }
-  return { tools: new Map([...groups.values()].map(group => [group.id, group.tools])), liveMessageId };
-});
-// 同轮浏览器调用共用该轮首条浏览器消息底部的画面，原始工具记录仍完整保留。
-const displayedMessages = computed(() => messages.value.filter(message => browserMessages.value.tools.has(message.id) || message.role === "user" || message.error || message.report || message.attachments?.length ||
-  !message.parts?.length || message.parts.some(part => part.type !== "tool" || !isBrowserTool(part.tool))));
 const stream = createConversationStream(messages);
 const remoteRunning = ref(props.initialSession?.running ?? false);
 const stats = ref(props.initialSession?.stats);
@@ -255,71 +232,9 @@ const draftMentions = ref<AgentMention[]>([]);
 const draftMentionTargets = shallowRef<{ key: symbol; element: HTMLElement; mention: AgentMention }[]>([]);
 const draftMentionPreview = ref<InstanceType<typeof mentionContent>>();
 let editDraft: { model: AnyTagProps[][]; mentions: AgentMention[]; attachments: AgentAttachment[] } | undefined;
-const messageList = ref<HTMLDivElement>();
-const atLatestMessage = ref(true);
-let messageListInitialized = false;
-let messageScrollOffset = 0;
-const messageKeys = computed(() => displayedMessages.value.map(item => item.id));
-// ACT: 只常驻当前轮的实时画面，历史浏览器消息仍按需挂载，避免长对话累积连接和 DOM。
-const retainedMessages = computed(() => displayedMessages.value.flatMap((item, index) => item.streaming || item.id === editingId.value || item.id === browserMessages.value.liveMessageId ? [index] : []));
-const messageVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(computed(() => {
-  const keys = messageKeys.value;
-  const retained = retainedMessages.value;
-  return {
-    count: keys.length,
-    getScrollElement: () => messageList.value ?? null,
-    getItemKey: (index: number) => keys[index]!,
-    estimateSize: () => 240,
-    overscan: 3,
-      paddingStart: before.value ? 52 : 12,
-    anchorTo: "end" as const,
-    followOnAppend: true,
-    scrollEndThreshold: 48,
-    useAnimationFrameWithResizeObserver: true,
-    useCachedMeasurements: !props.active,
-    // ACT: 实时行读取当前高度，避免延后执行的观察记录覆盖本轮同步测量；历史行仍使用缓存。
-    measureElement: (element, entry, instance) => props.active && element.dataset.liveMessage ? element.offsetHeight : measureElement(element, entry, instance),
-    // ACT: v-show 隐藏时保留视口与行高，避免零尺寸清空正在输入的工具表单。
-    observeElementRect: (instance, onChange) => observeElementRect(instance, rect => { if (rect.height) onChange(rect); }),
-    rangeExtractor: range => [...new Set([...defaultRangeExtractor(range), ...retained])].sort((left, right) => left - right),
-    onChange(instance) {
-      if (!messageListInitialized || !props.active || !messageList.value?.clientHeight) return;
-      atLatestMessage.value = instance.isAtEnd();
-      messageScrollOffset = instance.scrollOffset ?? 0;
-    },
-  };
-}));
-const visibleMessages = computed(() => messageVirtualizer.value.getVirtualItems().map(row => ({ row, item: displayedMessages.value[row.index]! })));
-let messageMeasurePending = false;
-
-function measureMessage(element: Element | ComponentPublicInstance | null) {
-  const instance = messageVirtualizer.value;
-  if (!(element instanceof HTMLDivElement) || !props.active || !atLatestMessage.value || !element.dataset.liveMessage) {
-    instance.measureElement(element instanceof HTMLDivElement ? element : null);
-    return;
-  }
-  const index = instance.indexFromElement(element);
-  const height = element.offsetHeight;
-  const changed = instance.itemSizeCache.get(instance.options.getItemKey(index)) !== height;
-  instance.measureElement(element);
-  // 自动滚动时库会跳过同步测量；在本次 DOM 提交内校正，避免画面随换行先下移再被拉回。
-  instance.resizeItem(index, height);
-  if (!changed || messageMeasurePending) return;
-  messageMeasurePending = true;
-  void nextTick(() => {
-    messageMeasurePending = false;
-    if (props.active && atLatestMessage.value) instance.scrollToEnd();
-  });
-}
-
-watch([() => props.active, messageList], async ([active, element]) => {
-  if (!active || !element) return;
-  await nextTick();
-  if (!props.active) return;
-  if (!messageListInitialized || atLatestMessage.value) messageVirtualizer.value.scrollToEnd();
-  else messageVirtualizer.value.scrollToOffset(messageScrollOffset);
-  messageListInitialized = true;
-}, { immediate: true, flush: "post" });
+const { browserMessages, messageList, atLatestMessage, messageVirtualizer, visibleMessages, measureMessage } = useMessageList(messages, {
+  active: () => props.active, hasEarlier: () => !!before.value, editingId: () => editingId.value,
+});
 let sender: xSender | undefined;
 watch(locale, () => {
   if (!sender) return;

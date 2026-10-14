@@ -61,7 +61,8 @@ window.addEventListener("toonflow:prepare-close", async event => {
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") void flushSettings().catch(error => console.error("设置保存失败：", error)); });
 router.beforeEach(async () => { await flushSettings(); });
 app.provide("nodePreferences", settingsStorage);
-app.onUnmount(registerLanguage());
+const language = registerLanguage();
+app.onUnmount(language.stop);
 const isDesktop = new URLSearchParams(window.location.search).get("desktop") === "1";
 const requiresWebView2Update = isDesktop && /Windows/i.test(navigator.userAgent)
   && [Map.groupBy, URL.canParse, Promise.withResolvers].some(method => typeof method !== "function");
@@ -85,6 +86,7 @@ async function notifyDesktopReady(failed = false) {
   : requiresAndroidWebViewUpdate
   ? Promise.reject(new Error("系统当前使用的 Android System WebView 缺少 Toonflow 所需能力。请更新系统实际使用的 Android System WebView；部分厂商系统需要通过系统更新升级。更新完成后，请完全退出并重新打开 Toonflow。"))
   : loadSettings()).then(async () => {
+  await language.ready();
   app.use(createPinia().use(createPersistedState({ storage: settingsStorage })));
   app.use(router);
   await router.isReady();

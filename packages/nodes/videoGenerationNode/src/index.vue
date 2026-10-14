@@ -73,7 +73,7 @@
             noDataText="请先在设置中添加视频模型"
             @change="rememberPreferences"
             placement="top-start"
-            @visible-change="(visible) => visible && loadModels().catch((error) => showNodeError(error, '模型读取失败'))">
+            @visibleChange="(visible: boolean) => visible && loadModels().catch((error) => showNodeError(error, '模型读取失败'))">
             <template #prefix><icon-sparkles :size="17" /></template>
             <template #label="{ label }"><span class="modelLabel" :title="`${selectedModel?.providerLabel ?? ''} · ${label}`"><span class="providerName">{{ selectedModel?.providerLabel }}</span><span class="modelName">{{ label }}</span></span></template>
             <el-option-group v-for="provider in modelGroups" :key="provider.id" :label="provider.label">
@@ -132,7 +132,9 @@ import { computed, nextTick, onMounted, onScopeDispose, ref, watch, watchEffect 
 import { ElButton, ElCard, ElSelect, ElOption, ElOptionGroup, ElLoading, ElDropdown, ElDropdownMenu, ElDropdownItem, ElInput } from "element-plus";
 import { IconCameraAi, IconSparkles, IconArrowUp, IconPlayerStop, IconTransfer, IconMusic, IconLayersSubtract, IconScissors, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
 import { nodeSkeleton, nodeTools, useNode, z, type NodeMediaModel, type NodeVideoRequest, type NodeHandle, type VideoTaskStatus } from "@toonflow/nodes-scaffold/runtime";
-import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
+import { registerGenerationTools } from "@toonflow/node-shared/generationTools";
+import { useMediaModels } from "@toonflow/node-shared/useMediaModels";
+import { useOutputReplace } from "@toonflow/node-shared/useOutputReplace";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useNodeGeneration, type GenerationTiming } from "@toonflow/node-shared/useNodeGeneration";
 import generationTiming from "@toonflow/node-shared/generationTiming";
@@ -169,9 +171,9 @@ data.value.generateAudio ??= true;
 data.value.ratio ??= "9:16";
 data.value.referenceImageUrlsText ??= "";
 const { refList, referenceMentions, setReferencePreview, removeReference } = useNodeReferences();
-const models = ref<NodeMediaModel[]>([]);
-const modelsLoading = ref(false);
-const uploading = ref(false);
+const { models, modelsLoading, modelGroups, loadModels } = useMediaModels("video", data, () => generating.value || deleting.value, ai.getMediaModels);
+const { uploading, replaceOutput } = useOutputReplace("video", files, () => generating.value || deleting.value,
+  value => { outputs.value.video = { dataType: "VIDEO", value }; });
 const fileInput = ref<HTMLInputElement>();
 let disposed = false;
 const deleting = ref(false);
@@ -182,7 +184,6 @@ let generationController: AbortController | undefined;
 const generationState = useNodeGeneration(outputs, stopGeneration, "已停止本地等待；已提交的视频任务及费用不会因此取消");
 const { generating } = generationState;
 let generation: Promise<void> | undefined;
-let modelsRequest: Promise<void> | undefined;
 const videoTask = ref<VideoTaskStatus | null>(null);
 const taskChecking = ref(true);
 const taskStatusError = ref("");
@@ -259,7 +260,6 @@ watch([selectedModel, () => data.value.duration], ([choice]) => {
   if (!ratioOptions.value.includes(data.value.ratio)) data.value.ratio = ratioOptions.value.includes("9:16") ? "9:16" : ratioOptions.value[0]!;
   if (choice.audio !== "optional") data.value.generateAudio = choice.audio === true;
 }, { flush: "sync" });
-const modelGroups = computed(() => groupNodeModels(models.value));
 const generationPrompt = computed(() =>
   [
     selectedModel.value?.taskRecovery ? data.value.prompt : data.value.prompt.trim(),
@@ -296,47 +296,7 @@ onScopeDispose(() => {
   clearTimeout(taskTimer);
 });
 
-async function replaceOutput(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = "";
-  if (!file || generating.value || deleting.value || uploading.value || disposed) return;
-  if (!file.type.startsWith("video/")) return void showNodeError("请选择视频文件", "视频替换失败");
-  if (!file.size || file.size > 100 * 1024 * 1024) return void showNodeError("视频不能为空且不能超过 100 MB", "视频替换失败");
-  uploading.value = true;
-  try {
-    const workspace = files.getWorkspaceFiles();
-    const url = await files.uploadFile(file);
-    if (disposed) {
-      await workspace.remove(url);
-      return;
-    }
-    // ACT: 保留历史输出文件，避免破坏撤销记录和复制节点的引用。
-    outputs.value.video = { dataType: "VIDEO", value: { url, mimeType: file.type } };
-  } catch (error) {
-    showNodeError(error, "视频替换失败");
-  } finally {
-    uploading.value = false;
-  }
-}
 
-function loadModels() {
-  if (modelsRequest) return modelsRequest;
-  modelsLoading.value = true;
-  modelsRequest = ai.getMediaModels().then((items) => {
-    if (generating.value || deleting.value) return;
-    models.value = items.filter((item) => item.type === "video");
-    // ACT: 只给空配置选默认模型，保留暂时不可用的旧选择及其参数。
-    if (!data.value.model) {
-      const first = models.value[0];
-      data.value.model = first ? JSON.stringify([first.providerId, first.modelId]) : "";
-    }
-  }).finally(() => {
-    modelsLoading.value = false;
-    modelsRequest = undefined;
-  });
-  return modelsRequest;
-}
 
 async function startGeneration() {
   await refreshVideoTask();
@@ -503,15 +463,14 @@ function getConfig() {
   };
 }
 
-nodeTools.register({
-  name: "getConfig",
-  description: "读取此视频生成节点的当前配置、可选视频模型能力、通用比例及适合当前引用的模式，不含密钥；时长与分辨率须符合 durationResolutionMap",
-  parameters: z.strictObject({}),
-  async execute(_args, { signal }) {
-    signal?.throwIfAborted();
-    await loadModels();
-    signal?.throwIfAborted();
-    return getConfig();
+registerGenerationTools({
+  configDescription: "读取此视频生成节点的当前配置、可选视频模型能力、通用比例及适合当前引用的模式，不含密钥；时长与分辨率须符合 durationResolutionMap",
+  promptDescription: "修改此节点的视频生成提示词，支持 {{ref 1}} 等参考标记；只修改提示词，不启动生成",
+  loadModels, getConfig,
+  setPrompt(value) {
+    if (deleting.value) throw new Error("节点正在删除，请稍后修改");
+    data.value.prompt = value;
+    data.value.promptModel = value.split("\n").map((text) => [{ type: "Write", text }]);
   },
 });
 
@@ -564,17 +523,7 @@ nodeTools.register({
   },
 });
 
-nodeTools.register({
-  name: "setPrompt",
-  description: "修改此节点的视频生成提示词，支持 {{ref 1}} 等参考标记；只修改提示词，不启动生成",
-  parameters: z.strictObject({ prompt: z.string() }),
-  execute({ prompt: value }) {
-    if (deleting.value) throw new Error("节点正在删除，请稍后修改");
-    data.value.prompt = value;
-    data.value.promptModel = value.split("\n").map((text) => [{ type: "Write", text }]);
-    return { prompt: value };
-  },
-});
+
 
 nodeTools.register({
   name: "generateVideo",

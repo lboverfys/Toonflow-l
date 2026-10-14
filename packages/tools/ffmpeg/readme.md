@@ -24,13 +24,15 @@
 
 也可使用 `operation: { "method": "save", "args": ["assets/output.mp4"] }`，或者原生的 `screenshots`、`concat` 等操作。查询可用编码器、编解码器、格式、滤镜时，省略 `steps`，将 `operation.method` 设为 `availableEncoders`、`availableCodecs`、`availableFormats` 或 `availableFilters`。
 
-`options` 对应宿主支持的 fluent 构造选项：`source`、`cwd`、`niceness`、`priority`、`stdoutLines`、`timeout`。`steps` 支持宿主已有的全部配置方法和别名；`args` 中的 JSON 值保持原样，`undefinedArgs` 可指定要传入 `undefined` 的位置。
+`options` 对应宿主支持的 fluent 构造选项：`source`、`cwd`、`niceness`、`priority`、`stdoutLines`、`timeout`。`steps` 沿用宿主的配置方法和别名；参数须通过下述允许列表与路径校验，`undefinedArgs` 可指定要传入 `undefined` 的位置。
 
 ## 原生能力与执行
 
-- 不另设 FFmpeg 参数白名单，不拆分或重写 `inputOptions`、`outputOptions`、滤镜参数。
-- 不限制为单文件输出，图片序列、HLS/DASH 分片、多输入多输出均按原生方式处理。
+- 原始参数只允许常用编解码、质量、时长、映射与探测选项；额外输入、脚本、日志文件、协议覆盖和不明选项会拒绝。所有输入追加 `-protocol_whitelist file,pipe`。
+- 支持工作区内的图片序列、多输入多输出及常用裁剪、拼接、转码。禁止显式指定 concat/HLS/DASH/SDP 清单格式及 lavfi 输入格式。
 - 不重定向到临时文件，不强制设置执行时长。输出目录按原生要求准备，已有文件的覆盖遵循 FFmpeg 原生规则；未要求覆盖时应使用新文件名。
 - 保留宿主已有的显式工作区路径检查、缺少 FFmpeg 时的安装提示、错误传播和转换取消。取消或失败可能留下原生处理产生的部分文件，工具不自动删除素材。
 
-此工具传递 JSON 调用数据，不接收 JavaScript、回调或 Node 流；可执行文件由插件市场配置。宿主只检查显式文件入口，原始参数、滤镜和媒体清单中的间接访问不是文件系统沙箱。FFprobe 和能力查询的原生接口不暴露子进程，取消会停止等待，底层查询自行退出。
+此工具传递 JSON 调用数据，不接收 JavaScript、回调或 Node 流；可执行文件由插件市场配置。工具校验显式路径和允许的滤镜参数；媒体容器自身的间接文件引用仍不是文件系统沙箱。配对设备的 JSON 桥接不接受原始参数或滤镜，宿主自身的 FFmpeg 工厂保持原能力。FFprobe 和能力查询的原生接口不暴露子进程，取消会停止等待，底层查询自行退出。
+
+带文件的滤镜使用结构化参数，例如 `videoFilters([{ filter: "subtitles", options: { filename: "assets/captions.srt" } }])`。文件名必须为工作区内的相对路径，不包含协议、上级目录、引号或转义符。复杂表达式和未列入允许列表的滤镜会明确报错，不会跳过后继续执行。

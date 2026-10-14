@@ -84,7 +84,7 @@
           <template #reference>
             <el-button size="small" :icon="IconQrcode">展示二维码</el-button>
           </template>
-          <q-r-code
+          <tdesignProvider><q-r-code
             :value="communityUrl"
             :size="168"
             type="svg"
@@ -92,7 +92,7 @@
             bgColor="#ffffff"
             borderless
             role="img"
-            aria-label="Toonflow 交流群二维码" />
+            aria-label="Toonflow 交流群二维码" /></tdesignProvider>
           <div class="tips">
             Toonflow 是为爱发电的开源项目。欢迎文明交流、友善反馈；回复可能需要一些时间，请避免责问或命令式沟通，感谢你的理解与尊重。
           </div>
@@ -164,6 +164,7 @@
 </template>
 
 <script setup lang="ts">
+import tdesignProvider from "@/components/tdesignProvider.vue";
 import { translate, t } from "@toonflow/i18n/vue";
 
 import { computed, onMounted, onBeforeUnmount, ref } from "vue";

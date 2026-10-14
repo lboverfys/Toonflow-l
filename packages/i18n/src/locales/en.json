@@ -2623,5 +2623,12 @@
   "Android 暂不支持在文件管理器中定位项目文件，请使用下载或导出保存文件。": "Locating project files in the file manager is not yet supported on Android. Use Download or Export to save files.",
   "API Key 已保存，部分模型获取失败：{0}": "API Key saved, but some models could not be fetched: {0}",
   "assets 是节点素材目录，请使用其他文件夹名称": "assets is the node assets directory. Choose another folder name.",
-  "TF-Router API Key 已配置完成": "TF-Router API Key configured"
+  "TF-Router API Key 已配置完成": "TF-Router API Key configured",
+  "请在桌面端或服务器本机管理供应商": "Please manage providers in the desktop app or locally on the server machine",
+  "剪贴板文件总大小不能超过 100 MB": "Clipboard files must not exceed 100 MB in total",
+  "临时对话不存在或已关闭，请重新打开对话": "The temporary conversation is missing or closed. Please reopen it",
+  "配对设备不能使用 FFmpeg 原始参数或滤镜": "Paired devices cannot use raw FFmpeg arguments or filters",
+  "滤镜不在允许范围内，请使用结构化参数与工作区相对路径": "This filter is not allowed. Use structured parameters and paths relative to the workspace",
+  "原始参数不在允许范围内，请使用专用方法": "This raw argument is not allowed. Use the dedicated method",
+  "不允许通过媒体清单间接访问文件": "Indirect file access through media manifests is not allowed"
 }

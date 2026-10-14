@@ -9,7 +9,7 @@ import type { useCanvasHistory } from "./useCanvasHistory";
 
 type Disk = { canvas: CanvasSnapshot; revision: string };
 export function useCanvasSync(flow: ReturnType<typeof useVueFlow>, binding: () => { directory: string; path: string } | undefined,
-  history: ReturnType<typeof useCanvasHistory>, updateSnapshot: (disk: Disk) => void) {
+  history: ReturnType<typeof useCanvasHistory>, updateSnapshot: (disk: Disk, dirty: boolean) => void) {
   const applying = ref(false);
   const conflict = shallowRef<{ remote: Disk; fields: CanvasConflict[]; message: string }>();
   const recoveryPath = ref("");
@@ -65,13 +65,14 @@ export function useCanvasSync(flow: ReturnType<typeof useVueFlow>, binding: () =
     await backup();
   }
 
-  function assignFields(target: Record<string, any>, next: Record<string, any>) {
-    for (const key of Object.keys(target)) if (!Object.hasOwn(next, key)) delete target[key];
+  function assignFields(target: Record<string, any>, next: Record<string, any>, previous: Record<string, any>) {
+    for (const key of Object.keys(previous)) if (!Object.hasOwn(next, key)) delete target[key];
     for (const [key, value] of Object.entries(next)) {
-      if (sameCanvasValue(target[key], value)) continue;
+      // ACT: 只应用持久字段的变化；文本输出通过 toJSON 排除，不能被远端重命名时的空字典清除。
+      if (sameCanvasValue(previous[key], value)) continue;
       // 输出字典与节点插件共用引用；替换每个输出值，让媒体 URL 的监听正常触发。
       if (key === "outputs" && target[key] && value && typeof value === "object") {
-        for (const name of Object.keys(target[key])) if (!Object.hasOwn(value, name)) delete target[key][name];
+        for (const name of Object.keys(previous[key] ?? {})) if (!Object.hasOwn(value, name)) delete target[key][name];
         for (const [name, output] of Object.entries(value)) if (!sameCanvasValue(target[key][name], output)) target[key][name] = output;
       } else target[key] = value;
     }
@@ -81,12 +82,15 @@ export function useCanvasSync(flow: ReturnType<typeof useVueFlow>, binding: () =
     validateCanvas(canvas);
     const changes = canvasChanges(previous, canvas);
     if (!changes.length) return;
+    let waitedForSave = false;
     for (const change of changes) {
       if (change.kind === "nodes" && change.before && (!change.after || change.before.type !== change.after.type)) {
         await useNodeEvent(change.id, flow).emit("save", "reload");
+        waitedForSave = true;
       }
     }
-    if (canvasChanges(previous, current()).length) throw new Error("同步期间本机又有修改，请重新合并");
+    // ACT: 没有异步节点保存时，快照比较与应用处于同一同步段；跨 await 才重新核对本机修改。
+    if (waitedForSave && canvasChanges(previous, current()).length) throw new Error("同步期间本机又有修改，请重新合并");
     applying.value = true;
     try {
       await history.applyRemote(async () => {
@@ -102,8 +106,8 @@ export function useCanvasSync(flow: ReturnType<typeof useVueFlow>, binding: () =
           } else {
             for (const key of Object.keys(change.before ?? {})) if (!Object.hasOwn(change.after, key)) Reflect.deleteProperty(element, key);
             for (const [key, value] of Object.entries(change.after)) {
-              if (sameCanvasValue(Reflect.get(element, key), value)) continue;
-              if (key === "data" && element.data && value) assignFields(element.data, structuredClone(value));
+              if (sameCanvasValue(change.before?.[key], value)) continue;
+              if (key === "data" && element.data && value) assignFields(element.data, structuredClone(value), change.before?.data ?? {});
               else Reflect.set(element, key, structuredClone(value));
             }
           }
@@ -115,7 +119,9 @@ export function useCanvasSync(flow: ReturnType<typeof useVueFlow>, binding: () =
 
   function accept(disk: Disk) {
     baseline = structuredClone(disk);
-    updateSnapshot(disk);
+    const dirty = canvasChanges(baseline.canvas, current()).length > 0;
+    updateSnapshot(disk, dirty);
+    return dirty;
   }
 
   async function receive(disk: Disk) {
@@ -191,6 +197,7 @@ export function useCanvasSync(flow: ReturnType<typeof useVueFlow>, binding: () =
       const before = baseline;
       const local = current();
       const changes = canvasChanges(before.canvas, local);
+      let dirty = false;
       try {
         if (changes.length) {
           const result = await useWorkspaceFiles(target.directory).saveCanvasChanges(target.path, before.revision, changes);
@@ -201,9 +208,10 @@ export function useCanvasSync(flow: ReturnType<typeof useVueFlow>, binding: () =
           if (merged.conflicts.length) { await block(disk, merged.conflicts); throw new Error(conflict.value!.message); }
           try { await apply(merged.canvas, latest); }
           catch (error) { await block(disk, [], errorMessage(error)); throw error; }
-          accept(disk);
+          dirty = accept(disk);
         }
         await archiveRecovery();
+        return dirty;
       } catch (error) {
         const data = axios.isAxiosError(error) ? error.response?.data?.data : undefined;
         if (data?.code === "ECANVASCONFLICT") await block({ canvas: data.canvas, revision: data.revision }, data.conflicts, data.message);

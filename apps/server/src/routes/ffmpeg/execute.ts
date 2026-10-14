@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { relative, resolve } from "node:path";
 import type { BrowserFfmpegRequest } from "@toonflow/ffmpeg";
 import { validateFields } from "@/lib/middleware";
 import { success } from "@/lib/responseFormat";
@@ -38,6 +39,9 @@ export default Router().post("/", validateFields(inputSchema.shape), async (req,
     await active?.finished;
     res.json(success());
     return;
+  }
+  if (u.mobileLink.isMobileLinkRequest(req) && input.operation.method !== "prepare") {
+    await u.ffmpeg.validateFfmpegRequest(input, async path => (await u.workspaceFile.resolveWorkspacePath(cwd, relative(cwd, resolve(cwd, path)), true)).path, false);
   }
   const controller = new AbortController();
   const finished = Promise.withResolvers<void>();

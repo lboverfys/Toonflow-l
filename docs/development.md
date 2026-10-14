@@ -91,8 +91,8 @@ bun run dev
 | `bun run dev:server` | 单独启动业务 Server。 |
 | `bun run dev:plugins` | 构建节点和工具，并同步到开发数据目录。 |
 | `bun run dev:desktop` | 同步开发插件、构建 Web，并启动桌面应用。 |
-| `bun run build` | 构建工具、Web、Server、MCP，并输出技能和提供方文件。 |
-| `bun run build:server` | 构建独立部署所需的节点、工具、Web、Server、MCP、技能和提供方，支持 Linux。 |
+| `bun run build` | 构建工具、文件扩展、Web、Server、MCP，并输出技能和提供方文件。 |
+| `bun run build:server` | 构建独立部署所需的节点、工具、文件扩展、Web、Server、MCP、技能和提供方，支持 Linux。 |
 | `bun run build:nodes` | 构建节点到 `build/nodes/`，不写入 `data/nodes/`。 |
 | `bun run build:tools` | 构建工具到 `build/tools/`，不写入 `data/tools/`。 |
 | `bun run start:server` | 运行 `build/server/` 中已构建的服务。 |
@@ -103,6 +103,8 @@ bun run dev
 | `bun run --cwd packages/i18n extract` | 手动抽取中文源文案和来源索引，不生成其他语言的译文。 |
 
 构建与类型检查分别执行。新增、移动或删除业务接口后，在 `apps/server` 执行 `bun run routes` 生成路由。
+
+应用默认版本号统一读取根目录 `package.json` 的 `version`；发布时通过 `appVersion` 覆盖，桌面、Web 与独立服务使用同一值。Web 和独立服务的类型检查不再依赖 Electrobun SDK 类型文件。
 
 ### 多语言维护
 
@@ -123,6 +125,16 @@ bun run start:server
 然后打开 `http://localhost:3000`。这套命令使用仓库根目录的默认 `data/`；服务首次启动会从构建产物初始化内置节点、工具、技能和提供方，保留已有插件文件。迁移到其他目录或机器时，需一并处理运行依赖、配置和工作区，不能只复制 `build/` 就视作完整安装。
 
 独立 Server 采用单进程运行。桌面端复用同一个 `createApp`，在主进程监听系统分配的本机端口。目录选择、原生保存与桌面更新等接口仅由桌面宿主提供。
+
+独立 Server 默认只监听本机 `127.0.0.1:3000`。通过环境变量调整部署地址：
+
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `TOONFLOW_HOST` | `127.0.0.1` | 监听地址；局域网或容器内访问使用 `0.0.0.0`。 |
+| `TOONFLOW_PORT` | `3000` | 监听端口，必须为 1–65535 的整数。开发代理仍指向 3000。 |
+| `TOONFLOW_ALLOWED_HOSTS` | 空 | 生产环境额外允许的域名或 IP，逗号分隔，不含协议、端口和路径；本机地址始终允许。 |
+
+升级已有远程部署时，需要同时设置监听地址和 Host 白名单。例如 `TOONFLOW_HOST=0.0.0.0`、`TOONFLOW_ALLOWED_HOSTS=toonflow.example.com,192.168.1.10`。反向代理应保留原 Host，或把其实际转发的 Host 加入白名单；域名白名单不代替用户认证。Docker 镜像已设置监听所有容器网卡，Compose 默认仍只发布到宿主本机。桌面端、Android 和设备互联网关沿用各自的访问校验。
 
 </details>
 

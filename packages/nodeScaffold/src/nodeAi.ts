@@ -1,4 +1,6 @@
 import { onScopeDispose } from "vue";
+import { modelCache } from "./nodeModels";
+export { invalidateNodeModels } from "./nodeModels";
 import { runAgentLoop, type AgentTool, type AgentToolResult } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, type AssistantMessage, type Context, type Message, type Model } from "@earendil-works/pi-ai";
 import { EventSourceParserStream } from "eventsource-parser/stream";
@@ -65,10 +67,6 @@ async function readResult<T>(response: Response): Promise<T> {
   return result.data;
 }
 
-// ACT: 独立 UMD 各有模块作用域，共用宿主缓存；模型设置保存后失效，不按节点重复请求。
-const modelCacheKey = Symbol.for("toonflow.nodeModels");
-const modelCacheHost = globalThis as typeof globalThis & { [modelCacheKey]?: Map<string, Promise<unknown[]>> };
-const modelCache = modelCacheHost[modelCacheKey] ??= new Map<string, Promise<unknown[]>>();
 type TaskStatus = ImageTaskStatus | VideoTaskStatus | null;
 type TaskRequest = { type: "image" | "video"; outputDirectory: string; promise: Promise<TaskStatus>; resolve(value: TaskStatus): void; reject(error: unknown): void };
 const taskBatchKey = Symbol.for("toonflow.taskStatusRequests");
@@ -109,9 +107,6 @@ async function readTask(type: "image" | "video", input: { directory: string; out
   return task;
 }
 
-export function invalidateNodeModels(type: "language" | "media") {
-  modelCache.delete(type === "language" ? "/api/ai/models" : "/api/ai/media/models");
-}
 
 async function readModels<T>(url: string, signal: AbortSignal): Promise<T[]> {
   signal.throwIfAborted();

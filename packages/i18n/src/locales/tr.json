@@ -2623,5 +2623,12 @@
   "Android 暂不支持在文件管理器中定位项目文件，请使用下载或导出保存文件。": "Android'de proje dosyalarını dosya yöneticisinde gösterme henüz desteklenmiyor. Dosyaları indirme veya dışa aktarmayla kaydedin.",
   "API Key 已保存，部分模型获取失败：{0}": "API Key kaydedildi ancak bazı modeller alınamadı: {0}",
   "assets 是节点素材目录，请使用其他文件夹名称": "assets, düğüm varlıkları klasörüdür. Başka klasör adı kullanın.",
-  "TF-Router API Key 已配置完成": "TF-Router API Key yapılandırıldı"
+  "TF-Router API Key 已配置完成": "TF-Router API Key yapılandırıldı",
+  "请在桌面端或服务器本机管理供应商": "Lütfen sağlayıcıları masaüstü uygulamasında veya sunucu makinesinde yerel olarak yönetin",
+  "剪贴板文件总大小不能超过 100 MB": "Pano dosyalarının toplam boyutu 100 MB'ı aşamaz",
+  "临时对话不存在或已关闭，请重新打开对话": "Geçici konuşma yok veya kapatılmış. Lütfen yeniden açın",
+  "配对设备不能使用 FFmpeg 原始参数或滤镜": "Eşleştirilmiş cihazlar ham FFmpeg bağımsız değişkenlerini veya filtrelerini kullanamaz",
+  "滤镜不在允许范围内，请使用结构化参数与工作区相对路径": "Bu filtreye izin verilmiyor. Yapılandırılmış parametreler ve çalışma alanına göreli yollar kullanın",
+  "原始参数不在允许范围内，请使用专用方法": "Bu ham bağımsız değişkene izin verilmiyor. Özel yöntemi kullanın",
+  "不允许通过媒体清单间接访问文件": "Medya manifestleri üzerinden dolaylı dosya erişimine izin verilmiyor"
 }

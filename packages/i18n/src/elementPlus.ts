@@ -1,26 +1,30 @@
-import type { Locale } from "./index";
-import zhCn from "./elementPlus/zhCn.json";
-import zhTw from "./elementPlus/zhTw.json";
-import en from "./elementPlus/en.json";
-import ja from "./elementPlus/ja.json";
-import ru from "./elementPlus/ru.json";
-import vi from "./elementPlus/vi.json";
-import th from "./elementPlus/th.json";
-import ko from "./elementPlus/ko.json";
-import hi from "./elementPlus/hi.json";
-import id from "./elementPlus/id.json";
-import ms from "./elementPlus/ms.json";
-import fil from "./elementPlus/fil.json";
-import bn from "./elementPlus/bn.json";
-import ur from "./elementPlus/ur.json";
-import ta from "./elementPlus/ta.json";
-import te from "./elementPlus/te.json";
-import mr from "./elementPlus/mr.json";
-import pa from "./elementPlus/pa.json";
-import ar from "./elementPlus/ar.json";
-import fa from "./elementPlus/fa.json";
-import tr from "./elementPlus/tr.json";
+import type { Locale } from "./core.ts";
+import type en from "./elementPlus/en.json";
 
-export const elementLocales = {
-  "zh-CN": zhCn, "zh-TW": zhTw, en, ja, ru, vi, th, ko, hi, id, ms, fil, bn, ur, ta, te, mr, pa, ar, fa, tr,
-} satisfies Record<Locale, typeof en>;
+const loaders = {
+  "zh-CN": () => import("./elementPlus/zhCn.json"),
+  "zh-TW": () => import("./elementPlus/zhTw.json"),
+  "en": () => import("./elementPlus/en.json"),
+  "ja": () => import("./elementPlus/ja.json"),
+  "ru": () => import("./elementPlus/ru.json"),
+  "vi": () => import("./elementPlus/vi.json"),
+  "th": () => import("./elementPlus/th.json"),
+  "ko": () => import("./elementPlus/ko.json"),
+  "hi": () => import("./elementPlus/hi.json"),
+  "id": () => import("./elementPlus/id.json"),
+  "ms": () => import("./elementPlus/ms.json"),
+  "fil": () => import("./elementPlus/fil.json"),
+  "bn": () => import("./elementPlus/bn.json"),
+  "ur": () => import("./elementPlus/ur.json"),
+  "ta": () => import("./elementPlus/ta.json"),
+  "te": () => import("./elementPlus/te.json"),
+  "mr": () => import("./elementPlus/mr.json"),
+  "pa": () => import("./elementPlus/pa.json"),
+  "ar": () => import("./elementPlus/ar.json"),
+  "fa": () => import("./elementPlus/fa.json"),
+  "tr": () => import("./elementPlus/tr.json"),
+} satisfies Record<Locale, () => Promise<{ default: typeof en }>>;
+
+export async function loadElementLocale(locale: Locale) {
+  return (await loaders[locale]()).default;
+}

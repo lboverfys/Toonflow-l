@@ -36,7 +36,7 @@
             noDataText="请先在设置中添加音频模型"
             @change="rememberPreferences"
             placement="top-start"
-            @visible-change="visible => visible && loadModels().catch(error => showNodeError(error, '模型读取失败'))">
+            @visibleChange="(visible: boolean) => visible && loadModels().catch(error => showNodeError(error, '模型读取失败'))">
             <template #prefix><icon-music-bolt :size="17" /></template>
             <el-option-group v-for="provider in modelGroups" :key="provider.id" :label="provider.label">
               <el-option v-for="item in provider.models" :key="item.modelId" :label="item.label" :value="JSON.stringify([item.providerId, item.modelId])" />
@@ -61,8 +61,10 @@
 import { computed, onMounted, onScopeDispose, ref } from "vue";
 import { ElButton, ElCard, ElLoading, ElOption, ElOptionGroup, ElSelect } from "element-plus";
 import { IconArrowUp, IconGauge, IconMusicBolt, IconPlayerStop, IconScissors, IconTransfer } from "@tabler/icons-vue";
-import { getTargetValues, isTypeCompatible, nodeSkeleton, nodeTools, useNode, z, type NodeAudioRequest, type NodeHandle, type NodeInputValue, type NodeMediaModel } from "@toonflow/nodes-scaffold/runtime";
-import { groupNodeModels } from "@toonflow/node-shared/groupNodeModels";
+import { getTargetValues, isTypeCompatible, nodeSkeleton, nodeTools, useNode, z, type NodeAudioRequest, type NodeHandle, type NodeInputValue } from "@toonflow/nodes-scaffold/runtime";
+import { registerGenerationTools } from "@toonflow/node-shared/generationTools";
+import { useMediaModels } from "@toonflow/node-shared/useMediaModels";
+import { useOutputReplace } from "@toonflow/node-shared/useOutputReplace";
 import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useNodeGeneration } from "@toonflow/node-shared/useNodeGeneration";
 import { useGenerationPreferences } from "@toonflow/node-shared/useGenerationPreferences";
@@ -94,9 +96,9 @@ data.value.language ??= "zh-CN";
 data.value.sampleRate ??= 24000;
 data.value.format ??= "wav";
 const { refList, referenceMentions, setReferencePreview, removeReference } = useNodeReferences();
-const models = ref<NodeMediaModel[]>([]);
-const modelsLoading = ref(false);
-const uploading = ref(false);
+const { models, modelsLoading, modelGroups, loadModels } = useMediaModels("audio", data, () => busy.value, ai.getMediaModels);
+const { uploading, replaceOutput } = useOutputReplace("audio", files, () => busy.value,
+  value => { outputs.value.audio = { dataType: "AUDIO", value }; });
 const deleting = ref(false);
 const fileInput = ref<HTMLInputElement>();
 const player = ref<InstanceType<typeof audioPlayer>>();
@@ -105,12 +107,10 @@ const speedTarget = ref<HTMLElement>();
 let disposed = false;
 let generationController: AbortController | undefined;
 let generation: Promise<void> | undefined;
-let modelsRequest: Promise<void> | undefined;
 const generationState = useNodeGeneration(outputs, () => generationController?.abort());
 const { generating } = generationState;
 const busy = computed(() => generating.value || uploading.value || deleting.value || !!actions.value?.processing);
 const selectedModel = computed(() => models.value.find(item => JSON.stringify([item.providerId, item.modelId]) === data.value.model));
-const modelGroups = computed(() => groupNodeModels(models.value));
 const generationPrompt = computed(() => [data.value.prompt.trim(), ...refList.value.flatMap((item, index) =>
   item.dataType === "STRING" && item.value?.trim() ? [`参考 ${index + 1}：\n${item.value.trim()}`] : [])].filter(Boolean).join("\n\n"));
 const outputFile = computed(() => outputs.value.audio?.dataType === "AUDIO" ? outputs.value.audio.value : undefined);
@@ -133,23 +133,6 @@ onScopeDispose(() => {
   generationController?.abort();
 });
 
-function loadModels() {
-  if (modelsRequest) return modelsRequest;
-  modelsLoading.value = true;
-  modelsRequest = ai.getMediaModels().then(items => {
-    if (disposed || busy.value) return;
-    models.value = items.filter(item => item.type === "audio");
-    // ACT: 仅空配置选择默认模型，临时不可用的模型保持原选择，避免静默换供应商。
-    if (!data.value.model) {
-      const first = models.value[0];
-      data.value.model = first ? JSON.stringify([first.providerId, first.modelId]) : "";
-    }
-  }).finally(() => {
-    modelsLoading.value = false;
-    modelsRequest = undefined;
-  });
-  return modelsRequest;
-}
 
 async function startGeneration() {
   if (busy.value || disposed) throw new Error("音频正在处理或节点已关闭，请稍后重试");
@@ -186,29 +169,6 @@ async function startGeneration() {
   return { status: "generating" };
 }
 
-async function replaceOutput(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = "";
-  if (!file || busy.value || disposed) return;
-  if (!file.type.startsWith("audio/")) return void showNodeError("请选择音频文件", "音频替换失败");
-  if (!file.size || file.size > 100 * 1024 * 1024) return void showNodeError("音频不能为空且不能超过 100 MB", "音频替换失败");
-  uploading.value = true;
-  try {
-    const workspace = files.getWorkspaceFiles();
-    const url = await files.uploadFile(file);
-    if (disposed) {
-      await workspace.remove(url);
-      return;
-    }
-    // ACT: 替换不删除旧音频，保留复制节点与撤销记录的文件引用。
-    outputs.value.audio = { dataType: "AUDIO", value: { url, mimeType: file.type } };
-  } catch (error) {
-    showNodeError(error, "音频替换失败");
-  } finally {
-    uploading.value = false;
-  }
-}
 
 nodeEvent.on("save", reason => {
   if (uploading.value || (reason === "reload" && busy.value)) throw new Error("音频处理中，请完成或取消后再刷新节点");
@@ -236,15 +196,14 @@ function getConfig() {
   };
 }
 
-nodeTools.register({
-  name: "getConfig",
-  description: "读取此音频生成节点的配置、可选音频模型、语种、采样率、输出格式与输入数量限制，不含密钥；文本不限，图片与音频互斥且合计最多一个，具体模型能力由供应商校验",
-  parameters: z.strictObject({}),
-  async execute(_args, { signal }) {
-    signal?.throwIfAborted();
-    await loadModels();
-    signal?.throwIfAborted();
-    return getConfig();
+registerGenerationTools({
+  configDescription: "读取此音频生成节点的配置、可选音频模型、语种、采样率、输出格式与输入数量限制，不含密钥；文本不限，图片与音频互斥且合计最多一个，具体模型能力由供应商校验",
+  promptDescription: "修改此节点的音频生成提示词或待朗读文本，支持 {{ref 1}} 等参考标记；只修改文本，不启动生成",
+  loadModels, getConfig,
+  setPrompt(value) {
+    if (deleting.value || disposed) throw new Error("节点正在删除或已关闭，请稍后修改");
+    data.value.prompt = value;
+    data.value.promptModel = value.split("\n").map(text => [{ type: "Write", text }]);
   },
 });
 nodeTools.register({
@@ -275,17 +234,7 @@ nodeTools.register({
     return getConfig();
   },
 });
-nodeTools.register({
-  name: "setPrompt",
-  description: "修改此节点的音频生成提示词或待朗读文本，支持 {{ref 1}} 等参考标记；只修改文本，不启动生成",
-  parameters: z.strictObject({ prompt: z.string() }),
-  execute({ prompt }) {
-    if (deleting.value || disposed) throw new Error("节点正在删除或已关闭，请稍后修改");
-    data.value.prompt = prompt;
-    data.value.promptModel = prompt.split("\n").map(text => [{ type: "Write", text }]);
-    return { prompt };
-  },
-});
+
 nodeTools.register({
   name: "generateAudio",
   description: "使用当前提示词、模型、语种、采样率、格式和可选参考图片或音频启动后台生成；图片与音频互斥且合计最多一个，文本不限；立即返回已开始，用 getGenerationStatus 查询结果、cancelGeneration 停止",

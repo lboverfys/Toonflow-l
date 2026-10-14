@@ -73,7 +73,7 @@ import { modelIcon } from "@toonflow/model-icons";
 import messageMarkdown from "@/components/messageMarkdown.vue";
 import type { MediaProvider, MediaProviderModel } from "./types";
 import { settings, saveSettings } from "@/stores/settings";
-import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeAi";
+import { invalidateNodeModels } from "@toonflow/nodes-scaffold/nodeModels";
 import { useExpandedKeys } from "@/lib/useTreeExpansion";
 
 const { provider } = defineProps<{ provider?: MediaProvider }>();
@@ -160,7 +160,7 @@ async function saveModels() {
     });
     const { data } = await axios.put<{ code: number; data: MediaProvider; message?: string }>("/api/providers/media/save", {
       fileName, revision: revision.value, models: values, label,
-    });
+    }, { headers: { "x-toonflow-workspace": "1" } });
     if (data.code !== 200 || !data.data) throw new Error(data.message || "保存模型失败");
     revision.value = data.data.revision;
     modelsSaved = true;
