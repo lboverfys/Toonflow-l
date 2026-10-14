@@ -319,6 +319,6 @@ onBeforeUnmount(() => { requestId++; });
   padding-bottom: 8px;
   overflow: hidden;
   font-size: 13px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--el-font-family);
 }
 </style>

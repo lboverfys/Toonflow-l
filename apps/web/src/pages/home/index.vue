@@ -1,89 +1,84 @@
 <template>
-  <el-container class="home">
-    <bg class="pageBackground" />
-    <el-header class="pageHeader">
-      <div class="headerActions">
-        <el-badge isDot :hidden="!hasDesktopUpdate">
-          <el-button round size="large" :icon="IconSettings" :aria-label="hasDesktopUpdate ? '设置，有新版本可用' : '设置'" @click="settingsVisible = true">设置</el-button>
+  <div class="home">
+    <header class="topBar">
+      <div class="brand">
+        <img class="brandLogo" :src="logoUrl" alt="" aria-hidden="true" />
+        <span class="brandName">Toonflow</span>
+      </div>
+      <nav class="topActions" aria-label="快捷操作">
+        <el-button class="chromeButton" text :type="deviceHubEnabled ? 'success' : undefined" :icon="deviceHubEnabled || mobileConnection.mode === 'remote' ? IconDeviceDesktop : IconQrcode" @click="mobileConnectVisible = true">
+          <span class="chromeLabel">{{ mobileConnectionLabel }}</span>
+        </el-button>
+        <el-badge isDot :hidden="!hasDesktopUpdate" :offset="[-6, 6]">
+          <el-button class="chromeButton" text :icon="IconSettings" :aria-label="hasDesktopUpdate ? '设置，有新版本可用' : '设置'" @click="settingsVisible = true">
+            <span class="chromeLabel">设置</span>
+          </el-button>
         </el-badge>
-        <el-button round size="large" :type="deviceHubEnabled ? 'success' : undefined" :plain="deviceHubEnabled" :icon="deviceHubEnabled || mobileConnection.mode === 'remote' ? IconDeviceDesktop : IconQrcode" @click="mobileConnectVisible = true">{{ mobileConnectionLabel }}</el-button>
-      </div>
-      <div class="githubAction">
-        <span class="arrowHint starHint">
-          点个 Star 支持一下
-          <svg viewBox="0 0 84 44" fill="none" aria-hidden="true">
-            <path d="M4 29C18 40 44 38 44 18C44 1 21 3 24 19C27 37 57 32 77 16M65 17L77 16L73 28" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </span>
-        <el-button round size="large" :icon="IconBrandGithub" tag="a" href="https://github.com/HBAI-Ltd/Toonflow-app" target="_blank" rel="noopener noreferrer">GitHub</el-button>
-      </div>
-    </el-header>
-    <el-main class="pageContent">
+        <el-tooltip content="点个 Star 支持一下" placement="bottom-end" :showArrow="false">
+          <el-button class="chromeButton" text :icon="IconBrandGithub" tag="a" href="https://github.com/HBAI-Ltd/Toonflow-app" target="_blank" rel="noopener noreferrer" aria-label="GitHub">
+            <span class="chromeLabel">GitHub</span>
+          </el-button>
+        </el-tooltip>
+      </nav>
+    </header>
+    <main class="pageContent">
       <section class="creationPanel" aria-label="创建项目">
-        <div class="brand">
-          <el-image class="brandLogo" :src="logoUrl" fit="contain" alt="Toonflow" />
+        <div class="hero">
+          <img class="heroLogo" :src="logoUrl" alt="Toonflow" />
           <h1>Toonflow</h1>
         </div>
-        <div class="promptArea">
-          <span class="arrowHint inspirationHint">
-            灵感创作模式
-            <svg viewBox="0 0 60 60" fill="none" aria-hidden="true">
-              <path d="M4 9C21 0 44 5 40 23C36 39 14 34 22 20C30 7 49 21 47 52M38 43L47 52L54 42" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </span>
-          <el-card class="promptCard" shadow="never" :bodyStyle="{ padding: '20px' }" :footerStyle="{ padding: '12px 16px' }">
-            <attachmentList v-if="promptAttachments.length" class="promptAttachments" :attachments="promptAttachments" removable restorable :disabled="creating || opening" @remove="promptAttachments.splice($event, 1)" @restore="restoreAttachment" />
-            <el-input ref="promptInput" v-model="prompt" type="textarea" :rows="4" resize="none" :disabled="creating || opening" :placeholder="promptPlaceholder" aria-label="创作描述" @paste.capture="pasteText" />
-            <template #footer>
-              <div class="composerFooter">
-                <workspacePicker ref="promptWorkspacePicker" v-model="workspaceDirectory" :disabled="creating || opening" />
-                <el-space class="sendActions" wrap :size="12">
-                  <modelPopover v-model="selectedModel" v-model:reasoningEffort="reasoningEffort" class="modelSelect" :disabled="creating || opening" />
-                  <el-button class="sendButton" type="primary" :circle="!!workspaceDirectory" :icon="workspaceDirectory ? IconArrowUp : IconFolder" :loading="creating" :disabled="creating || opening" :aria-label="workspaceDirectory ? '发送' : '选择工作目录'" @click="workspaceDirectory ? createProject() : promptWorkspacePicker?.chooseDirectory()">
-                    <template v-if="!workspaceDirectory" #default>选择工作目录</template>
-                  </el-button>
-                </el-space>
-              </div>
-              <p v-if="!workspaceDirectory" class="workspaceHint" role="status">请先选择一个空文件夹作为工作目录，画布和素材会保存在这里。</p>
-            </template>
-          </el-card>
+        <div class="composer" :class="{ busy: creating || opening }">
+          <div class="composerLabel"><icon-sparkles :size="14" aria-hidden="true" />灵感创作模式</div>
+          <attachmentList v-if="promptAttachments.length" class="promptAttachments" :attachments="promptAttachments" removable restorable :disabled="creating || opening" @remove="promptAttachments.splice($event, 1)" @restore="restoreAttachment" />
+          <el-input ref="promptInput" v-model="prompt" class="promptInput" type="textarea" :autosize="{ minRows: 3, maxRows: 10 }" resize="none" :disabled="creating || opening" :placeholder="promptPlaceholder" aria-label="创作描述" @paste.capture="pasteText" />
+          <div class="composerFooter">
+            <workspacePicker ref="promptWorkspacePicker" v-model="workspaceDirectory" :disabled="creating || opening" />
+            <div class="sendActions">
+              <modelPopover v-model="selectedModel" v-model:reasoningEffort="reasoningEffort" class="modelSelect" :disabled="creating || opening" />
+              <el-button class="sendButton" type="primary" :circle="!!workspaceDirectory" :round="!workspaceDirectory" :icon="workspaceDirectory ? IconArrowUp : IconFolder" :loading="creating" :disabled="creating || opening" :aria-label="workspaceDirectory ? '发送' : '选择工作目录'" @click="workspaceDirectory ? createProject() : promptWorkspacePicker?.chooseDirectory()">
+                <template v-if="!workspaceDirectory" #default>选择工作目录</template>
+              </el-button>
+            </div>
+          </div>
         </div>
+        <p v-if="!workspaceDirectory" class="workspaceHint" role="status"><icon-info-circle :size="14" aria-hidden="true" />请先选择一个空文件夹作为工作目录，画布和素材会保存在这里。</p>
       </section>
       <section class="projectList" aria-labelledby="projectListTitle">
         <div class="sectionHeader">
-          <h2 id="projectListTitle">项目列表</h2>
-          <el-space wrap>
-            <el-button :icon="iconFolderOpen" :disabled="creating || opening" @click="openProject()">导入项目</el-button>
-            <el-button :icon="IconFolderPlus" :disabled="creating || opening" @click="createProject(false)">添加项目</el-button>
-            <el-button circle :icon="sortDescending ? IconSortDescending : IconSortAscending" :aria-label="sortDescending ? '按时间降序' : '按时间升序'" @click="sortDescending = !sortDescending" />
-            <el-radio-group v-model="viewMode" aria-label="项目视图">
-              <el-radio-button value="grid" aria-label="网格视图"><icon-layout-grid :size="16" /></el-radio-button>
-              <el-radio-button value="list" aria-label="列表视图"><icon-list :size="16" /></el-radio-button>
+          <h2 id="projectListTitle">项目列表<span v-if="projectList.length" class="projectCount">{{ projectList.length }}</span></h2>
+          <div class="sectionActions">
+            <el-button class="sectionButton" text :icon="IconFolderOpen" :disabled="creating || opening" @click="openProject()">导入项目</el-button>
+            <el-button class="sectionButton" text :icon="IconFolderPlus" :disabled="creating || opening" @click="createProject(false)">添加项目</el-button>
+            <span class="actionDivider" aria-hidden="true" />
+            <el-tooltip :content="sortDescending ? '按时间降序' : '按时间升序'" placement="top" :showArrow="false" :hideAfter="0">
+              <el-button class="iconButton" text :icon="sortDescending ? IconSortDescending : IconSortAscending" :aria-label="sortDescending ? '按时间降序' : '按时间升序'" @click="sortDescending = !sortDescending" />
+            </el-tooltip>
+            <el-radio-group v-model="viewMode" class="viewToggle" aria-label="项目视图">
+              <el-radio-button value="grid" aria-label="网格视图"><icon-layout-grid :size="15" /></el-radio-button>
+              <el-radio-button value="list" aria-label="列表视图"><icon-list :size="15" /></el-radio-button>
             </el-radio-group>
-          </el-space>
+          </div>
         </div>
         <div class="projectItems" :class="{ listView: viewMode === 'list' }">
-          <el-card v-for="project in sortedProjects" :key="project.directory" class="projectCard" shadow="hover" :bodyStyle="{ padding: '0' }">
+          <article v-for="project in sortedProjects" :key="project.directory" class="projectCard">
             <button class="projectEntry" type="button" :disabled="creating || opening" :aria-label="`打开项目 ${project.name}`" @click="openProject(project)">
-              <icon-folder class="projectIcon" :size="28" aria-hidden="true" />
-              <span class="projectInfo">
-                <span class="projectName" :title="project.name">{{ project.name }}</span>
-                <span class="projectPath" :title="project.directory">{{ project.directory }}</span>
-                <span class="projectTime">最近打开 {{ new Date(project.lastOpenedAt).toLocaleString(locale, { hour12: false }) }}</span>
-              </span>
+              <span class="projectIcon" aria-hidden="true"><icon-folder :size="18" /></span>
+              <span class="projectName" :title="project.name">{{ project.name }}</span>
+              <span class="projectPath" :title="project.directory">{{ project.directory }}</span>
+              <span class="projectTime">最近打开 {{ new Date(project.lastOpenedAt).toLocaleString(locale, { hour12: false }) }}</span>
             </button>
             <div class="projectActions">
               <el-button text :icon="IconEdit" :disabled="creating || opening" :aria-label="`重命名项目 ${project.name}`" title="重命名" @click="renameProject(project)" />
               <el-button text type="danger" :icon="IconTrash" :disabled="creating || opening" :aria-label="`移除项目 ${project.name}`" title="从列表移除，不删除文件" @click="workspaceStore.removeProject(project.directory)" />
             </div>
-          </el-card>
+          </article>
         </div>
       </section>
-    </el-main>
+    </main>
     <settings v-model="settingsVisible" />
     <mobileConnect v-model="mobileConnectVisible" />
     <workspacePicker ref="relocationPicker" hideTrigger />
-  </el-container>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -95,10 +90,9 @@ import { useRouter } from "vue-router";
 import { ElMessage, ElMessageBox, type InputInstance } from "element-plus";
 import {
   IconSettings, IconBrandGithub, IconQrcode, IconDeviceDesktop,
-  IconArrowUp, IconLayoutGrid,
-  IconList, IconSortDescending,
-  IconSortAscending, IconFolder, IconEdit,
-  IconTrash, IconFolderPlus, IconFolderOpen as iconFolderOpen,
+  IconArrowUp, IconLayoutGrid, IconList, IconSortDescending,
+  IconSortAscending, IconFolder, IconEdit, IconSparkles, IconInfoCircle,
+  IconTrash, IconFolderPlus, IconFolderOpen,
 } from "@tabler/icons-vue";
 import modelPopover from "@/components/modelPopover.vue";
 import attachmentList from "@/components/agent/attachmentList.vue";
@@ -110,7 +104,6 @@ import { hasDesktopUpdate } from "@/stores/desktopUpdate";
 import { deviceHubEnabled, mobileConnection, mobileConnectionLabel } from "@/lib/mobile";
 import useWorkspaceFiles from "@/lib/workspaceFiles";
 import settings from "@/components/settings/index.vue";
-import bg from "./bg.vue";
 import workspacePicker from "./workspacePicker.vue";
 
 const settingsVisible = ref(false);
@@ -285,92 +278,107 @@ async function createProject(fromPrompt = true) {
 
 <style lang="scss" scoped>
 .home {
-  position: relative;
-  isolation: isolate;
+  display: flex;
+  flex-direction: column;
   min-height: 100dvh;
+  background: var(--el-bg-color);
   color: var(--el-text-color-primary);
 
-  .pageBackground {
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-  }
-
-  .arrowHint {
-    position: absolute;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    color: var(--el-color-primary);
-    font-size: 13px;
-    white-space: nowrap;
-    pointer-events: none;
-    animation: hintNudge 2.4s ease-in-out infinite;
-
-    svg {
-      width: 56px;
-      height: 30px;
-      flex-shrink: 0;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      animation: none;
-    }
-  }
-
-  .pageHeader {
+  .topBar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 72px;
-    padding: 0 clamp(20px, 4vw, 56px);
+    gap: 16px;
+    height: 56px;
+    padding: 0 clamp(16px, 3vw, 28px);
+    background: color-mix(in srgb, var(--el-bg-color) 86%, transparent);
+    backdrop-filter: saturate(1.6) blur(12px);
 
-    .headerActions { display: flex; align-items: center; gap: 12px; }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
 
-    a {
-      text-decoration: none;
+      .brandLogo {
+        width: 22px;
+        height: 22px;
+
+        .dark & {
+          filter: invert(1);
+        }
+      }
+
+      .brandName {
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
     }
 
-    .githubAction {
-      position: relative;
+    .topActions {
+      display: flex;
+      align-items: center;
+      gap: 2px;
 
-      .starHint {
-        top: 0;
-        inset-inline-end: calc(100% + 12px);
-        height: 100%;
+      .chromeButton {
+        height: 32px;
+        margin: 0;
+        padding: 0 10px;
+        color: var(--el-text-color-regular);
+        font-size: 13px;
 
-        &:dir(rtl) svg { transform: scaleX(-1); }
+        &.el-button--success {
+          color: var(--el-color-success);
+        }
 
-        @media (max-width: 560px) {
-          top: calc(100% + 6px);
-          inset-inline-end: 0;
-          height: auto;
+        &:hover {
+          color: var(--el-text-color-primary);
+        }
+      }
 
-          svg { transform: rotate(-45deg); }
-          &:dir(rtl) svg { transform: scaleX(-1) rotate(-45deg); }
+      a.chromeButton {
+        text-decoration: none;
+      }
+
+      @media (max-width: 560px) {
+        .chromeLabel {
+          display: none;
+        }
+
+        .chromeButton {
+          width: 32px;
+          padding: 0;
+
+          :deep(.el-icon) {
+            margin: 0;
+          }
         }
       }
     }
   }
 
   .pageContent {
-    padding: 24px clamp(20px, 4vw, 56px) 56px;
+    flex: 1;
+    padding: 0 clamp(16px, 4vw, 48px) 64px;
 
     .creationPanel {
-      max-width: 800px;
-      margin: clamp(32px, 6vh, 64px) auto 56px;
+      max-width: 720px;
+      margin: clamp(40px, 11vh, 120px) auto 72px;
 
-      .brand {
+      .hero {
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 16px;
-        margin-bottom: 36px;
+        gap: 14px;
+        margin-bottom: 32px;
 
-        .brandLogo {
-          width: 48px;
-          height: 48px;
+        .heroLogo {
+          width: 40px;
+          height: 40px;
 
           .dark & {
             filter: invert(1);
@@ -379,172 +387,382 @@ async function createProject(fromPrompt = true) {
 
         h1 {
           margin: 0;
-          font-size: clamp(30px, 4vw, 38px);
+          font-size: clamp(28px, 4vw, 34px);
           font-weight: 600;
-          letter-spacing: -1px;
+          letter-spacing: -0.03em;
         }
       }
 
-      .promptArea {
+      .composer {
         position: relative;
+        padding: 14px 14px 12px 18px;
+        border: 1px solid var(--el-border-color);
+        border-radius: calc(var(--ui-radius) * 2.5);
+        background: var(--el-bg-color-overlay);
+        box-shadow: 0 1px 2px rgb(0 0 0 / 4%), 0 12px 32px -16px rgb(0 0 0 / 16%);
+        transition: border-color 0.2s, box-shadow 0.2s;
 
-        .inspirationHint {
-          bottom: calc(100% + 4px);
-          left: 16px;
-          height: 30px;
-          padding-right: 44px;
-
-          svg {
-            position: absolute;
-            top: -2px;
-            right: 0;
-            width: 36px;
-            height: 36px;
-          }
+        &:focus-within {
+          border-color: var(--el-border-color-darker);
+          box-shadow: 0 1px 2px rgb(0 0 0 / 4%), 0 16px 40px -16px rgb(0 0 0 / 22%);
         }
 
-        .promptCard {
-          border-radius: calc(var(--ui-radius) * 2.5);
-          border-color: var(--el-border-color-lighter);
-          box-shadow: var(--el-box-shadow-lighter);
+        &.busy {
+          opacity: 0.8;
+        }
 
-          &:focus-within {
-            border-color: var(--el-color-primary-light-5);
-          }
+        .composerLabel {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 6px;
+          color: var(--el-text-color-secondary);
+          font-size: 12px;
+        }
 
-          .promptAttachments {
-            margin-bottom: 12px;
-          }
+        .promptAttachments {
+          margin: 6px 0 10px;
+        }
 
-          :deep(.el-textarea__inner) {
-            padding: 4px 0;
-            box-shadow: none;
-            background: transparent;
-            font-size: 15px;
-            line-height: 1.8;
-          }
+        .promptInput :deep(.el-textarea__inner) {
+          padding: 2px 0;
+          box-shadow: none;
+          background: transparent;
+          color: var(--el-text-color-primary);
+          font-size: 15px;
+          line-height: 1.7;
+        }
 
-          :deep(.el-card__footer) {
-            background: var(--el-fill-color-extra-light);
-          }
+        .composerFooter {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 8px 12px;
+          margin-top: 10px;
 
-          .composerFooter {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 12px;
+          :deep(.workspaceButton) {
+            height: 32px;
+            margin-left: -8px;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: var(--el-fill-color-light);
+            color: var(--el-text-color-regular);
+            font-size: 13px;
 
-            .sendActions {
-              margin-left: auto;
-              justify-content: flex-end;
-
-              .modelSelect {
-                width: 190px;
-              }
-
-              .sendButton {
-                height: 36px;
-
-                &.is-circle { width: 36px; }
-              }
+            &:hover {
+              background: var(--el-fill-color);
+              color: var(--el-text-color-primary);
             }
           }
 
-          .workspaceHint {
-            margin: 12px 0 0;
-            color: var(--el-text-color-regular);
-            font-size: 13px;
-            line-height: 1.6;
+          .sendActions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            min-width: 0;
+            margin-left: auto;
+
+            .modelSelect {
+              max-width: 220px;
+            }
+
+            .sendButton {
+              flex-shrink: 0;
+              height: 36px;
+              margin: 0;
+
+              &.is-circle {
+                width: 36px;
+              }
+            }
           }
+        }
+      }
+
+      .workspaceHint {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        margin: 14px 0 0;
+        color: var(--el-text-color-secondary);
+        font-size: 12px;
+        line-height: 1.6;
+        text-align: center;
+
+        svg {
+          flex-shrink: 0;
         }
       }
     }
 
     .projectList {
-      max-width: 1040px;
+      max-width: 960px;
       margin: 0 auto;
-
-      .projectItems {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
-        gap: 16px;
-        margin-top: 16px;
-
-        &.listView { grid-template-columns: 1fr; }
-
-        .projectCard {
-          position: relative;
-
-          .projectActions {
-            position: absolute;
-            top: 12px;
-            right: 8px;
-            display: flex;
-            gap: 4px;
-
-            .el-button { width: 32px; height: 32px; margin: 0; padding: 0; }
-          }
-        }
-
-        .projectEntry {
-          display: flex;
-          align-items: flex-start;
-          gap: 12px;
-          width: 100%;
-          padding: 20px 84px 20px 20px;
-          border: 0;
-          background: transparent;
-          color: inherit;
-          font: inherit;
-          text-align: left;
-          cursor: pointer;
-
-          &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: -2px; }
-          &:disabled { cursor: wait; opacity: 0.6; }
-
-          .projectIcon { flex-shrink: 0; color: var(--el-color-primary); }
-
-          .projectInfo {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            min-width: 0;
-
-            .projectName, .projectPath {
-              overflow: hidden;
-              text-overflow: ellipsis;
-              white-space: nowrap;
-            }
-
-            .projectName { font-weight: 600; }
-            .projectPath { font-size: 13px; color: var(--el-text-color-regular); }
-            .projectTime { font-size: 12px; color: var(--el-text-color-secondary); }
-          }
-        }
-      }
 
       .sectionHeader {
         display: flex;
         align-items: center;
         justify-content: space-between;
         flex-wrap: wrap;
-        gap: 16px;
-        padding-bottom: 16px;
+        gap: 12px;
+        padding-bottom: 12px;
         border-bottom: 1px solid var(--el-border-color-lighter);
 
         h2 {
+          display: flex;
+          align-items: center;
+          gap: 8px;
           margin: 0;
-          font-size: 18px;
+          font-size: 14px;
           font-weight: 600;
+
+          .projectCount {
+            min-width: 20px;
+            padding: 0 6px;
+            border-radius: 999px;
+            background: var(--el-fill-color-light);
+            color: var(--el-text-color-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            line-height: 20px;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+          }
+        }
+
+        .sectionActions {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 4px;
+
+          .sectionButton {
+            height: 30px;
+            margin: 0;
+            padding: 0 10px;
+            color: var(--el-text-color-regular);
+            font-size: 13px;
+
+            &:hover {
+              color: var(--el-text-color-primary);
+            }
+          }
+
+          .iconButton {
+            width: 30px;
+            height: 30px;
+            margin: 0;
+            padding: 0;
+            color: var(--el-text-color-secondary);
+          }
+
+          .actionDivider {
+            width: 1px;
+            height: 16px;
+            margin: 0 4px;
+            background: var(--el-border-color);
+          }
+
+          .viewToggle {
+            padding: 2px;
+            border-radius: var(--ui-radius);
+            background: var(--el-fill-color-light);
+
+            :deep(.el-radio-button__inner) {
+              display: grid;
+              place-items: center;
+              width: 28px;
+              height: 26px;
+              padding: 0;
+              border: 0;
+              border-radius: calc(var(--ui-radius) - 2px) !important;
+              background: transparent;
+              box-shadow: none !important;
+              color: var(--el-text-color-secondary);
+            }
+
+            :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+              background: var(--el-bg-color-overlay);
+              color: var(--el-text-color-primary);
+              box-shadow: 0 1px 2px rgb(0 0 0 / 10%), 0 0 0 1px rgb(0 0 0 / 4%) !important;
+            }
+          }
+        }
+      }
+
+      .projectItems {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+        gap: 12px;
+        margin-top: 16px;
+
+        .projectCard {
+          position: relative;
+          border: 1px solid var(--el-border-color-light);
+          border-radius: var(--ui-radius-large);
+          background: var(--el-bg-color-overlay);
+          transition: border-color 0.18s, box-shadow 0.18s, background-color 0.18s;
+
+          &:hover,
+          &:focus-within {
+            border-color: var(--el-border-color-dark);
+            box-shadow: 0 1px 2px rgb(0 0 0 / 4%), 0 8px 24px -12px rgb(0 0 0 / 16%);
+
+            .projectActions {
+              opacity: 1;
+            }
+          }
+
+          .projectEntry {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            grid-template-areas: "icon name" "icon path" "icon time";
+            align-items: center;
+            gap: 2px 12px;
+            width: 100%;
+            padding: 14px 76px 14px 14px;
+            border: 0;
+            border-radius: inherit;
+            background: transparent;
+            color: inherit;
+            font: inherit;
+            text-align: start;
+            cursor: pointer;
+
+            &:focus-visible {
+              outline: 2px solid var(--el-color-primary);
+              outline-offset: -2px;
+            }
+
+            &:disabled {
+              cursor: wait;
+              opacity: 0.6;
+            }
+
+            .projectIcon {
+              grid-area: icon;
+              align-self: start;
+              display: grid;
+              place-items: center;
+              width: 36px;
+              height: 36px;
+              border-radius: var(--ui-radius);
+              background: var(--el-fill-color-light);
+              color: var(--el-text-color-regular);
+            }
+
+            .projectName,
+            .projectPath {
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            }
+
+            .projectName {
+              grid-area: name;
+              font-size: 14px;
+              font-weight: 600;
+              line-height: 20px;
+            }
+
+            .projectPath {
+              grid-area: path;
+              color: var(--el-text-color-secondary);
+              font-size: 12px;
+              line-height: 18px;
+            }
+
+            .projectTime {
+              grid-area: time;
+              margin-top: 4px;
+              color: var(--el-text-color-placeholder);
+              font-size: 12px;
+              line-height: 16px;
+              font-variant-numeric: tabular-nums;
+            }
+          }
+
+          .projectActions {
+            position: absolute;
+            top: 10px;
+            inset-inline-end: 8px;
+            display: flex;
+            gap: 2px;
+            opacity: 0;
+            transition: opacity 0.15s;
+
+            .el-button {
+              width: 28px;
+              height: 28px;
+              margin: 0;
+              padding: 0;
+              color: var(--el-text-color-secondary);
+
+              &.el-button--danger:hover {
+                color: var(--el-color-danger);
+              }
+            }
+
+            @media (hover: none) {
+              opacity: 1;
+            }
+          }
+        }
+
+        &.listView {
+          grid-template-columns: 1fr;
+          gap: 0;
+          margin-top: 4px;
+
+          .projectCard {
+            border-width: 0 0 1px;
+            border-color: var(--el-border-color-lighter);
+            border-radius: 0;
+            background: transparent;
+
+            &:hover,
+            &:focus-within {
+              border-color: var(--el-border-color-lighter);
+              background: var(--el-fill-color-extra-light);
+              box-shadow: none;
+            }
+
+            .projectEntry {
+              grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.2fr) auto;
+              grid-template-areas: "icon name path time";
+              gap: 16px;
+              padding: 10px 84px 10px 8px;
+
+              .projectIcon {
+                align-self: center;
+                width: 30px;
+                height: 30px;
+              }
+
+              .projectTime {
+                margin: 0;
+              }
+            }
+
+            .projectActions {
+              top: 50%;
+              transform: translateY(-50%);
+            }
+          }
+
+          @media (max-width: 720px) {
+            .projectCard .projectEntry {
+              grid-template-columns: auto minmax(0, 1fr);
+              grid-template-areas: "icon name" "icon path" "icon time";
+              gap: 2px 12px;
+            }
+          }
         }
       }
     }
   }
-}
-
-@keyframes hintNudge {
-  0%, 100% { transform: translateX(0) rotate(-3deg); }
-  50% { transform: translateX(-6px) rotate(-5deg); }
 }
 </style>

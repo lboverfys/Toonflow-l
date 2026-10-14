@@ -1,6 +1,6 @@
 <template>
   <panel class="canvasMenuPanel" position="top-left">
-    <el-card class="canvasMenu" shadow="never" :bodyStyle="{ padding: '5px 10px' }">
+    <el-card class="canvasMenu" shadow="never" :bodyStyle="{ padding: '3px 4px 3px 6px' }">
       <div class="menuContent">
         <el-input v-model="projectNameDraft" class="workspaceNameInput" :style="{ '--workspaceName': JSON.stringify(projectNameDraft || ' ') }" size="small" :title="directory" :disabled="!workspaceStore.project" aria-label="项目名称"
           @keydown.stop @keydown.enter="saveProjectName" @keydown.esc.prevent="projectNameDraft = workspaceName" @blur="saveProjectName" />
@@ -805,17 +805,28 @@ defineExpose({ getCanvases, addCanvas, switchCanvas, renameCanvas, syncCanvasPat
   left: 0;
 }
 
+// 左侧让出工作区菜单（退出、设置）的宽度，两组胶囊按钮并排显示。
 .canvasMenu {
-  margin-left: 100px;
+  margin-left: 78px;
+  border-radius: var(--ui-radius-large);
+  box-shadow: var(--floatingShadow);
 
   .menuContent {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 2px;
+    height: 30px;
+
+    .el-divider--vertical {
+      margin: 0 4px;
+    }
 
     .workspaceNameInput {
       width: auto;
       min-width: 2em;
+      max-width: 240px;
+      overflow: hidden;
+      font-weight: 600;
 
       &::after {
         content: var(--workspaceName);
@@ -838,9 +849,13 @@ defineExpose({ getCanvases, addCanvas, switchCanvas, renameCanvas, syncCanvasPat
     }
 
     .canvasTrigger {
-      padding: 0 4px;
+      height: 30px;
+      padding: 0 8px;
+      border-radius: var(--ui-radius);
+      color: var(--el-text-color-regular);
       :deep(> span) { display: flex; align-items: center; gap: 6px; }
       span { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+      svg { color: var(--el-text-color-secondary); }
     }
   }
 }

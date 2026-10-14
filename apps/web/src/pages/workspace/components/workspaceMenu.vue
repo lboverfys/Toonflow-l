@@ -1,17 +1,15 @@
 <template>
   <div class="workspaceMenu">
-    <el-card shadow="never" :bodyStyle="{ padding: '5px 10px' }">
-      <div class="menuContent">
-        <el-button class="toolButton" text aria-label="退出项目" title="退出项目" @click="exitVisible = true">
-          <icon-x :size="17" aria-hidden="true" />
-        </el-button>
-        <el-button class="toolButton" text :aria-label="hasDesktopUpdate ? '设置，有新版本可用' : '设置'" title="设置" @click="emit('openSettings')">
-          <el-badge isDot :hidden="!hasDesktopUpdate">
-            <icon-settings :size="17" aria-hidden="true" />
-          </el-badge>
-        </el-button>
-      </div>
-    </el-card>
+    <div class="menuContent">
+      <el-button class="toolButton" text aria-label="退出项目" title="退出项目" @click="exitVisible = true">
+        <icon-x :size="17" aria-hidden="true" />
+      </el-button>
+      <el-button class="toolButton" text :aria-label="hasDesktopUpdate ? '设置，有新版本可用' : '设置'" title="设置" @click="emit('openSettings')">
+        <el-badge isDot :hidden="!hasDesktopUpdate">
+          <icon-settings :size="17" aria-hidden="true" />
+        </el-badge>
+      </el-button>
+    </div>
     <el-dialog v-model="exitVisible" title="退出项目" width="360px" alignCenter appendToBody>
       <span>是否退出当前项目并返回首页？</span>
       <template #footer>
@@ -49,13 +47,25 @@ async function exitProject() {
   .menuContent {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 2px;
+    height: 38px;
+    padding: 3px;
+    border: 1px solid var(--el-border-color-light);
+    border-radius: var(--ui-radius-large);
+    background: var(--el-bg-color-overlay);
+    box-shadow: var(--floatingShadow);
 
     .toolButton {
-      width: 28px;
-      height: 28px;
+      width: 30px;
+      height: 30px;
       margin: 0;
       padding: 0;
+      border-radius: var(--ui-radius);
+      color: var(--el-text-color-regular);
+
+      &:hover {
+        color: var(--el-text-color-primary);
+      }
     }
   }
 }

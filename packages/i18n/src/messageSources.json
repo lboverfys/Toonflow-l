@@ -3302,6 +3302,9 @@
   "自动切换": [
     "apps/web/src/components/settings/panels/ui.vue"
   ],
+  "石墨黑": [
+    "apps/web/src/components/settings/panels/ui.vue"
+  ],
   "天空蓝": [
     "apps/web/src/components/settings/panels/ui.vue"
   ],
@@ -4005,6 +4008,9 @@
   "设置，有新版本可用": [
     "apps/web/src/pages/home/index.vue",
     "apps/web/src/pages/workspace/components/workspaceMenu.vue"
+  ],
+  "快捷操作": [
+    "apps/web/src/pages/home/index.vue"
   ],
   "点个 Star 支持一下": [
     "apps/web/src/pages/home/index.vue"

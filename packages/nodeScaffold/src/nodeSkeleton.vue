@@ -24,9 +24,11 @@
         </el-dropdown-menu>
       </template>
     </el-dropdown>
+    <teleport :to="slotDock?.top.value ?? 'body'" :disabled="!docked">
     <div
       v-if="documentTarget || (topVisible && slotsVisible)"
       class="floatingSlot topSlot nodrag nopan nowheel"
+      :class="{ docked }"
       :style="{ width: typeof topWidth === 'number' ? `${topWidth}px` : topWidth }"
       @pointerdown.stop
       @mousedown.stop
@@ -69,9 +71,12 @@
         </el-card>
       </slot>
     </div>
+    </teleport>
+    <teleport :to="slotDock?.bottom.value ?? 'body'" :disabled="!docked">
     <div
       v-if="$slots.bottom && (documentTarget || (bottomVisible && slotsVisible))"
       class="floatingSlot bottomSlot nodrag nopan nowheel"
+      :class="{ docked }"
       :style="{ width: typeof bottomWidth === 'number' ? `${bottomWidth}px` : bottomWidth }"
       @pointerdown.stop
       @mousedown.stop
@@ -80,6 +85,7 @@
       @contextmenu.stop>
       <slot name="bottom" />
     </div>
+    </teleport>
     <div v-show="!documentTarget" class="titleBar">
       <component :is="icon ?? IconBox" class="titleIcon" :size="16" aria-hidden="true" />
       <input
@@ -167,7 +173,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, nextTick, onScopeDispose, ref, shallowRef, watch, watchEffect, type Component, type ShallowRef } from "vue";
+import { computed, inject, nextTick, onScopeDispose, ref, shallowRef, watch, watchEffect, type Component, type Ref, type ShallowRef } from "vue";
 import { Handle, Position, getTransformForBounds, pointToRendererPoint, useNode, useVueFlow, wheelDelta } from "@vue-flow/core";
 import {
   IconRefresh,
@@ -236,6 +242,9 @@ watch(() => props.overviewSrc, () => { overviewError.value = false; });
 const { id: nodeId, node } = useNode();
 const documentContext = inject<NodeDocumentContext | undefined>("nodeDocument", undefined);
 const documentTarget = computed(() => documentContext?.targets.get(nodeId));
+const slotDock = inject<{ top: Ref<HTMLElement | undefined>; bottom: Ref<HTMLElement | undefined> } | undefined>("nodeSlotDock", undefined);
+// 宿主提供停靠区时，选中节点的上下插槽移入停靠区；未选中但主动显示的插槽仍浮在节点旁。
+const docked = computed(() => !documentTarget.value && !!node.selected && !!slotDock?.top.value && !!slotDock.bottom.value);
 const contentVisible = computed(() => !!documentTarget.value || props.previewReady && (props.previewDetailed || props.overviewSrc === undefined));
 watch(contentVisible, (ready, previous) => {
   if (!ready && previous && contentCard.value) previewHeight.value = contentCard.value.$el.offsetHeight;
@@ -368,8 +377,8 @@ function zoomCanvas(event: WheelEvent) {
 const hostZoomCanvas = inject<((event: WheelEvent) => void) | undefined>("canvasZoom", undefined);
 
 const slotsHiddenByInteraction = ref(false);
-// ACT: 多选只操作节点；未选中的节点仍可通过 v-model 主动打开槽位。
-const slotsVisible = computed(() => !slotsHiddenByInteraction.value && (!node.selected || getSelectedNodes.value.length <= 1));
+// ACT: 多选只操作节点；未选中的节点仍可通过 v-model 主动打开槽位。停靠区位置固定，拖动节点时不必隐藏。
+const slotsVisible = computed(() => (docked.value || !slotsHiddenByInteraction.value) && (!node.selected || getSelectedNodes.value.length <= 1));
 onSelectionStart(() => {
   slotsHiddenByInteraction.value = true;
 });
@@ -655,17 +664,6 @@ watch(
     &.bottomSlot {
       top: calc(100% + 12px);
     }
-
-    .mediaToolbar {
-      &:deep(.el-button) {
-        width: auto;
-        min-width: 32px;
-        height: 32px;
-        margin: 0;
-        padding: 0 8px;
-        text-decoration: none;
-      }
-    }
   }
 
   .titleBar {
@@ -812,6 +810,46 @@ watch(
     }
   }
 }
+.floatingSlot {
+  .mediaToolbar {
+    &:deep(.el-button) {
+      width: auto;
+      min-width: 32px;
+      height: 32px;
+      margin: 0;
+      padding: 0 8px;
+      text-decoration: none;
+    }
+  }
+
+  &.docked {
+    max-width: 100%;
+    color: var(--el-text-color-primary);
+    text-align: left;
+
+    & > :deep(.el-card) {
+      border-radius: var(--ui-radius-large, 12px);
+      box-shadow: var(--floatingShadow, var(--el-box-shadow-light));
+    }
+
+    .mediaToolbar {
+      &:deep(.el-card__body) {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+      }
+
+      &:deep(.el-button) {
+        padding: 0 7px;
+        border-radius: var(--el-border-radius-base);
+        font-size: 13px;
+      }
+    }
+  }
+}
+
 @keyframes nodeLoading {
   to {
     transform: rotate(360deg);

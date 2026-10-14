@@ -65,19 +65,29 @@
       <canvasMenu ref="canvasMenuRef" v-model:canvasId="canvasId" :directory="project?.directory" :initialCanvasId="initialCanvasId" :activateCanvas="activateCanvas" :flushSave="flushCanvases ?? flushCanvasSave" @loaded="resetSavedState" @reload="canvasReloading = $event">
         <assetLibrary ref="assetLibraryRef" v-model="assetsVisible" :directory="project?.directory" />
       </canvasMenu>
-      <canvasControls
-        ref="canvasControlsRef"
-        :active="active && !settingsVisible"
-        v-model:assetsVisible="assetsVisible"
-        v-model:snapEnabled="snapEnabled"
-        v-model:showEdges="showEdges"
-        :canvasId="canvasId"
-        :directory="project?.directory"
-        :projectName="project?.name ?? ''"
-        :batchHistory="canvasHistory.batch"
-        :navigation="navigation"
-        @search="nodeSearchRef?.open()"
-        @update:showEdges="edgeDisconnect = undefined" />
+      <panel v-if="showMap" class="canvasMapPanel" position="top-right">
+        <canvasMap :active="active && !settingsVisible && !!canvasId && !!project?.directory" :navigation="navigation" @close="showMap = false" />
+      </panel>
+      <panel class="canvasBottomBar" position="bottom-left">
+        <canvasControls
+          ref="canvasControlsRef"
+          :active="active && !settingsVisible"
+          v-model:assetsVisible="assetsVisible"
+          v-model:showMap="showMap"
+          v-model:snapEnabled="snapEnabled"
+          v-model:showEdges="showEdges"
+          :canvasId="canvasId"
+          :directory="project?.directory"
+          :projectName="project?.name ?? ''"
+          :batchHistory="canvasHistory.batch"
+          :navigation="navigation"
+          @search="nodeSearchRef?.open()"
+          @update:showEdges="edgeDisconnect = undefined" />
+        <div ref="nodeDock" class="nodeDock">
+          <div ref="nodeDockTop" class="dockSlot" />
+          <div ref="nodeDockBottom" class="dockSlot" />
+        </div>
+      </panel>
       <nodeMenu
         :key="JSON.stringify(['nodeMenu', project?.directory, canvasId])"
         ref="nodeMenuRef"
@@ -140,6 +150,7 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import "element-plus/dist/index.css";
 import {
   VueFlow,
+  Panel,
   PanOnScrollMode,
   ConnectionMode,
   SelectionMode,
@@ -169,6 +180,7 @@ import nodeMenu from "./components/nodeMenu.vue";
 import remoteNode from "./components/remoteNode.vue";
 import canvasMenu from "./components/canvasMenu.vue";
 import canvasControls from "./components/canvasControls.vue";
+import canvasMap from "./components/canvasMap.vue";
 import assetLibrary from "./components/assetLibrary.vue";
 import groupNode from "./components/groupNode.vue";
 import viewportEdge from "./components/viewportEdge.vue";
@@ -203,14 +215,21 @@ const { project } = storeToRefs(useWorkspaceStore());
 const workspaceRefreshing = inject("workspaceRefreshing", ref(false));
 
 const canvasElement = ref<HTMLElement>();
+const nodeDock = ref<HTMLElement>();
+const nodeDockTop = ref<HTMLElement>();
+const nodeDockBottom = ref<HTMLElement>();
+provide("nodeSlotDock", { top: nodeDockTop, bottom: nodeDockBottom });
 provide("canvasFocusInsets", () => {
   const canvas = canvasElement.value?.getBoundingClientRect();
+  const dock = nodeDock.value?.getBoundingClientRect();
+  // 聚焦节点时让出底部停靠区，避免节点落在提示词面板下方。
+  const bottom = canvas && dock?.height ? Math.max(80, canvas.bottom - dock.top + 16) : 80;
   const panel = document.getElementById("agentPanel")?.getClientRects()[0];
-  if (!canvas || !panel || panel.right <= canvas.left || panel.left >= canvas.right) return { left: 0, right: 0, top: 64, bottom: 80 };
+  if (!canvas || !panel || panel.right <= canvas.left || panel.left >= canvas.right) return { left: 0, right: 0, top: 64, bottom };
   const leftSpace = Math.max(0, panel.left - canvas.left - 20);
   const rightSpace = Math.max(0, canvas.right - panel.right - 20);
-  return leftSpace >= rightSpace ? { left: 0, right: canvas.width - leftSpace, top: 64, bottom: 80 }
-    : { left: canvas.width - rightSpace, right: 0, top: 64, bottom: 80 };
+  return leftSpace >= rightSpace ? { left: 0, right: canvas.width - leftSpace, top: 64, bottom }
+    : { left: canvas.width - rightSpace, right: 0, top: 64, bottom };
 });
 const flowData = ref<(Node | Edge)[]>([]);
 const canvasId = ref("");
@@ -244,6 +263,7 @@ let gestureScale: number | undefined;
 const isDesktop = new URLSearchParams(window.location.search).get("desktop") === "1";
 let copyingNodes = false;
 const showEdges = ref(true);
+const showMap = ref(true);
 provide("canvasActive", computed(() => props.active));
 provide("canvasShowEdges", showEdges);
 const assetsVisible = ref(false);
@@ -1052,7 +1072,7 @@ function updateCanvasKeys(event: KeyboardEvent) {
   const editing =
     !(target instanceof Element) ||
     !!target.closest("input, textarea, select, button, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='slider']");
-  const navigationAction = target instanceof Element && target.closest("button") && target.closest(".canvasControlStack")
+  const navigationAction = target instanceof Element && target.closest("button") && target.closest(".canvasControlStack, .canvasMap")
     ? (["search", "fitView", "focusSelection", "returnView", "toggleMap"] as const).find(action => shortcutMatches(event, shortcuts[action]))
     : undefined;
   const controlPanPressed = shortcutPressed(event, "Ctrl", pressedCodes)
@@ -1103,7 +1123,7 @@ function updateCanvasKeys(event: KeyboardEvent) {
   else if (action === "fitView") void navigation.showAll();
   else if (action === "focusSelection") void navigation.focusNodes(flow.getSelectedNodes.value.map(node => node.id));
   else if (action === "returnView") void navigation.goBack();
-  else if (action === "toggleMap") canvasControlsRef.value?.toggleMap();
+  else if (action === "toggleMap") showMap.value = !showMap.value;
   else void flow[action]();
 }
 
@@ -1297,6 +1317,7 @@ const defaultEdgeOptions = markRaw({
 .canvas {
   width: 100%;
   height: 100%;
+  container-type: inline-size;
 
   &.compositingEnabled :deep(.vue-flow__transformationpane) {
     will-change: transform;
@@ -1344,6 +1365,49 @@ const defaultEdgeOptions = markRaw({
     padding: 8px;
     margin: -8px;
     border-radius: 4px;
+  }
+
+  // 地图放在右上角，让开工作区顶栏（15px 外边距 + 38px 按钮 + 10px 间距）；顶栏按同一画布宽度在 560px 以下换到第二行，地图随之下移。
+  .canvasMapPanel.vue-flow__panel {
+    top: 48px;
+
+    @container (max-width: 560px) {
+      top: 94px;
+    }
+  }
+
+  // 底栏横跨画布，空白处放行指针给画布；左侧为画布工具，选中节点的工具栏与提示词停靠在剩余空间居中。
+  .canvasBottomBar.vue-flow__panel {
+    right: 0;
+    display: flex;
+    // 反向换行时交叉轴起点在底部，flex-start 才是贴底对齐；空间不足时停靠区换到工具上方。
+    flex-wrap: wrap-reverse;
+    align-items: flex-start;
+    gap: 12px;
+    pointer-events: none !important;
+
+    .nodeDock {
+      display: flex;
+      flex: 1 1 640px;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+
+      .dockSlot {
+        display: flex;
+        justify-content: center;
+        width: 100%;
+
+        &:empty {
+          display: none;
+        }
+
+        :deep(.floatingSlot) {
+          pointer-events: auto;
+        }
+      }
+    }
   }
 }
 .edgeDisconnect {

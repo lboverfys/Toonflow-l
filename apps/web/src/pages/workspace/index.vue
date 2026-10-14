@@ -24,34 +24,39 @@
         :fileAction="performFileAction"
         :saveNode="saveDocumentNode" />
     </keep-alive>
-    <workspaceMenu class="workspaceMenu" @openSettings="settingsVisible = true" />
-    <workspacePresence
-      v-if="workspaceStore.project"
-      class="workspacePresence"
-      :directory="workspaceStore.project.directory"
-      :canvasId="canvasPanelRef?.canvasId"
-      :panel="activePanel"
-      :refreshing="refreshing"
-      :saveError="canvasPanelRef?.saveError"
-      @resolveSave="canvasPanelRef?.showSaveConflict()"
-      @refresh="refreshProject" />
-    <el-segmented :modelValue="activePanel" class="panelSwitcher" :options="panelOptions" size="small" aria-label="切换面板" @change="switchPanel">
-      <template #default="{ item }">
-        <span class="panelOption">
-          <component :is="item.icon" :size="14" aria-hidden="true" />
-          {{ item.label }}
-        </span>
-      </template>
-    </el-segmented>
-    <el-tooltip v-if="!agentVisible" content="Toonflow Agent" placement="bottom" :showArrow="false" :hideAfter="0">
-      <el-button
-        class="agentButton"
-        :class="{ active: agentVisible }"
-        :aria-expanded="agentVisible"
-        aria-label="Toonflow Agent"
-        aria-controls="agentPanel"
-        @click="agentVisible = !agentVisible"></el-button>
-    </el-tooltip>
+    <div class="workspaceChrome">
+      <workspaceMenu class="workspaceMenu" @openSettings="settingsVisible = true" />
+      <div class="workspaceActions">
+        <el-segmented :modelValue="activePanel" class="panelSwitcher" :options="panelOptions" aria-label="切换面板" @change="switchPanel">
+          <template #default="{ item }">
+            <span class="panelOption">
+              <component :is="item.icon" :size="15" aria-hidden="true" />
+              <span class="optionLabel">{{ item.label }}</span>
+            </span>
+          </template>
+        </el-segmented>
+        <workspacePresence
+          v-if="workspaceStore.project"
+          :directory="workspaceStore.project.directory"
+          :canvasId="canvasPanelRef?.canvasId"
+          :panel="activePanel"
+          :refreshing="refreshing"
+          :saveError="canvasPanelRef?.saveError"
+          @resolveSave="canvasPanelRef?.showSaveConflict()"
+          @refresh="refreshProject" />
+        <el-tooltip v-if="!agentVisible" content="Toonflow Agent" placement="bottom-end" :showArrow="false" :hideAfter="0">
+          <el-button
+            class="agentButton"
+            type="primary"
+            :aria-expanded="agentVisible"
+            aria-label="Toonflow Agent"
+            aria-controls="agentPanel"
+            @click="agentVisible = !agentVisible">
+            <icon-sparkles :size="18" aria-hidden="true" />
+          </el-button>
+        </el-tooltip>
+      </div>
+    </div>
     <floatingAgent v-if="agentMounted" v-model="agentVisible" :inert="refreshing" @resize="agentWidth = $event" />
     <settings v-model="settingsVisible" />
   </main>
@@ -61,7 +66,7 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, onScopeDispose, provide, ref, shallowRef, watch, type ComponentPublicInstance } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import axios from "axios";
-import { IconLayoutDashboard, IconFileText } from "@tabler/icons-vue";
+import { IconLayoutDashboard, IconFileText, IconSparkles } from "@tabler/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import settings from "@/components/settings/index.vue";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -88,7 +93,8 @@ const panelOptions = [
   { label: "文档", value: "document", icon: IconFileText },
 ];
 const agentVisible = ref(true);
-const agentWidth = ref(0);
+// 与 Agent 默认停靠宽度一致；Agent 延迟挂载期间先让出位置，避免画布宽度跳变。
+const agentWidth = ref(Math.min(420, window.innerWidth));
 const settingsVisible = ref(false);
 const refreshing = ref(false);
 provide("workspaceRefreshing", refreshing);
@@ -275,7 +281,9 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
 
   .canvasPanel {
     position: absolute;
-    inset: 0;
+    inset: 0 var(--agentWidth) 0 0;
+    width: auto;
+    height: auto;
 
     &.backgroundPanel {
       opacity: 0;
@@ -284,132 +292,100 @@ function saveDocumentNode(directory: string, canvasPath: string, nodeId: string,
     }
   }
 
-  .workspaceMenu {
+  // 顶部浮层只覆盖 Agent 停靠后剩余的区域，按实际可用宽度收紧标签。
+  .workspaceChrome {
     position: absolute;
-    top: 15px;
-    left: 15px;
+    top: 0;
+    right: var(--agentWidth);
+    left: 0;
     z-index: 5;
-  }
+    height: 0;
+    container-type: inline-size;
+    pointer-events: none;
 
-  .panelSwitcher {
-    --el-border-radius-base: 999px;
-    --el-segmented-bg-color: var(--el-bg-color-overlay);
-    --el-segmented-item-selected-color: var(--el-color-primary);
-    --el-segmented-item-selected-bg-color: var(--el-color-primary-light-9);
-    position: absolute;
-    top: 15px;
-    left: 50%;
-    z-index: 5;
-    min-height: 32px;
-    padding: 3px;
-    border: 1px solid var(--el-border-color-light);
-    box-shadow: var(--el-box-shadow-lighter);
-    font-size: 12px;
-    transform: translateX(-50%);
+    .workspaceMenu,
+    .workspaceActions {
+      position: absolute;
+      top: 15px;
+      pointer-events: auto;
+    }
 
-    .panelOption {
+    .workspaceMenu {
+      left: 15px;
+    }
+
+    .workspaceActions {
+      right: 15px;
       display: flex;
       align-items: center;
-      justify-content: center;
-      gap: 5px;
-      padding: 0 3px;
-      line-height: 24px;
-    }
-  }
-
-  .workspacePresence {
-    position: absolute;
-    top: 15px;
-    right: 70px;
-    z-index: 5;
-
-    @media (max-width: 1000px) {
-      top: 60px;
-      right: 15px;
-    }
-  }
-
-  .agentButton {
-    position: absolute;
-    top: 15px;
-    right: 15px;
-    z-index: 5;
-    width: 44px;
-    height: 44px;
-    padding: 0;
-    border: 1px solid var(--el-border-color-light);
-    border-radius: 50%;
-    background: linear-gradient(145deg, var(--el-fill-color-light), var(--el-bg-color-overlay));
-    color: #f4fffe;
-    overflow: hidden;
-    isolation: isolate;
-    transition: transform 180ms ease;
-
-    &::before,
-    &::after {
-      content: "";
-      position: absolute;
-      inset: 5px;
-      border-radius: 50%;
-      pointer-events: none;
+      gap: 8px;
     }
 
-    &::before {
-      z-index: -2;
-      background: radial-gradient(ellipse at 22% 15%, #a5fff0, transparent 55%), radial-gradient(ellipse at 85% 85%, #a999ff, transparent 60%),
-        radial-gradient(ellipse at 85% 20%, #1dd6cb, transparent 55%), linear-gradient(150deg, #12b8c9, #2765ba 65%, #5a5cc4);
-      animation: agentFlow 10s linear infinite;
-      filter: saturate(0.85);
-      transition: filter 180ms ease;
-    }
+    .panelSwitcher {
+      --el-segmented-bg-color: var(--el-fill-color);
+      --el-segmented-color: var(--el-text-color-regular);
+      height: 38px;
+      padding: 3px;
+      border: 1px solid var(--el-border-color-light);
+      border-radius: var(--ui-radius-large);
+      box-shadow: var(--floatingShadow);
+      font-size: 13px;
 
-    &::after {
-      z-index: -1;
-      background: radial-gradient(ellipse at 30% 12%, #ffffff80, transparent 48%), radial-gradient(ellipse at 65% 95%, #17246070, transparent 65%);
-      box-shadow: inset 0 1px 2px #ffffff80, inset 0 -2px 4px #14255460;
-    }
+      :deep(.el-segmented__item),
+      :deep(.el-segmented__item-selected) {
+        border-radius: var(--ui-radius);
+      }
 
-    &.active::before,
-    &:hover::before {
-      filter: saturate(1.15);
-    }
-
-    &:hover {
-      transform: translateY(-1px);
-    }
-
-    &:active {
-      transform: scale(0.95);
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--el-color-primary);
-      outline-offset: 3px;
-    }
-
-    .agentLogo {
-      width: 24px;
-      height: 24px;
-      flex-shrink: 0;
-      background: currentColor;
-      mask-size: contain;
-      mask-position: center;
-      mask-repeat: no-repeat;
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      transition: none;
-
-      &::before {
-        animation: none;
+      .panelOption {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 0 4px;
+        line-height: 30px;
       }
     }
-  }
-}
 
-@keyframes agentFlow {
-  to {
-    transform: rotate(360deg);
+    .agentButton {
+      width: 38px;
+      height: 38px;
+      margin: 0;
+      padding: 0;
+      border-radius: var(--ui-radius-large);
+      box-shadow: var(--floatingShadow);
+      transition: transform 160ms ease, background-color 160ms ease;
+
+      &:active {
+        transform: scale(0.96);
+      }
+
+      &:focus-visible {
+        outline: 2px solid var(--el-color-primary);
+        outline-offset: 2px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        transition: none;
+      }
+    }
+
+    @container (max-width: 760px) {
+      .panelSwitcher .optionLabel,
+      .workspaceActions :deep(.presenceSummary) {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+    }
+
+    @container (max-width: 560px) {
+      .workspaceActions {
+        top: 61px;
+      }
+    }
   }
 }
 </style>

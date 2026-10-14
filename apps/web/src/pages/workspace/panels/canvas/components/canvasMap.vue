@@ -108,12 +108,10 @@ function viewportCenter() {
 }
 
 function nodeColor(node: GraphNode) {
-  if (node.type === "canvasGroup") return "var(--el-color-primary-light-9)";
+  if (node.type === "canvasGroup") return "var(--el-fill-color)";
   const type = node.type.toLocaleLowerCase();
-  if (type.includes("text")) return "#8b7ad9";
-  if (type.includes("image")) return "#50ad91";
-  if (type.includes("video")) return "#dd9c52";
-  return "#799ab8";
+  const color = type.includes("text") ? "#8b7ad9" : type.includes("image") ? "#50ad91" : type.includes("video") ? "#dd9c52" : "#799ab8";
+  return `color-mix(in srgb, ${color} 62%, var(--el-bg-color))`;
 }
 
 function nodeStrokeColor(node: GraphNode) {
@@ -252,9 +250,9 @@ onBeforeUnmount(releaseNavigation);
   overflow: hidden;
   box-sizing: content-box;
   border: 1px solid var(--el-border-color-light);
-  border-radius: 10px;
+  border-radius: var(--ui-radius-large);
   background: var(--el-bg-color-overlay);
-  box-shadow: var(--el-box-shadow-light);
+  box-shadow: var(--floatingShadow);
   color: var(--el-text-color-primary);
 
   .mapHeader {
@@ -262,7 +260,7 @@ onBeforeUnmount(releaseNavigation);
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding: 7px 8px 7px 12px;
+    padding: 6px 6px 6px 12px;
 
     .mapTitle {
       display: flex;
@@ -286,12 +284,12 @@ onBeforeUnmount(releaseNavigation);
         height: 26px;
         padding: 0;
         border: 0;
-        border-radius: 5px;
+        border-radius: var(--ui-radius-small);
         background: transparent;
-        color: var(--el-text-color-regular);
+        color: var(--el-text-color-secondary);
         cursor: pointer;
 
-        &:hover { color: var(--el-color-primary); background: var(--el-fill-color-light); }
+        &:hover { color: var(--el-text-color-primary); background: var(--el-fill-color-light); }
         &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: -2px; }
       }
     }
