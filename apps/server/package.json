@@ -8,6 +8,7 @@
     "./mediaStorage": "./src/types/mediaStorage.ts",
     "./remoteConnection": "./src/remoteConnection.ts",
     "./desktop": "./src/types/desktop.ts",
+    "./clientFiles": "./src/utils/desktop/clientFiles.ts",
     "./mcp": "./src/utils/mcp/runtime.ts",
     "./mobileLink": "./src/utils/mobileLink/index.ts",
     "./browser": "./src/utils/browser/index.ts",

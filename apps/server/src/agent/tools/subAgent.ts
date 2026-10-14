@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { CanvasContext } from "@toonflow/tools-scaffold/runtime";
+import type { CanvasContext, ClientFileContext } from "@toonflow/tools-scaffold/runtime";
 import { teamNameSchema } from "@toonflow/teams-scaffold/runtime";
 import { addUsage, emptyUsage, type SubAgentModel, type SubAgentResult } from "@/agent/runtime/subAgent";
 import { createTeamRunner } from "@/agent/teams";
@@ -17,8 +17,8 @@ const parameters = z.strictObject({
   })).min(1),
 });
 
-export async function createSubAgentTool({ cwd, tools, canvas, runTask, ...modelOptions }: SubAgentModel & {
-  cwd: string; tools: ToolDefinition[]; canvas?: CanvasContext;
+export async function createSubAgentTool({ cwd, tools, canvas, clientFiles, runTask, ...modelOptions }: SubAgentModel & {
+  cwd: string; tools: ToolDefinition[]; canvas?: CanvasContext; clientFiles?: ClientFileContext;
   runTask: (name: string, task: string, signal?: AbortSignal, onProgress?: (text: string) => void) => Promise<{ result: SubAgentResult; usage: ReturnType<typeof emptyUsage> }>;
 }): Promise<ToolDefinition> {
   if (tools.some(tool => tool.name === "subAgent")) throw new Error("工具名称 subAgent 已被内置子任务工具占用");
@@ -50,7 +50,7 @@ export async function createSubAgentTool({ cwd, tools, canvas, runTask, ...model
           const output = remote
             ? await runRemoteTeam({ ...task, name: task.team!, signal, onProgress })
             : task.team
-              ? await (await createTeamRunner({ ...modelOptions, cwd, tools: inheritedTools, canvas, name: task.team })).run(task.task, signal, onProgress)
+              ? await (await createTeamRunner({ ...modelOptions, cwd, tools: inheritedTools, canvas, clientFiles, name: task.team })).run(task.task, signal, onProgress)
               : await runTask(task.name, task.task, signal, onProgress);
           results[index] = { ...output.result, name: task.name };
           addUsage(usage, output.usage);

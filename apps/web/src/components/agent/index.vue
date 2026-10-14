@@ -26,6 +26,7 @@
       :key="item.key"
       :ref="instance => setConversationRef(item, instance)"
       :active="visible && item.key === conversationKey"
+      :visible="visible"
       :initialSession="item.session"
       :sessionFile="item.file"
       :disabled="loading || !initialized"

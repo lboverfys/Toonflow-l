@@ -5,6 +5,7 @@ import { posix } from "node:path";
 import type { AddressInfo, Socket } from "node:net";
 import type { Server } from "node:http";
 import { createRemoteConnection } from "@toonflow/server/remoteConnection";
+import { clearClientFileGrants } from "@toonflow/server/clientFiles";
 import { getMobileLinkConfig, getMobileLinkStatus, startMobileLinkRuntime, stopMobileLinkRuntime, suspendMobileLinkRuntime } from "@toonflow/server/mobileLink";
 import { initializeMcpRuntime, stopMcpRuntime } from "@toonflow/server/mcp";
 import { languageRequest, translateError, translateMessage } from "@toonflow/server/i18n";
@@ -17,6 +18,7 @@ export default async function createDesktopConnection(app: express.Express, dire
   const nativePosts = new Set([
     "/api/desktop/ready", "/api/desktop/closePrepared", "/api/desktop/devtools", "/api/desktop/clipboard/read", "/api/desktop/clipboard/write",
     "/api/desktop/selectSaveFile", "/api/desktop/saveFile", "/api/desktop/providerFile/select", "/api/desktop/providerFile/read",
+    "/api/desktop/clientFiles/grant", "/api/desktop/clientFiles/revoke", "/api/desktop/clientFiles/renew", "/api/desktop/clientFiles/run", "/api/desktop/clientFiles/execute",
   ]);
 
   async function start() {
@@ -107,6 +109,7 @@ export default async function createDesktopConnection(app: express.Express, dire
 
   async function stopGateway() {
     current?.connection.stop();
+    await clearClientFileGrants(app);
     if (!current?.server) return;
     await new Promise<void>(resolve => {
       current.server.close(() => resolve());
