@@ -24,6 +24,7 @@ export const agentAttachmentsSchema = z
 export type ActiveAgentSession = {
   history: SessionManager; session?: AgentSession; send: (event: AgentEvent) => void;
   entryOffset: number; tools: Map<string, AgentToolCall>;
+  clientFileRunId?: string; clientFileOwner?: string;
   abort(): Promise<void>;
 };
 type SessionMessage = {

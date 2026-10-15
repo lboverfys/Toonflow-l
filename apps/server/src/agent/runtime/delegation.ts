@@ -1,6 +1,6 @@
 import { readFile } from "@toonflow/file";
 import { parseSessionEntries } from "@earendil-works/pi-coding-agent";
-import type { CanvasContext } from "@toonflow/tools-scaffold/runtime";
+import type { CanvasContext, ClientFileContext } from "@toonflow/tools-scaffold/runtime";
 import type { AgentEvent } from "@/agent/runtime/types";
 import { run } from "@/agent/runtime";
 import { createAgentConversation, getToolResultText, trackAgentEvent, updateSubAgent } from "@/agent/runtime/sessions";
@@ -14,6 +14,7 @@ export async function runDelegatedAgent(options: {
   cwd: string; parentFile: string; name: string; task: string;
   providerId: string; modelId: string; thinkingLevel: "off" | "low" | "medium" | "high";
   canvas?: CanvasContext; signal?: AbortSignal; send: (event: AgentEvent) => void; onProgress?: (text: string) => void;
+  clientFiles?: ClientFileContext; clientDeviceName?: string;
 }) {
   const { cwd, parentFile, name, task, providerId, modelId, thinkingLevel, canvas, signal, onProgress } = options;
   const child = await createAgentConversation(cwd, { parentFile, name, task, providerId, modelId, thinkingLevel });
@@ -27,10 +28,10 @@ export async function runDelegatedAgent(options: {
   const controller = new AbortController();
   const childSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const bridge = canvas ? createCanvasContext(cwd, canvas, send) : undefined;
-  const questions = createQuestionContext(cwd, send, () => controller.abort());
+  const questions = createQuestionContext(cwd, send, () => controller.abort(), options.clientFiles?.ownerId);
   const result: SubAgentResult = { name, status: "running", result: "准备执行" };
   try {
-    await run({ prompt: task, cwd, sessionFile: child.file, providerId, modelId, thinkingLevel, canvas: bridge?.context, question: questions.context, signal: childSignal, onCancel: () => controller.abort() }, send);
+    await run({ prompt: task, cwd, sessionFile: child.file, providerId, modelId, thinkingLevel, canvas: bridge?.context, clientFiles: options.clientFiles, clientDeviceName: options.clientDeviceName, question: questions.context, signal: childSignal, onCancel: () => controller.abort() }, send);
     result.status = childSignal.aborted ? "cancelled" : "completed";
   } catch (error) {
     result.status = childSignal.aborted ? "cancelled" : (error as { code?: string })?.code === "AGENT_LENGTH" ? "limited" : "error";

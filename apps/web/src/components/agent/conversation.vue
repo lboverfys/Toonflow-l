@@ -108,6 +108,7 @@
         <div ref="senderElement" class="senderEditor" @keydown.capture="handleSenderKeydown"></div>
         <teleport v-for="target in draftMentionTargets" :key="target.key" :to="target.element"><mentionThumbnail v-bind="mentionThumbnailProps(target.mention)" :directory="directory"><icon-photo :size="14" /></mentionThumbnail></teleport>
         <mentionContent ref="draftMentionPreview" :mentions="draftMentions" :directory="directory" removable @remove="removeDraftMention" />
+        <clientFilesControl ref="clientFilesRef" :disabled="locked" :visible="visible" @revoked="stopMessage" />
         <div class="senderActions">
           <modelPopover v-model="selectedModel" v-model:reasoningEffort="reasoningEffort" :active="active" :disabled="disabled" />
           <mentionMenu ref="mentionMenuRef" :directory="directory" :active="active" :disabled="locked || !directory" :query="mentionQuery" :editor="senderElement" :currentCanvasId="createCanvasContext?.()?.id" @open="captureMentionPosition" @select="insertMentions" @dismiss="mentionQuery = undefined" />
@@ -175,6 +176,8 @@ import mentionThumbnail from "./mentionThumbnail.vue";
 import { mentionName, mentionParts, mentionPlainText, mentionThumbnailProps } from "./mentionText";
 import toolMessage from "./toolMessage.vue";
 import attachmentList from "./attachmentList.vue";
+import clientFilesControl from "./clientFilesControl.vue";
+import type { ClientFileDirectory, ClientFileResult } from "@toonflow/tools-scaffold/runtime";
 import { createPastedTextFile, readTextAttachment } from "./textAttachments";
 import useWorkspaceFiles from "@/lib/workspaceFiles";
 import { writeClipboardText } from "@/lib/clipboard";
@@ -196,7 +199,7 @@ import "tdesign-vue-next/es/style/index.css";
 import "@tdesign-vue-next/chat/es/style/index.css";
 import "x-sender/lib/XSender.css";
 
-const props = defineProps<{ active: boolean; initialSession: AgentConversation | null; sessionFile?: string; disabled: boolean }>();
+const props = defineProps<{ active: boolean; visible: boolean; initialSession: AgentConversation | null; sessionFile?: string; disabled: boolean }>();
 const emit = defineEmits<{ session: [file: string]; sent: [prompt: string]; event: [event: AgentEvent] }>();
 const workspaceStore = useWorkspaceStore();
 const directory = workspaceStore.project?.directory;
@@ -226,7 +229,8 @@ const busy = ref(false);
 const compacting = ref(false);
 const deletingId = ref<string>();
 const restoringAttachment = ref(false);
-const locked = computed(() => props.disabled || busy.value || deletingId.value !== undefined || restoringAttachment.value);
+const clientFilesRef = ref<InstanceType<typeof clientFilesControl>>();
+const locked = computed(() => props.disabled || busy.value || deletingId.value !== undefined || restoringAttachment.value || !!clientFilesRef.value?.pending);
 const editingId = ref<string>();
 const draftMentions = ref<AgentMention[]>([]);
 const draftMentionTargets = shallowRef<{ key: symbol; element: HTMLElement; mention: AgentMention }[]>([]);
@@ -530,6 +534,23 @@ async function sendCanvasResult(event: Extract<AgentEvent, { type: "canvasCall" 
   }
 }
 
+async function sendClientFileResult(event: Extract<AgentEvent, { type: "clientFileCall" }>, signal: AbortSignal) {
+  let result: { ok: true; result: ClientFileResult } | { ok: false; error: string };
+  try {
+    if (!clientFilesRef.value) throw new Error("当前客户端不支持读取本机文件");
+    result = { ok: true, result: await clientFilesRef.value.execute(event, signal) };
+  } catch (error) {
+    result = { ok: false, error: (error instanceof Error ? error.message : "读取本机文件失败").slice(0, 8000) };
+  }
+  if (signal.aborted) result = { ok: false, error: "本机文件读取已取消" };
+  const response = await fetch("/api/agent/clientFileResult", {
+    method: "POST", headers: { "Accept-Language": locale.value, "Content-Type": "application/json", "x-toonflow-workspace": "1" },
+    body: JSON.stringify({ directory, runId: event.runId, directoryId: event.directoryId, callId: event.callId, response: result }),
+    signal: signal.aborted ? AbortSignal.timeout(5000) : signal, keepalive: signal.aborted,
+  });
+  if (!response.ok) throw new Error((await response.json()).message || "本机文件结果回传失败");
+}
+
 async function sendMessage(source?: AgentMessage) {
   const instance = sender;
   const editing = source && editingId.value === source.id;
@@ -570,15 +591,17 @@ async function sendMessage(source?: AgentMessage) {
   const handledCanvasCalls = new Set<string>();
   const pendingQuestions = new Map<string, string>();
   const activeChildFiles = new Set<string>();
+  let clientFiles: { runId: string; directory: ClientFileDirectory } | undefined;
   const finishStats = anonymousData.startAgent();
   try {
     if (!source) await instance.reset();
     requestController.signal.throwIfAborted();
     await uploadAttachments(attachments, directory, requestController.signal);
+    clientFiles = await clientFilesRef.value?.start(requestController.signal);
     const response = await fetch("/api/agent", {
       method: "POST",
       headers: { "Accept-Language": locale.value, "Content-Type": "application/json", "x-toonflow-workspace": "1" },
-      body: JSON.stringify({ prompt, mentions, attachments: attachments.map(({ name, path, mimeType }) => ({ name, path, mimeType })), directory, providerId: model.providerId, modelId: model.modelId, thinkingLevel: reasoningEffort.value || undefined, sessionFile: props.sessionFile, resendFrom, canvas: canvasContext ? { id: canvasContext.id, tools: canvasContext.tools } : undefined }),
+      body: JSON.stringify({ prompt, mentions, attachments: attachments.map(({ name, path, mimeType }) => ({ name, path, mimeType })), directory, providerId: model.providerId, modelId: model.modelId, thinkingLevel: reasoningEffort.value || undefined, sessionFile: props.sessionFile, resendFrom, clientFiles, canvas: canvasContext ? { id: canvasContext.id, tools: canvasContext.tools } : undefined }),
       signal: requestController.signal,
     });
     for await (const event of readAgentEvents(response, requestController.signal)) {
@@ -593,6 +616,12 @@ async function sendMessage(source?: AgentMessage) {
       }
       if (toolEvent.type === "question") pendingQuestions.set(`${scope}${toolEvent.toolCallId}`, toolEvent.callId);
       if (toolEvent.type === "tool" && toolEvent.tool.status !== "running") pendingQuestions.delete(`${scope}${toolEvent.tool.id}`);
+      if (toolEvent.type === "clientFileCall") {
+        if (handledCanvasCalls.has(toolEvent.callId)) throw new Error("收到重复的本机文件调用");
+        handledCanvasCalls.add(toolEvent.callId);
+        await sendClientFileResult(toolEvent, requestController.signal);
+        continue;
+      }
       if (toolEvent.type === "canvasCall") {
         if (handledCanvasCalls.has(toolEvent.callId)) throw new Error("收到重复的画布调用");
         handledCanvasCalls.add(toolEvent.callId);
@@ -644,6 +673,17 @@ async function sendMessage(source?: AgentMessage) {
       emit("event", { type: "subAgentEvent", file: props.sessionFile, event: { type: "error", message } });
     }
   } finally {
+    if (clientFiles) {
+      try {
+        const response = await fetch("/api/agent/clientFileCancel", {
+          method: "POST", headers: { "Content-Type": "application/json", "x-toonflow-workspace": "1" },
+          body: JSON.stringify({ directory, runId: clientFiles.runId, directoryId: clientFiles.directory.id }),
+          signal: AbortSignal.timeout(5000), keepalive: true,
+        });
+        if (!response.ok) throw new Error((await response.json()).message || "结束本机文件读取失败");
+      } catch (error) { console.warn("结束主机文件读取请求失败：", error); }
+    }
+    await clientFilesRef.value?.stop();
     for (const file of activeChildFiles) emit("event", { type: "subAgentEvent", file, event: { type: "error", message: "委派连接已结束，请重新打开子会话查看结果" } });
     // ACT: Bun 的流断开事件可能不触发；主动结束仍在等待的提问，不依赖断开通知。
     for (const callId of pendingQuestions.values()) {

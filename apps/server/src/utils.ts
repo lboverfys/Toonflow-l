@@ -6,6 +6,8 @@ import * as mediaPreviews from "@/utils/media/previews";
 import * as browser from "@/utils/browser";
 import * as singleAgent from "@/utils/singleAgent";
 import * as desktop from "@/utils/desktop";
+import * as clientFiles from "@/utils/desktop/clientFiles";
+import * as clientFileBridge from "@/agent/bridge/clientFiles";
 import * as providerDebug from "@/utils/media/debug";
 import * as mediaGeneration from "@/utils/media/generation";
 import * as mediaProvider from "@/utils/media/provider";
@@ -42,6 +44,8 @@ export default {
   browser,
   singleAgent,
   desktop,
+  clientFiles,
+  clientFileBridge,
   providerDebug,
   mediaGeneration,
   mediaProvider,

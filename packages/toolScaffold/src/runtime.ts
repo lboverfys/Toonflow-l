@@ -230,7 +230,20 @@ export interface ToolFiles {
   importImage(url: string): Promise<{ path: string; mimeType: string }>;
 }
 
+export type ClientFileDirectory = { id: string; name: string };
+export type ClientFileRequest = { action: "list" | "read"; path: string; cursor?: string; offset?: number; revision?: string };
+export type ClientFileResult =
+  | { action: "list"; path: string; entries: { name: string; type: "file" | "directory" }[]; cursor?: string }
+  | { action: "read"; path: string; text: string; offset: number; nextOffset: number | null; size: number; revision: string; encoding: string };
+export interface ClientFileContext {
+  directory: ClientFileDirectory;
+  ownerId: string;
+  runId: string;
+  call(request: ClientFileRequest, signal?: AbortSignal): Promise<ClientFileResult>;
+}
+
 export interface ToolContext {
+  clientFiles?: ClientFileContext;
   assets?: { execute: ToolDefinition["execute"] };
   browser?: {
     execute(sessionId: string, args: Record<string, unknown>, config: Record<string, unknown>, signal?: AbortSignal,
