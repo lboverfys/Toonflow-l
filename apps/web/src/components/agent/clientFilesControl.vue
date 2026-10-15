@@ -118,7 +118,7 @@ watch(() => props.visible, visible => {
   if (!visible && (authorized.value || pending.value)) void revokeDirectory();
 });
 onBeforeUnmount(() => { window.removeEventListener("pagehide", dispose); dispose(); });
-defineExpose({ pending, start, execute, stop });
+defineExpose({ pending, authorized, start, execute, stop });
 </script>
 
 <style scoped lang="scss">

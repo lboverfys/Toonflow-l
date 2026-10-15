@@ -39,8 +39,8 @@ export type AgentEvent =
   | { type: "clientFileCall"; runId: string; directoryId: string; callId: string; request: ClientFileRequest }
   | ({ type: "question"; callId: string; toolCallId: string } & QuestionRequest)
   | { type: "error"; message: string }
-  | { type: "session"; file: string }
-  | { type: "userMessage"; id: string; content?: string; attachments?: { name: string; path: string; mimeType: string }[]; mentions?: AgentMention[] }
+  | { type: "session"; file: string; runId?: string }
+  | { type: "userMessage"; id: string; clientId?: string; content?: string; attachments?: { name: string; path: string; mimeType: string }[]; mentions?: AgentMention[] }
   | { type: "subAgent"; agent: AgentSubAgent }
   | { type: "subAgentEvent"; file: string; event: AgentEvent }
   | { type: "report"; parentFile: string; file: string; name: string; content: string; id: string }

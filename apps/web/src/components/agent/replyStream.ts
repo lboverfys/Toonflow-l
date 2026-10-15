@@ -37,6 +37,8 @@ export async function* readAgentEvents<T extends { type: string; message?: strin
 
 export function createReplyStream(reply: AgentMessage) {
   const parts = reply.parts!;
+  const partsById = new Map(parts.map(part => [part.id, part]));
+  const toolsById = new Map(parts.flatMap(part => part.type === "tool" ? [[part.tool.id, part] as const] : []));
   let thinkingPart: Extract<AgentMessagePart, { type: "thinking" }> | undefined;
   let thinkingStartedAt = 0;
   let thinkingDuration = 0;
@@ -52,35 +54,40 @@ export function createReplyStream(reply: AgentMessage) {
     if (!thinkingPart) return;
     flushContent.flush();
     thinkingPart.duration = thinkingDuration + (performance.now() - thinkingStartedAt) / 1000;
-    thinkingPart.collapsed = true;
     thinkingPart = undefined;
   }
 
   function receive(event: Extract<AgentEvent, { type: "text" | "thinking" | "tool" | "question" }>) {
     if (event.type === "question") {
-      const part = parts.find(part => part.type === "tool" && part.tool.id === event.toolCallId);
+      const part = toolsById.get(event.toolCallId);
       if (part?.type !== "tool") throw new Error("提问缺少对应的工具调用");
       part.tool.question = { callId: event.callId, title: event.title, question: event.question, options: event.options, fields: event.fields };
       return;
     }
     if (event.type === "tool") {
-      const part = parts.find((part): part is Extract<AgentMessagePart, { type: "tool" }> => part.type === "tool" && part.id === event.blockId);
-      if (part) Object.assign(part.tool, event.tool);
+      const part = partsById.get(event.blockId);
+      if (part?.type === "tool") {
+        toolsById.delete(part.tool.id);
+        Object.assign(part.tool, event.tool);
+        toolsById.set(part.tool.id, part);
+      }
       else {
         finishThinking();
         parts.push({ id: event.blockId, type: "tool", tool: event.tool });
+        const added = parts.at(-1)! as Extract<AgentMessagePart, { type: "tool" }>;
+        partsById.set(added.id, added);
+        toolsById.set(added.tool.id, added);
       }
       return;
     }
-    const existing = parts.find((part): part is Exclude<AgentMessagePart, { type: "tool" }> => part.type !== "tool" && part.id === event.blockId);
-    const part = existing ?? reactive<Exclude<AgentMessagePart, { type: "tool" }>>({ id: event.blockId, type: event.type, content: "" });
-    if (!existing) parts.push(part);
+    const existing = partsById.get(event.blockId);
+    const part = existing?.type !== "tool" && existing ? existing : reactive<Exclude<AgentMessagePart, { type: "tool" }>>({ id: event.blockId, type: event.type, content: "", ...(event.type === "thinking" ? { collapsed: true } : {}) });
+    if (!existing) { parts.push(part); partsById.set(part.id, part); }
     if (part.type === "thinking" && !event.done && thinkingPart !== part) {
       finishThinking();
       thinkingPart = part;
       thinkingStartedAt = performance.now();
       thinkingDuration = part.duration ?? 0;
-      part.collapsed = false;
     }
     if (part.type === "text") finishThinking();
     pendingContent.set(part, event.content ?? (pendingContent.get(part) ?? part.content) + (event.delta ?? ""));
@@ -112,6 +119,10 @@ export function createConversationStream(messages: Ref<AgentMessage[]>) {
 
   function finish() {
     stream?.finish();
+    if (reply && !reply.error && !reply.content && !reply.parts?.some(part => part.type === "tool" || part.content)) {
+      const emptyReply = reply;
+      messages.value = messages.value.filter(message => message !== emptyReply);
+    }
     stream = undefined;
     reply = undefined;
   }
@@ -125,10 +136,10 @@ export function createConversationStream(messages: Ref<AgentMessage[]>) {
   function ensureReply(userId?: string) {
     if (reply && userId && reply.replyTo && reply.replyTo !== userId) finish();
     if (!reply) {
-      const user = messages.value.findLast(message => message.role === "user");
-      const last = messages.value.findLast(message => message.role === "assistant" && message.streaming);
+      const user = messages.value.findLast(message => message.role === "user" && !message.pending && (!userId || message.entryId === userId));
+      const last = messages.value.findLast(message => message.role === "assistant" && message.streaming && (!userId || message.replyTo === userId));
       const message = last ?? reactive<AgentMessage>({ id: crypto.randomUUID(), role: "assistant", content: "", parts: [], streaming: true, replyTo: userId ?? user?.entryId });
-      if (!last) messages.value.push(message);
+      if (!last) messages.value.splice(user ? messages.value.indexOf(user) + 1 : messages.value.length, 0, message);
       begin(message);
     }
     if (userId) reply!.replyTo = userId;
@@ -137,9 +148,9 @@ export function createConversationStream(messages: Ref<AgentMessage[]>) {
 
   function receive(event: AgentEvent) {
     if (event.type === "userMessage") {
-      const existing = messages.value.find(message => message.entryId === event.id)
+      const existing = messages.value.find(message => message.entryId === event.id || message.id === event.clientId)
         ?? messages.value.find(message => message.role === "user" && !message.entryId && message.content === event.content);
-      if (existing) { existing.entryId = event.id; existing.error = undefined; existing.mentions = event.mentions; }
+      if (existing) { existing.entryId = event.id; existing.pending = false; existing.error = undefined; existing.mentions = event.mentions; }
       else messages.value.push({ id: event.id, entryId: event.id, role: "user", content: event.content ?? "", attachments: event.attachments, mentions: event.mentions });
       ensureReply(event.id);
     } else if (["text", "thinking", "tool", "question"].includes(event.type)) {

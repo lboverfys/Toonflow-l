@@ -42,6 +42,8 @@ type AgentOptions = {
   clientDeviceName?: string;
   signal?: AbortSignal;
   onCancel?: () => void;
+  runId?: string;
+  messageId?: string;
 };
 
 export async function run(
@@ -61,6 +63,8 @@ export async function run(
     clientDeviceName,
     signal,
     onCancel,
+    runId = crypto.randomUUID(),
+    messageId,
   }: AgentOptions,
   send: (event: AgentEvent) => void
 ) {
@@ -125,6 +129,9 @@ export async function run(
   let messageAccepted = false;
   try {
     const history = newHistory ?? SessionManager.open(sessionPath!, sessionsDir, cwd);
+    if (messageId && !resendFrom && history.getBranch().some(entry => entry.type === "custom" && entry.customType === "toonflowUserMessage" && (entry.data as { clientId?: string })?.clientId === messageId)) {
+      throw Object.assign(new Error("该消息已被接收，请重新打开对话查看结果，避免重复执行"), { status: 409 });
+    }
     const file = basename(history.getSessionFile()!);
     const parentFile = getParentSessionFile(history);
     const child = getSubAgentInfo(history)?.data;
@@ -140,10 +147,12 @@ export async function run(
     };
     const active: ActiveAgentSession = {
       history, send, tools: liveTools, clientFileRunId: clientFiles?.runId, clientFileOwner: clientFiles?.ownerId,
+      runId, signal, steering: [],
       entryOffset: history.getEntries().length,
       abort: () => { controller.abort(); onCancel?.(); return finished.promise; },
     };
     unregister = registerAgentSession(history.getSessionFile()!, active);
+    send({ type: "session", file, runId });
     const tools = await createAgentTools(cwd, canvas, question, clientFiles);
     if (isMemoryEnabled()) {
       const memoryTool = createMemoryTool();
@@ -209,6 +218,7 @@ export async function run(
     const onPayload = session.agent.onPayload;
     session.agent.onPayload = async (payload, requestModel) => {
       const body = (await onPayload?.(payload, requestModel) ?? payload) as Record<string, unknown>;
+      signal?.throwIfAborted();
       sendUserMessage();
       const mediaMessages = new Map<string, { id: string; references: Parameters<typeof readAiReferences>[1] }>();
       for (const entry of history.getBranch()) {
@@ -247,26 +257,29 @@ export async function run(
     };
 
     const resumeLeafId = history.getLeafId();
-    let userMessageId = history.getBranch().findLast((entry) => entry.type === "message" && entry.message.role === "user")?.id;
+    let userEntryOffset = history.getEntries().length;
     function sendUserMessage() {
-      const entry = history.getBranch().findLast((item) => item.type === "message" && item.message.role === "user");
-      if (!entry || entry.id === userMessageId) return;
-      userMessageId = entry.id;
-      const firstMessage = !messageAccepted;
-      messageAccepted = true;
-      if (firstMessage && (attachments.length || mentions.length || prompt.trimStart().startsWith("/skill:"))) {
-        history.appendCustomEntry("toonflowUserMessage", { messageId: entry.id, content: prompt.trim(), attachments, mentions });
-        if (!history.getSessionName() && history.getBranch().filter((item) => item.type === "message" && item.message.role === "user").length === 1) {
-          history.appendSessionInfo((prompt.trim().replace(/\{\{mention:([^{}]+)\}\}/g, (text, id: string) => {
-            const mention = mentions.find(item => item.id === id);
-            return mention ? `@${mention.label}` : text;
-          }) || attachments[0]?.name || mentions[0]?.label || "新对话").slice(0, 60));
+      const entries = history.getEntries();
+      const users = entries.slice(userEntryOffset).filter(entry => entry.type === "message" && entry.message.role === "user");
+      userEntryOffset = entries.length;
+      for (const entry of users) {
+        if (entry.type !== "message" || entry.message.role !== "user") continue;
+        const firstMessage = !messageAccepted;
+        messageAccepted = true;
+        const text = typeof entry.message.content === "string" ? entry.message.content : getToolResultText(entry.message.content);
+        const steeringIndex = active.steering.findIndex(message => message.text === text);
+        const clientId = firstMessage ? messageId : steeringIndex >= 0 ? active.steering.splice(steeringIndex, 1)[0]!.id : undefined;
+        if (clientId || (firstMessage && (attachments.length || mentions.length || prompt.trimStart().startsWith("/skill:")))) {
+          history.appendCustomEntry("toonflowUserMessage", { messageId: entry.id, clientId, content: firstMessage ? prompt.trim() : text, attachments: firstMessage ? attachments : [], mentions: firstMessage ? mentions : [] });
+          if (firstMessage && !history.getSessionName() && history.getBranch().filter((item) => item.type === "message" && item.message.role === "user").length === 1) {
+            history.appendSessionInfo((prompt.trim().replace(/\{\{mention:([^{}]+)\}\}/g, (text, id: string) => {
+              const mention = mentions.find(item => item.id === id);
+              return mention ? `@${mention.label}` : text;
+            }) || attachments[0]?.name || mentions[0]?.label || "新对话").slice(0, 60));
+          }
         }
+        send({ type: "userMessage", id: entry.id, clientId, content: firstMessage ? prompt.trim() : text, attachments: firstMessage ? attachments : undefined, mentions: firstMessage ? mentions : undefined });
       }
-      const saved = history.getBranch().findLast(item => item.type === "custom" && item.customType === "toonflowUserMessage" && (item.data as { messageId?: string })?.messageId === entry.id);
-      const original = saved?.type === "custom" ? saved.data as { content: string; attachments: z.infer<typeof agentAttachmentsSchema>; mentions?: AgentMention[] } : undefined;
-      const content = entry.type === "message" && entry.message.role === "user" ? entry.message.content : "";
-      send({ type: "userMessage", id: entry.id, content: original?.content ?? (typeof content === "string" ? content : getToolResultText(content)), attachments: original?.attachments, mentions: original?.mentions });
     }
     let firstTokenAt: number | undefined;
     let modelError: string | undefined;
@@ -276,6 +289,7 @@ export async function run(
     const toolBlocks = new Map<string, string>();
     const timing = { outputTokens: 0, decodeMs: 0 };
     session.subscribe((event) => {
+      if (event.type === "message_end" && event.message.role === "user") sendUserMessage();
       if (event.type === "compaction_start" || event.type === "compaction_end") {
         send({ type: "compaction", active: event.type === "compaction_start" });
         if (event.type === "compaction_end" && event.errorMessage) {
@@ -358,7 +372,10 @@ export async function run(
         limited = event.message.stopReason === "length";
       }
     });
+    const stoppedMessages: string[] = [];
     const abort = () => {
+      const pending = session.clearQueue();
+      stoppedMessages.push(...pending.steering, ...pending.followUp);
       void session.abort();
     };
     signal?.addEventListener("abort", abort, { once: true });
@@ -377,9 +394,7 @@ export async function run(
         history.appendModelChange(providerId, modelId);
         history.appendThinkingLevelChange(thinkingLevel);
         session.agent.state.messages = history.buildSessionContext().messages;
-        userMessageId = history.getBranch().findLast((entry) => entry.type === "message" && entry.message.role === "user")?.id;
       }
-      send({ type: "session", file: basename(history.getSessionFile()!) });
       // ACT: 文本附件完整内容进入模型上下文，界面仍保存工作区引用；视频在请求时加载，图片由 read 按需读取。
       const content = attachments.length
         ? `${mentionPrompt(prompt, mentions)}\n\n附件已保存到工作区，path 为相对路径，可用于节点选择素材。以下 JSON 包含文件信息，文本附件的 content 为完整正文：\n${JSON.stringify(
@@ -398,7 +413,7 @@ export async function run(
       try {
         // ACT: 用户停止时 SDK 队列可能尚未投递；保留已确认接收的文字，重开子会话也不会丢失。
         const pending = session.clearQueue();
-        for (const content of [...pending.steering, ...pending.followUp]) {
+        for (const content of [...stoppedMessages, ...pending.steering, ...pending.followUp]) {
           history.appendMessage({ role: "user", content, timestamp: Date.now() });
           sendUserMessage();
         }
@@ -428,8 +443,8 @@ export async function run(
   } finally {
     unregister();
     release();
-    finished.resolve();
-    if (!messageAccepted) await Promise.all(mentionFiles.map(path => unlink(path)));
+    try { if (!messageAccepted) await Promise.all(mentionFiles.map(path => unlink(path))); }
+    finally { finished.resolve(); }
   }
 }
 

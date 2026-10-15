@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { basename, dirname, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { readFile, stat } from "@toonflow/file";
 import { listSessionSummaries } from "./sessionIndex";
+export { listSessionPage } from "./sessionIndex";
 import { cacheFile, readCache, writeCache } from "@/utils/cache";
 import { calculateContextTokens, estimateTokens, getLastAssistantUsage, parseSessionEntries, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { AgentSession, FileEntry, SessionEntry } from "@earendil-works/pi-coding-agent";
@@ -10,6 +12,7 @@ import { agentMentionsSchema } from "@/agent/runtime/mentions";
 import conf from "@/utils/conf";
 import { providerSchema, getModelLimits } from "@/utils/ai";
 import { lockWorkspaceFiles, resolveWorkspacePath, writeWorkspaceFile } from "@/utils/workspace/files";
+import { answerQuestion } from "@/agent/bridge/question";
 
 export const agentAttachmentsSchema = z
   .array(
@@ -24,6 +27,7 @@ export const agentAttachmentsSchema = z
 export type ActiveAgentSession = {
   history: SessionManager; session?: AgentSession; send: (event: AgentEvent) => void;
   entryOffset: number; tools: Map<string, AgentToolCall>;
+  runId: string; signal: AbortSignal; steering: { id: string; text: string }[];
   clientFileRunId?: string; clientFileOwner?: string;
   abort(): Promise<void>;
 };
@@ -40,6 +44,45 @@ const sessionKey = (path: string) => process.platform === "win32" ? resolve(path
 
 export function getActiveAgentSession(path: string) {
   return activeSessions.get(sessionKey(path));
+}
+
+export function getAgentRun(path: string, runId: string, ownerId?: string) {
+  const active = getActiveAgentSession(path);
+  if (active && active.runId !== runId) throw Object.assign(new Error("此轮回复已结束，请重新打开对话查看当前状态"), { status: 409 });
+  if (active?.clientFileOwner !== undefined && active.clientFileOwner !== ownerId) {
+    throw Object.assign(new Error("此对话只能由授权本机目录的设备控制"), { status: 403 });
+  }
+  return active;
+}
+
+export async function steerAgentSession(cwd: string, active: ActiveAgentSession, prompt: string, messageId: string) {
+  active.signal.throwIfAborted();
+  if (!active.session?.isStreaming) throw Object.assign(new Error("对话正在准备或结束回复，请稍后发送补充要求"), { status: 409 });
+  const saved = active.history.getBranch().find(entry => entry.type === "custom" && entry.customType === "toonflowUserMessage" && (entry.data as { clientId?: string })?.clientId === messageId);
+  if (saved?.type === "custom") return (saved.data as { messageId: string }).messageId;
+  if (active.steering.some(message => message.id === messageId)) return;
+  active.steering.push({ id: messageId, text: prompt });
+  try { await active.session.prompt(prompt, { streamingBehavior: "steer", expandPromptTemplates: false }); }
+  catch (error) { active.steering = active.steering.filter(message => message.id !== messageId); throw error; }
+  const visited = new Set<ActiveAgentSession>();
+  const skipQuestions = (current: ActiveAgentSession) => {
+    if (visited.has(current)) return;
+    visited.add(current);
+    for (const tool of current.tools.values()) {
+      if (tool.status === "running" && tool.question) {
+        try { answerQuestion(cwd, tool.question.callId, { skipped: true }, current.clientFileOwner); }
+        catch (error) { if ((error as { status?: number }).status !== 404) throw error; }
+      }
+    }
+    for (const entry of current.history.getEntries()) {
+      if (entry.type !== "custom" || entry.customType !== "toonflowSubAgent") continue;
+      const file = (entry.data as AgentSubAgent).file;
+      if (!/^[\w-]+\.jsonl$/.test(file)) continue;
+      const child = getActiveAgentSession(resolve(dirname(current.history.getSessionFile()!), file));
+      if (child && getParentSessionFile(child.history) === basename(current.history.getSessionFile()!)) skipQuestions(child);
+    }
+  };
+  skipQuestions(active);
 }
 
 export function hasPendingAgentQuestion(active: ActiveAgentSession, visited = new Set<ActiveAgentSession>()): boolean {
@@ -246,25 +289,70 @@ export async function listAgentSessions(cwd: string, directory: string) {
   return listSessionSummaries(directory);
 }
 
+type SessionPages = {
+  revision: string;
+  session: Omit<Awaited<ReturnType<typeof getAgentSession>>, "messages">;
+  ids: string[];
+  pages: string[];
+};
+const pageBuilds = new Map<string, Promise<SessionPages>>();
+
+async function buildSessionPages(cwd: string, path: string, revision: string, indexPath: string) {
+  const key = `${path}:${revision}`;
+  const existing = pageBuilds.get(key);
+  if (existing) return existing;
+  const pending = (async () => {
+    const { messages, ...session } = await getAgentSession(cwd, path);
+    const index: SessionPages = { revision, session, ids: messages.map(message => message.id), pages: [] };
+    // ACT: 每个版本首次解析一次；按 40 条保存内容寻址的快照，未变化的页复用，翻页不再解析整份 JSONL。
+    for (let start = 0; start < messages.length; start += 40) {
+      const page = messages.slice(start, start + 40);
+      const hash = createHash("sha256").update(JSON.stringify(page)).digest("hex");
+      const pagePath = cacheFile("sessionIndex", JSON.stringify(["sessionPage", path, hash]));
+      if (!(await readCache<SessionMessage[]>(pagePath))) await writeCache(pagePath, page);
+      index.pages.push(pagePath);
+    }
+    const after = await stat(path);
+    if (!revision.startsWith(`${after.size}:${after.mtimeMs}:${after.ctimeMs}:`)) {
+      throw Object.assign(new Error("历史对话正在变化，请稍后重新打开"), { status: 409 });
+    }
+    if (!session.running && !getActiveAgentSession(path)) await writeCache(indexPath, index);
+    return index;
+  })();
+  pageBuilds.set(key, pending);
+  try { return await pending; }
+  finally { pageBuilds.delete(key); }
+}
+
 export async function getAgentSessionPage(cwd: string, path: string, before?: string) {
+  if (getActiveAgentSession(path)) {
+    const session = await getAgentSession(cwd, path);
+    const end = before ? session.messages.findIndex(message => message.id === before) : session.messages.length;
+    if (end < 0) throw Object.assign(new Error("历史对话已变化，请重新打开后继续读取"), { status: 409 });
+    const start = Math.max(0, end - 40);
+    return { ...session, messages: session.messages.slice(start, end), before: start ? session.messages[start]!.id : undefined };
+  }
   const info = await stat(path);
-  const revision = `${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
   const providers = conf.get("settings", {}).customProviders;
   const modelSettings = Array.isArray(providers) ? providers.map(provider => ({ id: provider?.id, models: provider?.models })) : [];
-  const cache = cacheFile("sessionIndex", JSON.stringify([path, revision, before ?? "latest", modelSettings, 2]));
-  type Page = Awaited<ReturnType<typeof getAgentSession>> & { before?: string };
-  if (!getActiveAgentSession(path)) {
-    const cached = await readCache<Page>(cache);
-    if (cached && Array.isArray(cached.messages) && Array.isArray(cached.subAgents) && !cached.subAgents.length) return cached;
-  }
-  const session = await getAgentSession(cwd, path);
-  const end = before ? session.messages.findIndex(message => message.id === before) : session.messages.length;
+  const revision = `${info.size}:${info.mtimeMs}:${info.ctimeMs}:${JSON.stringify(modelSettings)}`;
+  const indexPath = cacheFile("sessionIndex", JSON.stringify(["sessionPages", path, 1]));
+  let index = await readCache<SessionPages>(indexPath);
+  if (index?.revision !== revision) index = await buildSessionPages(cwd, path, revision, indexPath);
+  const end = before ? index.ids.indexOf(before) : index.ids.length;
   if (end < 0) throw Object.assign(new Error("历史对话已变化，请重新打开后继续读取"), { status: 409 });
   const start = Math.max(0, end - 40);
-  const page = { ...session, messages: session.messages.slice(start, end), before: start ? session.messages[start]!.id : undefined };
-  const after = await stat(path);
-  if (!session.running && !session.subAgents.length && after.size === info.size && after.mtimeMs === info.mtimeMs && after.ctimeMs === info.ctimeMs) await writeCache(cache, page);
-  return page;
+  const firstPage = Math.floor(start / 40);
+  const readPages = (value: SessionPages) => Promise.all(value.pages.slice(firstPage, Math.ceil(end / 40)).map(page => readCache<SessionMessage[]>(page)));
+  let pages = await readPages(index);
+  if (pages.some(page => !page)) {
+    index = await buildSessionPages(cwd, path, revision, indexPath);
+    pages = await readPages(index);
+  }
+  if (pages.some(page => !page)) throw new Error("历史消息缓存读取失败，请重新打开对话");
+  const subAgents = index.session.subAgents.map(agent => agent.status === "running" && !getActiveAgentSession(resolve(dirname(path), agent.file))
+    ? { ...agent, status: "cancelled" as const, result: "上次运行已中断" } : agent);
+  return { ...index.session, subAgents, messages: pages.flatMap(page => page!).slice(start % 40, start % 40 + end - start), before: start ? index.ids[start] : undefined };
 }
 
 export async function getAgentSession(cwd: string, path: string) {
@@ -408,6 +496,7 @@ export async function getAgentSession(cwd: string, path: string) {
     parentFile: getParentSessionFile(history),
     subAgents: [...subAgents.values()],
     running: Boolean(active),
+    runId: active?.runId,
   };
 }
 
