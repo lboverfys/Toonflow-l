@@ -250,6 +250,19 @@ async function generateMediaResult(
       if (total > 32 * 1024 * 1024) invalid("参考图合计超过当前 32 MiB 传输预算");
     }
   }
+  if (!restoring && providerInfo.id === "zealmanH3") {
+    if ((request.images?.length ?? 0) > 9 || (request.audios?.length ?? 0) > (model.id === "u32" ? 0 : 3)) invalid("ZEALMAN-H3 最多支持 9 张图片、3 段音频，U32 不支持音频参考");
+    if (request.videos?.length || request.firstFrame || request.lastFrame) invalid("ZEALMAN-H3 预置工作流不支持参考视频或首尾帧模式");
+    let total = 0;
+    // ACT: 宿主以 Base64 在内存传递素材，读取前限制合计 100 MiB；更大素材须先支持流式上传。
+    for (const input of [...(request.images ?? []), ...(request.audios ?? [])]) {
+      const { path } = await resolveWorkspacePath(directory, input.path);
+      const info = await stat(path);
+      if (!info.isFile() || !info.size) invalid("ZEALMAN-H3 参考素材必须为非空文件");
+      total += info.size;
+      if (total > maxMediaSize) invalid("ZEALMAN-H3 本地参考素材合计不能超过 100 MiB");
+    }
+  }
   const references = async (items: MediaReference[] | undefined, type: string) => items ? Promise.all(items.map(item => readReference(directory, item, type, signal))) : undefined;
   let images: MediaInput[] | undefined = restoring ? undefined : await references(request.images, "image");
   let audios: MediaInput[] | undefined = restoring || mediaType === "image" ? undefined : await references(request.audios, "audio");
