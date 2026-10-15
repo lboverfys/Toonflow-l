@@ -22,6 +22,7 @@
     "./media/vidGate": "./src/media/vidGate.ts",
     "./media/fankeVideo": "./src/media/fankeVideo.ts",
     "./media/ailxpImage": "./src/media/ailxpImage.ts",
-    "./media/autoDl": "./src/media/autoDl.ts"
+    "./media/autoDl": "./src/media/autoDl.ts",
+    "./media/zealmanH3": "./src/media/zealmanH3.ts"
   }
 }
