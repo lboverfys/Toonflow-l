@@ -14,6 +14,7 @@ const inputSchema = z.object({
   providerId: z.string().min(1), modelId: z.string().min(1),
   thinkingLevel: z.enum(["off", "low", "medium", "high"]).optional(),
   sessionFile: z.string().regex(/^[\w-]+\.jsonl$/).optional(),
+  runId: z.uuid().optional(), messageId: z.string().min(1).max(128).optional(),
   resendFrom: z.string().min(1).max(128).optional(),
   clientFiles: z.strictObject({ runId: z.uuid(), directory: clientDirectorySchema }).optional(),
   canvas: z.strictObject({

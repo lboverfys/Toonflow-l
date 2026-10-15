@@ -17,6 +17,7 @@ export type AgentMessage = {
   mentions?: AgentMention[];
   parts?: AgentMessagePart[];
   streaming?: boolean;
+  pending?: boolean;
   error?: string;
   report?: { file: string; name: string };
 };
@@ -36,4 +37,5 @@ export type AgentConversation = {
   parentFile?: string;
   subAgents?: AgentSubAgent[];
   running?: boolean;
+  runId?: string;
 };

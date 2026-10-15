@@ -32,6 +32,7 @@
       :disabled="loading || !initialized"
       @session="setSessionFile(item, $event)"
       @event="receiveAgentEvent"
+      @retention="item.retained = $event"
       @sent="updateConversationName(item, $event)" />
   </section>
 </template>
@@ -49,8 +50,8 @@ import agentMenu from "./menu.vue";
 import conversation from "./conversation.vue";
 
 const visible = defineModel<boolean>({ default: false });
-type OpenConversation = { key: number; name: string; file?: string; parentFile?: string; subAgents: AgentSubAgent[]; session: AgentConversation | null };
-// ACT: 会话实例保留到工作区关闭，让切换后的回复继续接收流式内容。
+type OpenConversation = { key: number; name: string; file?: string; parentFile?: string; subAgents: AgentSubAgent[]; session: AgentConversation | null; retained: boolean; lastUsed: number };
+// ACT: 最多保留 6 个闲置会话；运行、草稿、待回答与未保存消息不参与淘汰。
 const conversations = ref<OpenConversation[]>([]);
 const conversationKey = ref(0);
 const selectedConversation = computed(() => conversations.value.find(item => item.key === conversationKey.value));
@@ -63,6 +64,7 @@ const sessionFile = computed(() => selectedConversation.value?.file);
 const workspaceStore = useWorkspaceStore();
 const history = ref<AgentHistory[]>([]);
 const historyOffset = ref<number>();
+const historySnapshot = ref<string>();
 const loading = ref(false);
 const historyLoading = ref(false);
 const initialized = ref(false);
@@ -74,11 +76,12 @@ const pendingEvents = new Map<number, AgentEvent[]>();
 function showConversation(session: AgentConversation | null, activate = true) {
   const existing = session && conversations.value.find(item => item.file === session.file);
   if (existing) {
+    existing.lastUsed = performance.now();
     if (activate) conversationKey.value = existing.key;
     return existing;
   }
   const key = ++nextConversationKey;
-  const item = { key, name: session?.name || "新对话", file: session?.file, parentFile: session?.parentFile, subAgents: session?.subAgents ?? [], session };
+  const item = { key, name: session?.name || "新对话", file: session?.file, parentFile: session?.parentFile, subAgents: session?.subAgents ?? [], session, retained: true, lastUsed: performance.now() };
   conversations.value.push(item);
   if (activate) conversationKey.value = key;
   return conversations.value[conversations.value.length - 1]!;
@@ -189,14 +192,15 @@ async function loadHistory(openLatest = false, more = false) {
   historyLoading.value = true;
   loading.value = openLatest;
   try {
-    const { data } = await axios.get<{ code: number; data: { items: AgentHistory[]; nextOffset?: number }; message?: string }>("/api/agent/list", {
-      params: { directory, offset: more ? historyOffset.value : 0 }, headers: { "x-toonflow-workspace": "1" },
+    const { data } = await axios.get<{ code: number; data: { items: AgentHistory[]; nextOffset?: number; snapshot?: string }; message?: string }>("/api/agent/list", {
+      params: { directory, offset: more ? historyOffset.value : 0, snapshot: more ? historySnapshot.value : undefined }, headers: { "x-toonflow-workspace": "1" },
     });
     if (data.code !== 200) throw new Error(data.message || "读取历史对话失败");
     if (currentRequest !== requestId) return;
     const knownFiles = new Set(history.value.map(item => item.file));
     history.value = more ? [...history.value, ...data.data.items.filter(item => !knownFiles.has(item.file))] : data.data.items;
     historyOffset.value = data.data.nextOffset;
+    historySnapshot.value = data.data.snapshot;
     // 首条回复结束前会话可能尚未落盘，仍允许从历史菜单切回。
     for (const item of conversations.value) if (item.file) setSessionFile(item, item.file);
     if (openLatest) {
@@ -220,6 +224,7 @@ async function selectConversation(file: string) {
   if (!directory || loading.value || historyLoading.value || file === sessionFile.value) return;
   const existing = conversations.value.find(item => item.file === file);
   if (existing) {
+    existing.lastUsed = performance.now();
     conversationKey.value = existing.key;
     return;
   }
@@ -292,6 +297,7 @@ watch(() => workspaceStore.project?.directory, directory => {
   requestId++;
   history.value = [];
   historyOffset.value = undefined;
+  historySnapshot.value = undefined;
   conversations.value = [];
   conversationRefs.clear();
   pendingEvents.clear();
@@ -304,6 +310,14 @@ watch(() => workspaceStore.project?.directory, directory => {
 watch(visible, active => {
   if (active && !initialized.value) void loadHistory(true);
 });
+watch(() => conversations.value.map(item => [item.key, item.retained, item.lastUsed, item.key === conversationKey.value]), () => {
+  const idle = conversations.value.filter(item => item.key !== conversationKey.value && !item.retained)
+    .sort((left, right) => right.lastUsed - left.lastUsed);
+  const removed = new Set(idle.slice(6).map(item => item.key));
+  if (!removed.size) return;
+  conversations.value = conversations.value.filter(item => !removed.has(item.key));
+  for (const key of removed) { conversationRefs.delete(key); pendingEvents.delete(key); }
+}, { flush: "post" });
 onBeforeUnmount(() => { requestId++; });
 
 </script>

@@ -57,6 +57,7 @@
                     </template>
                     <attachmentList v-if="item.attachments?.length" :attachments="item.attachments" :directory="directory" />
                     <div v-if="item.role === 'user'" class="messageText"><mentionContent :content="item.content" :mentions="item.mentions" :directory="directory" /></div>
+                    <div v-if="item.pending" class="contextHint" role="status">补充要求已排队，将在下一步处理</div>
                     <div v-if="item.error" class="messageError" role="alert">{{ item.error }}</div>
                   </div>
                 </template>
@@ -69,7 +70,7 @@
                 <template v-else>
                   <el-button v-if="item.content" class="messageAction" text circle aria-label="复制消息" title="复制消息" @click="copyMessage(mentionPlainText(item.content, item.mentions))"><icon-copy :size="14" /></el-button>
                   <template v-if="item.role === 'user'">
-                    <el-button class="messageAction" text circle :disabled="locked || remoteRunning" aria-label="编辑消息" title="编辑消息" @click="editMessage(item)"><icon-pencil :size="14" /></el-button>
+                    <el-button class="messageAction" text :circle="!item.error" :disabled="locked || remoteRunning" :aria-label="item.error ? '恢复输入' : '编辑消息'" :title="item.error ? '恢复输入' : '编辑消息'" @click="editMessage(item)"><icon-pencil :size="14" /><span v-if="item.error">恢复输入</span></el-button>
                   </template>
                   <el-button v-if="!item.report" class="messageAction" text circle :loading="deletingId === item.id" :disabled="locked || remoteRunning" aria-label="删除消息" title="删除消息" @click="deleteMessage(item)"><icon-trash v-if="deletingId !== item.id" :size="14" /></el-button>
                 </template>
@@ -145,9 +146,9 @@
               </div>
             </div>
           </el-popover>
-          <el-button class="sendButton" type="primary" circle :disabled="!busy && locked" :aria-label="busy ? '停止生成' : editingId ? '重发消息' : '发送消息'" :title="busy ? '停止生成' : editingId ? '重发消息' : '发送消息'" @click="busy ? stopMessage() : submitMessage()">
-            <icon-player-stop-filled v-if="busy" :size="14" />
-            <icon-arrow-up v-else :size="16" />
+          <el-button v-if="running || stopping" circle :loading="stopping" :disabled="stopping" aria-label="停止生成" title="停止生成" @click="stopMessage"><icon-player-stop-filled v-if="!stopping" :size="14" /></el-button>
+          <el-button class="sendButton" type="primary" circle :disabled="inputLocked" :aria-label="running ? '发送补充要求' : editingId ? '重发消息' : '发送消息'" :title="running ? '发送补充要求' : editingId ? '重发消息' : '发送消息'" @click="submitMessage">
+            <icon-arrow-up :size="16" />
           </el-button>
         </div>
       </div>
@@ -200,7 +201,7 @@ import "@tdesign-vue-next/chat/es/style/index.css";
 import "x-sender/lib/XSender.css";
 
 const props = defineProps<{ active: boolean; visible: boolean; initialSession: AgentConversation | null; sessionFile?: string; disabled: boolean }>();
-const emit = defineEmits<{ session: [file: string]; sent: [prompt: string]; event: [event: AgentEvent] }>();
+const emit = defineEmits<{ session: [file: string]; sent: [prompt: string]; event: [event: AgentEvent]; retention: [retained: boolean] }>();
 const workspaceStore = useWorkspaceStore();
 const directory = workspaceStore.project?.directory;
 const draftAttachments = ref<AgentAttachment[]>([]);
@@ -226,11 +227,18 @@ const remoteRunning = ref(props.initialSession?.running ?? false);
 const stats = ref(props.initialSession?.stats);
 const contextUsage = ref(props.initialSession?.contextUsage);
 const busy = ref(false);
+const sending = ref(false);
+const steering = ref(false);
+const stopping = ref(false);
+const runId = ref(props.initialSession?.runId);
+const running = computed(() => busy.value || remoteRunning.value);
+const hasDraft = ref(false);
 const compacting = ref(false);
 const deletingId = ref<string>();
 const restoringAttachment = ref(false);
 const clientFilesRef = ref<InstanceType<typeof clientFilesControl>>();
-const locked = computed(() => props.disabled || busy.value || deletingId.value !== undefined || restoringAttachment.value || !!clientFilesRef.value?.pending);
+const inputLocked = computed(() => props.disabled || sending.value || steering.value || stopping.value || deletingId.value !== undefined || restoringAttachment.value || !!clientFilesRef.value?.pending);
+const locked = computed(() => inputLocked.value || running.value);
 const editingId = ref<string>();
 const draftMentions = ref<AgentMention[]>([]);
 const draftMentionTargets = shallowRef<{ key: symbol; element: HTMLElement; mention: AgentMention }[]>([]);
@@ -249,6 +257,9 @@ watch(locale, () => {
   }
 });
 let controller: AbortController | undefined;
+let requestStarted = false;
+let sessionReady: ReturnType<typeof Promise.withResolvers<{ file: string; runId?: string } | undefined>> | undefined;
+let steerDraft: { id: string; text: string; runId: string } | undefined;
 const senderElement = ref<HTMLElement>();
 const skillMenuRef = ref<InstanceType<typeof skillMenu>>();
 const skillQuery = ref<string>();
@@ -273,7 +284,7 @@ const welcomeSuggestions = [
   { label: "梳理故事分镜", description: "拆解故事，安排画面与镜头", icon: IconMovie, prompt: "帮我把故事整理成分镜，先和我确认故事内容、时长和画面风格。" },
   { label: "生成图片素材", description: "为角色和场景寻找视觉方向", icon: IconPhoto, prompt: "帮我生成图片素材，先和我确认画面内容、风格和使用的模型。" },
 ];
-watch([locked, () => props.active], ([locked, active]) => {
+watch([inputLocked, () => props.active], ([locked, active]) => {
   if (!active || locked) sender?.disable();
   else sender?.enable();
 });
@@ -293,7 +304,7 @@ function applyEvent(event: AgentEvent) {
       });
       break;
     case "compaction": compacting.value = event.active; break;
-    case "session": emit("session", event.file); break;
+    case "session": runId.value = event.runId; sessionReady?.resolve(event); emit("session", event.file); break;
     case "stats": stats.value = event.stats; contextUsage.value = event.contextUsage; break;
     default: stream.receive(event);
   }
@@ -302,6 +313,7 @@ function applyEvent(event: AgentEvent) {
 function receiveEvent(event: AgentEvent) {
   if (event.type === "done" || event.type === "error") {
     remoteRunning.value = false;
+    runId.value = undefined;
     compacting.value = false;
   } else if (["userMessage", "text", "thinking", "tool"].includes(event.type)) remoteRunning.value = true;
   applyEvent(event);
@@ -372,6 +384,7 @@ async function removeDraftMention(id: string) {
 }
 
 function submitMessage() {
+  if (running.value) return steerMessage();
   return sendMessage(editingId.value ? messages.value.find(item => item.id === editingId.value) : undefined);
 }
 
@@ -486,8 +499,46 @@ function stopSenderResize(event: PointerEvent) {
   if (senderResize?.pointerId === event.pointerId) senderResize = undefined;
 }
 
-function stopMessage() {
-  controller?.abort();
+async function stopMessage() {
+  if (stopping.value || (!running.value && !controller)) return;
+  const requestController = controller;
+  stopping.value = true;
+  try {
+    const ready = !runId.value && requestStarted ? await sessionReady?.promise : undefined;
+    const currentRunId = ready?.runId ?? runId.value;
+    const sessionFile = ready?.file ?? props.sessionFile;
+    if (currentRunId && sessionFile) {
+      await axios.post("/api/agent/stop", { directory, sessionFile, runId: currentRunId }, { headers: { "x-toonflow-workspace": "1" } });
+    }
+    requestController?.abort();
+    if (runId.value === currentRunId) { remoteRunning.value = false; runId.value = undefined; stream.finish(); }
+  } catch (error) {
+    ElMessage.error(axios.isAxiosError(error) ? error.response?.data?.message || "未能确认停止，请重试" : "停止生成失败");
+  } finally { stopping.value = false; }
+}
+
+async function steerMessage() {
+  const instance = sender;
+  const prompt = getDraftContent().trim();
+  if (inputLocked.value || !instance || !prompt) return;
+  if (!runId.value || !props.sessionFile) return ElMessage.warning("对话正在准备，请稍后发送补充要求");
+  if (draftAttachments.value.length || draftMentions.value.length) return ElMessage.warning("生成中可补充文字；附件或提及请在本轮结束后发送");
+  if (steerDraft?.text !== prompt || steerDraft.runId !== runId.value) steerDraft = { id: crypto.randomUUID(), text: prompt, runId: runId.value };
+  const message = reactive<AgentMessage>({ id: steerDraft.id, role: "user", content: prompt, pending: true });
+  messages.value.push(message);
+  steering.value = true;
+  try {
+    const { data } = await axios.post<{ data: { entryId?: string } }>("/api/agent/steer", { directory, sessionFile: props.sessionFile, runId: runId.value, messageId: message.id, prompt }, { headers: { "x-toonflow-workspace": "1" } });
+    if (data.data.entryId) {
+      if (messages.value.some(item => item !== message && item.entryId === data.data.entryId)) messages.value = messages.value.filter(item => item !== message);
+      else { message.entryId = data.data.entryId; message.pending = false; }
+    }
+    steerDraft = undefined;
+    await instance.reset();
+  } catch (error) {
+    if (!message.entryId) messages.value = messages.value.filter(item => item !== message);
+    ElMessage.error(axios.isAxiosError(error) ? error.response?.data?.message || "补充要求发送失败，输入已保留" : "补充要求发送失败，输入已保留");
+  } finally { steering.value = false; }
 }
 
 async function uploadAttachments(attachments: AgentAttachment[], directory: string, signal: AbortSignal) {
@@ -573,11 +624,14 @@ async function sendMessage(source?: AgentMessage) {
   const requestController = new AbortController();
   const canvasContext = createCanvasContext?.();
   controller = requestController;
+  sessionReady = Promise.withResolvers();
+  requestStarted = false;
   busy.value = true;
+  sending.value = true;
   compacting.value = false;
   instance.disable();
   const reply = reactive<AgentMessage>({ id: crypto.randomUUID(), role: "assistant", content: "", parts: [], streaming: true });
-  const userMessage = reactive<AgentMessage>({ id: crypto.randomUUID(), role: "user", content: prompt, attachments, mentions });
+  const userMessage = reactive<AgentMessage>({ id: source?.id ?? crypto.randomUUID(), role: "user", content: prompt, attachments, mentions });
   let ownsStream = !remoteRunning.value;
   let forwarded = false;
   if (!source) {
@@ -598,10 +652,12 @@ async function sendMessage(source?: AgentMessage) {
     requestController.signal.throwIfAborted();
     await uploadAttachments(attachments, directory, requestController.signal);
     clientFiles = await clientFilesRef.value?.start(requestController.signal);
+    requestController.signal.throwIfAborted();
+    requestStarted = true;
     const response = await fetch("/api/agent", {
       method: "POST",
       headers: { "Accept-Language": locale.value, "Content-Type": "application/json", "x-toonflow-workspace": "1" },
-      body: JSON.stringify({ prompt, mentions, attachments: attachments.map(({ name, path, mimeType }) => ({ name, path, mimeType })), directory, providerId: model.providerId, modelId: model.modelId, thinkingLevel: reasoningEffort.value || undefined, sessionFile: props.sessionFile, resendFrom, clientFiles, canvas: canvasContext ? { id: canvasContext.id, tools: canvasContext.tools } : undefined }),
+      body: JSON.stringify({ prompt, messageId: userMessage.id, mentions, attachments: attachments.map(({ name, path, mimeType }) => ({ name, path, mimeType })), directory, providerId: model.providerId, modelId: model.modelId, thinkingLevel: reasoningEffort.value || undefined, sessionFile: props.sessionFile, resendFrom, clientFiles, canvas: canvasContext ? { id: canvasContext.id, tools: canvasContext.tools } : undefined }),
       signal: requestController.signal,
     });
     for await (const event of readAgentEvents(response, requestController.signal)) {
@@ -641,8 +697,7 @@ async function sendMessage(source?: AgentMessage) {
             messages.value.push(reply);
             stream.begin(reply);
           }
-          userMessage.entryId = event.id;
-          reply.replyTo = event.id;
+          if (!accepted) { userMessage.entryId = event.id; reply.replyTo = event.id; sending.value = false; }
           if (source && !accepted) {
             messages.value.splice(resendIndex, messages.value.length - resendIndex, userMessage, reply);
             stats.value = undefined;
@@ -661,14 +716,15 @@ async function sendMessage(source?: AgentMessage) {
       }
     }
     if (source && !accepted) throw new Error("服务端未确认重发，请重新打开对话后重试");
-    finishStats("success");
+    finishStats(requestController.signal.aborted || stopping.value ? "cancelled" : "success");
     emit("sent", mentionPlainText(prompt, mentions) || attachments[0]?.name || "新对话");
   } catch (error) {
-    finishStats(requestController.signal.aborted ? "cancelled" : "failed");
+    const cancelled = requestController.signal.aborted || stopping.value;
+    finishStats(cancelled ? "cancelled" : "failed");
     const responseMessage = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
-    const message = requestController.signal.aborted ? "已停止生成" : responseMessage || (error instanceof Error ? error.message : "发送失败，请重试");
-    if ((source && !accepted) || !ownsStream) { userMessage.error = message; ElMessage.error(message); }
-    else reply.error = message;
+    const message = cancelled ? "已停止生成" : responseMessage || (error instanceof Error ? error.message : "发送失败，请重试");
+    if (!accepted || !ownsStream) { userMessage.error = message; ElMessage.error(message); }
+    else (messages.value.findLast(item => item.role === "assistant" && item.streaming) ?? reply).error = message;
     if (ownsStream && props.initialSession?.parentFile && props.sessionFile) {
       emit("event", { type: "subAgentEvent", file: props.sessionFile, event: { type: "error", message } });
     }
@@ -695,7 +751,12 @@ async function sendMessage(source?: AgentMessage) {
     if (ownsStream && !forwarded) stream.finish();
     compacting.value = false;
     busy.value = false;
+    sending.value = false;
+    runId.value = undefined;
     controller = undefined;
+    requestStarted = false;
+    sessionReady?.resolve(undefined);
+    sessionReady = undefined;
   }
 }
 
@@ -765,9 +826,10 @@ watch(senderElement, (element, _previous, onCleanup) => {
     keyboardWrapFun: event => event.key === "Enter" && event.shiftKey && !event.isComposing,
   });
   sender = instance;
-  if (!props.active || locked.value) instance.disable();
+  if (!props.active || inputLocked.value) instance.disable();
   instance.bus.on("agentConversation", xSender.EventSet.EVENT_COMMON_SEND, () => void submitMessage());
   instance.bus.on("agentConversation", xSender.EventSet.EVENT_COMMON_CHANGE, () => {
+    hasDraft.value = !instance.isEmpty(false);
     skillQuery.value = /^\/([^\s/]*)$/.exec(instance.getText())?.[1];
     const targets: typeof draftMentionTargets.value = [];
     for (const line of instance.chatEditor.NODES) for (const tag of line.children) {
@@ -806,6 +868,7 @@ watch(senderElement, (element, _previous, onCleanup) => {
   editor.addEventListener("keyup", updateCursor);
   editor.addEventListener("compositionend", updateCursor);
   onCleanup(() => {
+    void stopMessage();
     controller?.abort();
     draftMentionTargets.value = [];
     sender = undefined;
@@ -816,6 +879,10 @@ watch(senderElement, (element, _previous, onCleanup) => {
     instance.destroy();
   });
 });
+
+watch(() => running.value || sending.value || steering.value || stopping.value || hasDraft.value || !!editingId.value || !!draftAttachments.value.length || !!draftMentions.value.length ||
+  !!clientFilesRef.value?.authorized || !!clientFilesRef.value?.pending || messages.value.some(message => message.pending || message.streaming || (message.role === "user" && !message.entryId)),
+  retained => emit("retention", retained), { immediate: true });
 
 watch(() => !props.initialSession?.parentFile && !!workspaceStore.pendingAgentMessage && props.active && !locked.value && !!senderElement.value && !!createCanvasContext?.(), async ready => {
   const message = workspaceStore.pendingAgentMessage;
