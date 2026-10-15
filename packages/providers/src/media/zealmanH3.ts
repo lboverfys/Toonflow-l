@@ -74,20 +74,11 @@ async function upload(context: ProviderContext, base: string, field: string, inp
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.hash) throw new Error("参考素材须使用不含账号密码或片段的 HTTP(S) 公网地址");
     return url.href;
   }
-  let bytes = fileBytes(input);
-  let mimeType = input.mimeType;
+  const bytes = fileBytes(input);
+  const mimeType = input.mimeType;
   const mediaType = field.startsWith("ref_image_") ? "image" : "audio";
   if (!bytes.length || bytes.length > 100 * 1024 * 1024 || !new RegExp(`^${mediaType}/[a-z0-9.+-]+$`, "i").test(mimeType)) throw new Error("参考素材为空、类型不匹配或超过 100 MiB");
-  if (mediaType === "image") {
-    const source: MediaInput = { type: "binary", data: bytes, mimeType };
-    const info = await context.tool.media.inspectImage(source);
-    if (Math.max(info.width, info.height) > 2048) {
-      const scale = 2048 / Math.max(info.width, info.height);
-      const resized = await context.tool.media.resizeImage(source, { width: Math.max(1, Math.round(info.width * scale)), height: Math.max(1, Math.round(info.height * scale)) });
-      bytes = fileBytes(resized);
-      mimeType = resized.mimeType!;
-    }
-  }
+  if (mediaType === "image") await context.tool.media.inspectImage({ type: "binary", data: bytes, mimeType });
   const extension = ({ "image/jpeg": "jpg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/x-wav": "wav" } as Record<string, string>)[mimeType] ?? mimeType.split("/")[1];
   const name = `zealman${context.videoTask!.idHash}${field.replaceAll("_", "")}${context.tool.sha256(bytes).slice(0, 16)}.${extension}`;
   const form = new FormData();
@@ -412,9 +403,9 @@ async function poll(context: ProviderContext, snapshot: ZealmanSnapshot) {
 export default {
   id: "zealmanH3",
   label: "ZEALMAN-H3 自部署",
-  version: "1.1.0",
+  version: "1.1.1",
   apiUrl: "",
-  readme: "连接运行 ZEALMAN-H3 镜像的机器，填写面板 6008 端口对应的 HTTP(S) 访问地址，无需 Token；可先添加供应商，稍后填写地址。请先在面板启动 ComfyUI。U06-V5 使用网页快捷生成模板，自动读取主模型、CLIP、LoRA 和默认参数，不需要配置 API 工作流 ID；在视频节点中调整双 LoRA 强度、原版／加速、采样步数、比例、分辨率、时长、随机／固定种子、VAE 前清理及 RTX 超清 2×。U06 默认 10 秒、16:9、1344×768（0.98MP），时长上限跟随面板（通常 30 秒）。U08、U24、U32、U30 仍使用 API 工作流 ID，请先在面板「API 生成」中保存参数映射，支持 1～15 秒。最多 9 张参考图；除 U32 外最多 3 段参考音频，不支持参考视频或首尾帧。本地素材从节点连接后直接上传，无需 OSS；合计最多 100 MiB，图片长边超过 2048 时等比缩小。U08 二采固定 1MP；U24 固定 1.5 倍放大。U06 支持非负安全整数种子；U24、U30 支持 1～2147483647，留空随机并保存。提示词中的 <Picture 1>、<Audio 1> 对应第一张图和第一段音频。任务保存原始参数和编号，恢复不重新提交，完成后下载到工作区。停止等待只中断本地查询；提交回执丢失时须到面板核查。机器地址改变后须先核实旧任务所在机器。",
+  readme: "连接运行 ZEALMAN-H3 镜像的机器，填写面板 6008 端口对应的 HTTP(S) 访问地址，无需 Token；可先添加供应商，稍后填写地址。请先在面板启动 ComfyUI。U06-V5 使用网页快捷生成模板，自动读取主模型、CLIP、LoRA 和默认参数，不需要配置 API 工作流 ID；在视频节点中调整双 LoRA 强度、原版／加速、采样步数、比例、分辨率、时长、随机／固定种子、VAE 前清理及 RTX 超清 2×。U06 默认 10 秒、16:9、1344×768（0.98MP），时长上限跟随面板（通常 30 秒）。U08、U24、U32、U30 仍使用 API 工作流 ID，请先在面板「API 生成」中保存参数映射，支持 1～15 秒。最多 9 张参考图；除 U32 外最多 3 段参考音频，不支持参考视频或首尾帧。本地素材从节点连接后直接上传，无需 OSS；合计最多 100 MiB，参考图保留原始尺寸和文件内容，不自动缩小或重新编码。U08 二采固定 1MP；U24 固定 1.5 倍放大。U06 支持非负安全整数种子；U24、U30 支持 1～2147483647，留空随机并保存。提示词中的 <Picture 1>、<Audio 1> 对应第一张图和第一段音频。任务保存原始参数和编号，恢复不重新提交，完成后下载到工作区。停止等待只中断本地查询；提交回执丢失时须到面板核查。机器地址改变后须先核实旧任务所在机器。",
   rules,
   async getVideoOptions(model: string) {
     if (model !== "u06") throw new Error("此模型没有 U06 快捷生成选项");
