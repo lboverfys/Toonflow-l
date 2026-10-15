@@ -3,6 +3,7 @@ import type { NodeMediaValue } from "./values";
 import { useNodePreviewReady } from "./useNodePreviewReady";
 
 export interface WorkspaceFiles {
+  importImage?(url: string): Promise<{ path: string; mimeType: string }>;
   getMediaInfo?(path: string): Promise<{ width?: number; height?: number; duration?: number }>;
   list(path?: string): Promise<{ directory: string; entries: { name: string; path: string; type: "file" | "directory" }[] }>;
   read(path: string): Promise<ArrayBuffer>;

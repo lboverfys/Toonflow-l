@@ -57,18 +57,18 @@
             <icon-sparkles :size="18" aria-hidden="true" />
           </el-button>
         </el-tooltip>
-        <el-button v-if="activePanel === 'canvas'" class="agentButton" :type="inspectorVisible ? 'primary' : 'default'" :disabled="!inspectorAvailable" :aria-expanded="inspectorVisible" aria-label="显示或收起节点面板" :title="inspectorAvailable ? '节点面板' : '选择节点后查看操作'" @click="inspectorVisible = !inspectorVisible">
+        <el-button v-if="activePanel === 'canvas'" class="agentButton" :type="inspectorShown ? 'primary' : 'default'" :disabled="!inspectorAvailable" :aria-expanded="inspectorShown" aria-label="显示或收起节点面板" :title="inspectorAvailable ? '节点面板' : '选择节点后查看操作'" @click="inspectorVisible = !inspectorVisible">
           <icon-layout-sidebar-right :size="18" aria-hidden="true" />
         </el-button>
       </div>
     </header>
-    <floatingAgent v-if="agentMounted" v-model="agentVisible" :topOffset="headerHeight" :maxDockedWidth="agentMaxWidth" :inert="refreshing" @resize="agentWidth = $event" />
+    <floatingAgent v-if="agentMounted" :key="workspaceStore.project?.directory" v-model="agentVisible" v-model:layout="agentLayout" :topOffset="headerHeight" :maxDockedWidth="agentMaxWidth" :inert="refreshing" />
     <settings v-model="settingsVisible" />
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, onScopeDispose, provide, ref, shallowRef, watch, type ComponentPublicInstance } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, onScopeDispose, provide, ref, shallowRef, toRefs, watch, type ComponentPublicInstance } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import axios from "axios";
 import { IconLayoutDashboard, IconFileText, IconSparkles, IconLayoutSidebarRight } from "@tabler/icons-vue";
@@ -83,23 +83,25 @@ import type { DocumentNodeOptions } from "./panels/canvas/canvasFiles";
 import workspaceMenu from "./components/workspaceMenu.vue";
 import workspacePresence from "./components/workspacePresence.vue";
 import { workspaceLayoutKey } from "./workspaceLayout";
+import { useWorkspaceView } from "./useWorkspaceView";
 const floatingAgent = defineAsyncComponent(() => import("./components/floatingAgent.vue"));
-const agentMounted = ref(false);
-let agentMountTimer: ReturnType<typeof setTimeout> | undefined;
-onMounted(() => { agentMountTimer = setTimeout(() => { agentMounted.value = true; }, 800); });
-onScopeDispose(() => clearTimeout(agentMountTimer));
-
 const documentPanel = defineAsyncComponent(() => import("./panels/document/index.vue"));
 
-const activePanel = ref<"canvas" | "document">("canvas");
-onMounted(() => anonymousData.track("workspace.canvas"));
 const workspaceStore = useWorkspaceStore();
+const { activePanel, agentVisible, inspectorVisible, inspectorWidth, agent: agentLayout } = toRefs(useWorkspaceView(() => workspaceStore.project?.directory));
+onMounted(() => anonymousData.track(activePanel.value === "canvas" ? "workspace.canvas" : "workspace.document"));
+watch(() => workspaceStore.pendingAgentMessage, message => {
+  if (message && message.directory === workspaceStore.project?.directory) agentVisible.value = true;
+}, { immediate: true });
+const agentMounted = ref(false);
+watch([() => workspaceStore.project?.directory, agentVisible], ([directory, visible], previous) => {
+  if (directory !== previous?.[0]) agentMounted.value = false;
+  if (visible) agentMounted.value = true;
+}, { immediate: true });
 const panelOptions = [
   { label: "画布", value: "canvas", icon: IconLayoutDashboard },
   { label: "文档", value: "document", icon: IconFileText },
 ];
-const agentVisible = ref(true);
-const agentWidth = ref(Math.min(360, window.innerWidth));
 const headerElement = ref<HTMLElement>();
 const headerHeight = ref(56);
 const viewportWidth = ref(window.innerWidth);
@@ -107,15 +109,15 @@ const compact = computed(() => viewportWidth.value < 960);
 const menuTarget = ref<HTMLElement>();
 const controlsTarget = ref<HTMLElement>();
 const inspectorAvailable = ref(false);
-const inspectorVisible = ref(false);
-const inspectorWidth = ref(420);
+const inspectorShown = computed(() => activePanel.value === "canvas" && inspectorAvailable.value && inspectorVisible.value);
 const agentMaxWidth = computed(() => compact.value ? Math.min(520, viewportWidth.value) : Math.min(520, viewportWidth.value - 320
-  - (inspectorVisible.value && activePanel.value === "canvas" ? Math.min(inspectorWidth.value, viewportWidth.value - 640) : 0)));
+  - (inspectorShown.value ? Math.min(inspectorWidth.value, viewportWidth.value - 640) : 0)));
+const agentWidth = computed(() => agentVisible.value && agentLayout.value.docked ? Math.max(0, Math.min(agentLayout.value.width, agentMaxWidth.value)) : 0);
 const inspectorMaxWidth = computed(() => compact.value ? Math.min(600, viewportWidth.value) : Math.min(600, viewportWidth.value - (agentVisible.value ? agentWidth.value : 0) - 320));
 provide(workspaceLayoutKey, { menuTarget, controlsTarget, compact, inspectorAvailable, inspectorVisible, inspectorWidth, inspectorMaxWidth });
-watch(inspectorVisible, visible => { if (visible && compact.value) agentVisible.value = false; });
+watch(inspectorShown, visible => { if (visible && compact.value) agentVisible.value = false; }, { immediate: true });
 watch(agentVisible, visible => { if (visible && compact.value) inspectorVisible.value = false; });
-watch(compact, value => { if (value && inspectorVisible.value) agentVisible.value = false; });
+watch(compact, value => { if (value && inspectorShown.value) agentVisible.value = false; });
 onMounted(() => {
   const observer = new ResizeObserver(() => {
     headerHeight.value = headerElement.value?.offsetHeight ?? 56;

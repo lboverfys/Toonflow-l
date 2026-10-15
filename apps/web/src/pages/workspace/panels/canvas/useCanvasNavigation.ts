@@ -44,12 +44,12 @@ export function useCanvasNavigation(flow: ReturnType<typeof useVueFlow>, binding
     return flow.fitView({ nodes, padding: 0.3, minZoom: flow.minZoom.value, maxZoom: 1.2, duration: 0 });
   }
 
-  function showAll() {
+  function showAll(options: { remember?: boolean; animate?: boolean } = {}) {
     if (!ready() || !flow.getNodes.value.some(node => !node.hidden && node.dimensions.width > 0 && node.dimensions.height > 0)) {
       return Promise.resolve(false);
     }
-    rememberView();
-    return flow.fitView({ padding: 0.2, minZoom: flow.minZoom.value, maxZoom: 1, duration: duration(), interpolate: "linear" });
+    if (options.remember !== false) rememberView();
+    return flow.fitView({ padding: 0.2, minZoom: flow.minZoom.value, maxZoom: 1, duration: options.animate === false ? 0 : duration(), interpolate: "linear" });
   }
 
   function goBack() {

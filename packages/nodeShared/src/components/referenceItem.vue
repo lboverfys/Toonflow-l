@@ -4,6 +4,7 @@
     class="referenceList"
     aria-label="输入引用"
     :animation="180"
+    :disabled="disabled"
     direction="horizontal"
     ghostClass="referenceGhost"
     filter=".removeButton"
@@ -13,6 +14,7 @@
       :key="JSON.stringify([item.source, item.sourceHandle])"
       :item="item"
       :index="index + 1"
+      :disabled="disabled"
       tabindex="0"
       aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
       @keydown.alt.left.stop.prevent="moveReference(index, index - 1)"
@@ -27,12 +29,13 @@ import { VueDraggable } from "vue-draggable-plus";
 import type { NodeInputValue } from "@toonflow/nodes-scaffold/values";
 import referenceCard from "./referenceCard.vue";
 
+const props = defineProps<{ disabled?: boolean }>();
 const items = defineModel<NodeInputValue[]>({ required: true });
 const emit = defineEmits<{ remove: [item: NodeInputValue]; preview: [item: NodeInputValue, url: string, originalUrl: string] }>();
 
 function moveReference(from: number, index: number) {
   const item = items.value[from];
-  if (!item || from === index || index < 0 || index >= items.value.length) return;
+  if (props.disabled || !item || from === index || index < 0 || index >= items.value.length) return;
   const next = [...items.value];
   next.splice(from, 1);
   next.splice(index, 0, item);

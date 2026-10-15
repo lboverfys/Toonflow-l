@@ -113,7 +113,7 @@ const newCanvasId = ref<string | null>(null);
 const nameInput = ref<InputInstance>();
 const canvasName = ref("");
 const renameError = ref("");
-const { toObject, setNodes, setEdges, setViewport } = useVueFlow();
+const { toObject, setNodes, setEdges } = useVueFlow();
 type CanvasEntry = { path: string; name: string; type: "file" | "directory"; children?: CanvasEntry[]; empty?: boolean; draft?: boolean };
 const folders = shallowRef<CanvasEntry[]>([]);
 const canvasPicker = ref<HTMLElement>();
@@ -284,13 +284,6 @@ async function applyCanvas(canvasId: string, directory: string, signal?: AbortSi
   if (!refresh) await props.flushSave();
   checkCanvasDirectory(directory, signal);
   if (currentCanvas && !refresh) currentCanvas.flow = toObject();
-  let nextViewport = refresh ? toObject().viewport : nextCanvas.flow.viewport;
-  if (!refresh) {
-    try {
-      const stored = JSON.parse(localStorage.getItem(`toonflow.canvasViewport:${JSON.stringify([directory, nextCanvas.id])}`) ?? "null");
-      if (stored && [stored.x, stored.y, stored.zoom].every(Number.isFinite) && stored.zoom > 0) nextViewport = stored;
-    } catch { /* 本地视图缓存不可用时沿用画布视图。 */ }
-  }
   // 应用画布数据时暂时清空文件名，避免初始化触发自动保存。
   activeCanvasId.value = "";
   if (refresh) {
@@ -302,7 +295,6 @@ async function applyCanvas(canvasId: string, directory: string, signal?: AbortSi
   setNodes(nextCanvas.flow.nodes);
   // 命中宽度由画布统一配置，不使用旧文件中的覆盖值。
   setEdges(nextCanvas.flow.edges.map(({ interactionWidth, ...edge }) => edge));
-  await setViewport(nextViewport);
   await nextTick();
   checkCanvasDirectory(directory);
   if (refresh) {
@@ -312,7 +304,6 @@ async function applyCanvas(canvasId: string, directory: string, signal?: AbortSi
   }
   boundCanvas.value = nextCanvas;
   activeCanvasId.value = nextCanvas.id;
-  settingsStorage.setItem(`toonflow:lastCanvas:${directory}`, JSON.stringify(nextCanvas.id));
   emit("loaded", disk);
   signal?.throwIfAborted();
 }
