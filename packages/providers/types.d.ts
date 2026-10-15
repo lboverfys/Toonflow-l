@@ -296,6 +296,7 @@ interface ProviderDefinition<TRules extends readonly ProviderFormRule[] = readon
   /** 未实现的方法保持缺省，调用方据此判断能力是否可用。 */
   generateImage?: GenerateMedia<ImageRequest, ProviderConfig<TRules>>;
   generateVideo?: GenerateMedia<VideoRequest, ProviderConfig<TRules>>;
+  getVideoOptions?: (this: ProviderContext<ProviderConfig<TRules>>, model: string) => Promise<Record<string, unknown>>;
   generateAudio?: GenerateMedia<AudioRequest, ProviderConfig<TRules>>;
   /** 可选的供应商媒体预处理；未实现时保持原请求。 */
   processMedia?: (this: ProviderContext<ProviderConfig<TRules>>, request: ImageRequest | VideoRequest | AudioRequest) => Promise<ImageRequest | VideoRequest | AudioRequest>;

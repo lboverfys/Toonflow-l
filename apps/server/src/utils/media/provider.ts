@@ -260,6 +260,11 @@ export async function initializeMediaProviders(sourceDirectory: string, bundled:
       const model = parseProvider(source).models.find(model => model.id === "minimaxH3FirstLastFrame");
       if (model) saved.models.push(model);
     }
+    if (saved?.id === "zealmanH3" && saved.version === "1.0.0") {
+      const old = saved.models.find(model => model.id === "u06");
+      const model = parseProvider(source).models.find(model => model.id === "u06");
+      if (old && model) Object.assign(old, { mode: model.mode, durationResolutionMap: model.durationResolutionMap, defaultDuration: model.defaultDuration, defaultResolution: model.defaultResolution });
+    }
     const next = saved ? replaceProviderConfig(source, saved.models, saved.label) : source;
     metadata(name, next);
     await writeAtomic(target, next);
