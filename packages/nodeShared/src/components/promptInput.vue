@@ -18,7 +18,9 @@ import { IconMaximize } from "@tabler/icons-vue";
 import xSender, { type AnyTagProps, type MentionItem } from "x-sender";
 import "x-sender/lib/XSender.css";
 
-const props = defineProps<{ references: (MentionItem & { value: string; previewUrl?: string })[]; expandable?: boolean; placeholder?: string }>();
+type PromptReference = MentionItem & { value: string; previewUrl?: string; category?: string; action?: boolean };
+const props = defineProps<{ references: PromptReference[]; expandable?: boolean; placeholder?: string; recognizeTokens?: boolean; preserveMissingReferences?: boolean; disabled?: boolean }>();
+const emit = defineEmits<{ activateReference: [reference: PromptReference, occurrence: number]; insertReference: [reference: PromptReference, offset: number] }>();
 const model = defineModel<AnyTagProps[][]>({ required: true });
 const text = defineModel<string>("text", { default: "" });
 const senderElement = ref<HTMLElement>();
@@ -32,10 +34,38 @@ const previewUrl = computed(() => {
 });
 let sender: xSender | undefined;
 let resetTask: Promise<void> | undefined;
+const tokenPattern = computed(() => props.recognizeTokens && props.references.length
+  ? new RegExp(`(${[...new Set(props.references.filter(item => !item.action).map(item => item.value))].filter(Boolean).sort((a, b) => b.length - a.length).map(value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "g")
+  : /(\{\{ref \d+\}\})/g);
+
+function caretOffset() {
+  if (!sender) return;
+  const cursor = sender.getCurrentNode();
+  const row = sender.chatEditor.NODES.findIndex(grid => grid.children.includes(cursor.instance));
+  if (row < 0) return;
+  const column = sender.chatEditor.NODES[row].children.indexOf(cursor.instance);
+  const value = sender.getModel();
+  return (row ? getPromptText(value.slice(0, row)).length + 1 : 0) + getPromptText([value[row].slice(0, column)]).length + Math.min(cursor.instance.text.length, Math.max(0, cursor.offset));
+}
+
+defineExpose({
+  getCaretOffset: caretOffset,
+  replaceText(value: string) { syncModel(value.split("\n").map(text => [{ type: "Write", text }])); },
+  async insertText(value: string) {
+    if (!sender || props.disabled) return;
+    sender.focus("mark");
+    await sender.setText(value);
+    syncModel();
+  },
+});
 
 function previewReference(event: MouseEvent) {
   const tag = event.target instanceof Element ? event.target.closest<HTMLElement>(".imageReference[data-reference-id]") : null;
   const reference = props.references.find(item => item.id === tag?.dataset.referenceId);
+  if (reference) {
+    const matches = Array.from(senderElement.value?.querySelectorAll<HTMLElement>(".imageReference") ?? []).filter(item => item.dataset.value === reference.value);
+    emit("activateReference", reference, Math.max(0, matches.indexOf(tag!)));
+  }
   if (!reference?.avatar) return;
   event.preventDefault();
   event.stopPropagation();
@@ -43,11 +73,12 @@ function previewReference(event: MouseEvent) {
   previewReferenceId.value = reference.id;
 }
 
-function referenceHtml(reference: MentionItem & { value: string }) {
+function referenceHtml(reference: PromptReference) {
   const tag = document.createElement("span");
   tag.className = "imageReference";
   tag.dataset.referenceId = reference.id;
   tag.dataset.value = reference.value;
+  if (reference.category) tag.dataset.category = reference.category;
   if (reference.avatar) {
     const image = document.createElement("img");
     image.src = String(reference.avatar);
@@ -63,8 +94,8 @@ function normalizeModel(value: AnyTagProps[][]): AnyTagProps[][] {
   if (!value.length) return [[{ type: "Write", text: "" }]];
   return value.map(line => {
     const tags = line.flatMap((tag): AnyTagProps[] => {
-      if (tag.type === "Write") return tag.text.split(/(\{\{ref \d+\}\})/g).map(text => {
-        const reference = props.references.find(item => item.value === text);
+      if (tag.type === "Write") return tag.text.split(tokenPattern.value).map(text => {
+        const reference = props.references.find(item => !item.action && item.value === text);
         return reference
           ? { type: "Custom", html: `<span style="display: inline-block;">${referenceHtml(reference)}</span>` }
           : { type: "Write", text };
@@ -72,10 +103,11 @@ function normalizeModel(value: AnyTagProps[][]): AnyTagProps[][] {
       if (tag.type !== "Custom") return [tag];
       const template = document.createElement("template");
       template.innerHTML = tag.html;
-      const id = template.content.querySelector<HTMLElement>(".imageReference[data-reference-id]")?.dataset.referenceId;
+      const element = template.content.querySelector<HTMLElement>(".imageReference[data-reference-id]");
+      const id = element?.dataset.referenceId;
       if (!id) return [tag];
       const reference = props.references.find(item => item.id === id);
-      if (!reference) return [];
+      if (!reference) return props.preserveMissingReferences || element?.dataset.category ? [{ type: "Write", text: element?.dataset.value ?? "" }] : [];
       return [{ type: "Custom", html: `<span style="display: inline-block;">${referenceHtml(reference)}</span>` }];
     });
     const next: AnyTagProps[] = [{ type: "Write", text: "" }];
@@ -194,6 +226,7 @@ watch(senderElement, (element, _previous, onCleanup) => {
     keyboardWrapFun: event => event.key === "Enter" && !event.isComposing,
   });
   sender = instance;
+  const stopDisabledWatch = watch(() => props.disabled, disabled => disabled ? instance.disable() : instance.enable(), { immediate: true });
   // ACT: 弹窗只移动现有编辑器，保留参考标签、光标与撤销记录。
   const stopExpandedWatch = watch([expanded, expandedTarget], async ([visible, target]) => {
     instance.bus.emit(xSender.EventSet.EVENT_COMMON_DIALOG_CLOSE);
@@ -263,6 +296,7 @@ watch(senderElement, (element, _previous, onCleanup) => {
   popup.addEventListener("click", selectReference, true);
   document.addEventListener("pointerdown", closeOutside, true);
   onCleanup(() => {
+    stopDisabledWatch();
     stopExpandedWatch();
     model.value = instance.getModel();
     releaseNodeFocus(instance);
@@ -288,9 +322,15 @@ async function insertReference(reference: MentionItem) {
   const start = before.lastIndexOf("@");
   if (start < 0) return;
   instance.bus.emit(xSender.EventSet.EVENT_COMMON_DIALOG_CLOSE);
-  await instance.backspace(start - before.length);
   const current = props.references.find(item => item.id === reference.id);
-  if (sender === instance && current) await instance.setHtml(referenceHtml(current));
+  if (sender === instance && current) {
+    const offset = Math.max(0, (caretOffset() ?? text.value.length) - (before.length - start));
+    // ACT: 沿用 1.4.6 自带候选的 del 协议，一次替换 @ 查询；分两次删除、插入会被异步光标恢复打断。
+    await new Promise<void>(resolve => instance.bus.emit(xSender.EventSet.EVENT_EDITOR_INSERT_CUSTOM, { html: `<span style="display: inline-block;">${referenceHtml(current)}</span>`, del: before.length - start }, resolve));
+    if (sender !== instance) return;
+    syncModel();
+    emit("insertReference", current, offset);
+  }
 }
 
 function handleMentionKey(event: KeyboardEvent) {

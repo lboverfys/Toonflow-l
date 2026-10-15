@@ -62,13 +62,30 @@ export async function listMediaModels(): Promise<MediaModel[]> {
   }));
 }
 
-export async function getVideoOptions(providerId: string, modelId: string, signal?: AbortSignal) {
+async function videoProvider(providerId: string, modelId: string, signal?: AbortSignal) {
   const info = await getMediaProvider(providerId);
   if (!info.models.some(model => model.id === modelId && model.type === "video")) invalid("所选视频模型不存在");
   const configs = record(conf.get("settings", {}).mediaProviderConfigs);
-  const provider = await loadMediaProviderSource(info.source, record(configs[providerId]), signal);
+  return loadMediaProviderSource(info.source, record(configs[providerId]), signal);
+}
+
+export async function getVideoOptions(providerId: string, modelId: string, signal?: AbortSignal) {
+  const provider = await videoProvider(providerId, modelId, signal);
   if (!provider.getVideoOptions) invalid("此供应商没有动态视频选项");
   return provider.getVideoOptions(modelId);
+}
+
+export async function getVideoReferences(providerId: string, modelId: string, query: { source: "input" | "output"; offset: number; search: string }, signal?: AbortSignal) {
+  const provider = await videoProvider(providerId, modelId, signal);
+  if (!provider.getVideoReferences) invalid("此供应商没有面板素材库");
+  return provider.getVideoReferences(modelId, query);
+}
+
+export async function getVideoReference(providerId: string, modelId: string, source: "input" | "output", path: string, signal: AbortSignal) {
+  const provider = await videoProvider(providerId, modelId, signal);
+  if (!provider.getVideoReference) invalid("此供应商没有面板素材下载能力");
+  const asset = await provider.getVideoReference(modelId, source, path);
+  return assetBytes(asset, asset.mediaType, signal);
 }
 
 export async function readReference(cwd: string, reference: MediaReference, mediaType: string, signal?: AbortSignal): Promise<Extract<MediaInput, { type: "base64" }>> {
@@ -261,10 +278,10 @@ async function generateMediaResult(
   }
   if (!restoring && providerInfo.id === "zealmanH3") {
     if ((request.images?.length ?? 0) > 9 || (request.audios?.length ?? 0) > (model.id === "u32" ? 0 : 3)) invalid("ZEALMAN-H3 最多支持 9 张图片、3 段音频，U32 不支持音频参考");
-    if (request.videos?.length || request.firstFrame || request.lastFrame) invalid("ZEALMAN-H3 预置工作流不支持参考视频或首尾帧模式");
+    if ((request.videos?.length ?? 0) > (model.id === "u06" ? 3 : 0) || request.firstFrame || request.lastFrame) invalid("ZEALMAN-H3 仅 U06 支持最多 3 段参考视频，预置工作流不支持首尾帧模式");
     let total = 0;
     // ACT: 宿主以 Base64 在内存传递素材，读取前限制合计 100 MiB；更大素材须先支持流式上传。
-    for (const input of [...(request.images ?? []), ...(request.audios ?? [])]) {
+    for (const input of [...(request.images ?? []), ...(request.videos ?? []), ...(request.audios ?? [])]) {
       const { path } = await resolveWorkspacePath(directory, input.path);
       const info = await stat(path);
       if (!info.isFile() || !info.size) invalid("ZEALMAN-H3 参考素材必须为非空文件");

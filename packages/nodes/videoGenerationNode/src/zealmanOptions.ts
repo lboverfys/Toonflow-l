@@ -1,6 +1,12 @@
 export type ZealmanChoice = { key: string; label: string; file?: string; adaln?: string; keyStyle?: string; loraKeyStyle?: string; sizeGB?: number; author?: string; note?: string };
+export type ZealmanVoice = { path: string; label: string; gender: string; url: string };
+export type ZealmanAsset = { path: string; name: string; mimeType: string; size: number };
+export function zealmanAssetUrl(source: "input" | "output", path: string) {
+  return `/api/ai/media/reference?${new URLSearchParams({ providerId: "zealmanH3", modelId: "u06", source, path })}`;
+}
 export type ZealmanOptions = {
   models: ZealmanChoice[]; clips: ZealmanChoice[]; loras: ZealmanChoice[];
+  voices: ZealmanVoice[];
   maxDuration: number; queueLimit: number; resolutions: number[]; ratios: string[];
   rtxSupported: boolean; rtxReason: string; originalSteps: number; acceleratedSteps: number;
   defaults: { modelKey: string; clipKey: string; loraKey: string; loraStrength: number; extraLoraKey: string; extraLoraStrength: number; seed: number; duration: number; forceVramCleanupBeforeVae: boolean };

@@ -36,6 +36,7 @@
     <component v-else :is="itemIcon" class="typeIcon" :size="21" aria-hidden="true" />
     <el-button
       class="removeButton nodrag nopan"
+      :disabled="disabled"
       :icon="IconX"
       circle
       :aria-label="`删除引用 ${index}`"
@@ -59,7 +60,7 @@ import { IconX, IconFileText, IconPhoto, IconVideo, IconMusic, IconPlayerPlay } 
 import { useNodeFiles } from "@toonflow/nodes-scaffold/workspaceFiles";
 import type { NodeInputValue } from "@toonflow/nodes-scaffold/values";
 
-const props = defineProps<{ item: NodeInputValue; index: number }>();
+const props = defineProps<{ item: NodeInputValue; index: number; disabled?: boolean }>();
 const emit = defineEmits<{ remove: []; preview: [url: string, originalUrl: string] }>();
 const imageRef = ref<InstanceType<typeof ElImage>>();
 const previewError = ref("");

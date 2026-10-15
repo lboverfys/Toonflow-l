@@ -4,7 +4,7 @@ import type { NodeData } from "@toonflow/nodes-scaffold/connection";
 import { useNodeEvent } from "@toonflow/nodes-scaffold/nodeEvent";
 import type { NodeInputValue } from "@toonflow/nodes-scaffold/values";
 
-export function useNodeReferences(handleId = "in") {
+export function useNodeReferences(handleId = "in", additionalReferences: () => NodeInputValue[] = () => []) {
   const { id, node } = useNode<NodeData & { referenceOrder?: Record<string, string[]> }>();
   const { removeEdges } = useVueFlow();
   const inputValues = ref<NodeInputValue[]>([]);
@@ -12,7 +12,8 @@ export function useNodeReferences(handleId = "in") {
   const refList = computed({
     get() {
       const order = new Map(node.data.referenceOrder?.[handleId]?.map((key, index) => [key, index]));
-      return [...inputValues.value].sort((a, b) => (order.get(referenceKey(a)) ?? order.size) - (order.get(referenceKey(b)) ?? order.size));
+      const values = new Map([...inputValues.value, ...additionalReferences()].map(item => [referenceKey(item), item]));
+      return [...values.values()].sort((a, b) => (order.get(referenceKey(a)) ?? order.size) - (order.get(referenceKey(b)) ?? order.size));
     },
     set(values: NodeInputValue[]) {
       node.data.referenceOrder = { ...node.data.referenceOrder, [handleId]: values.map(referenceKey) };
@@ -32,7 +33,7 @@ export function useNodeReferences(handleId = "in") {
 
   useNodeEvent().on(`input:${handleId}`, (values) => {
     inputValues.value = values;
-    const ids = new Set(values.filter(item => item.dataType === "IMAGE" || item.dataType === "VIDEO").map(referenceKey));
+    const ids = new Set([...values, ...additionalReferences()].filter(item => item.dataType === "IMAGE" || item.dataType === "VIDEO").map(referenceKey));
     for (const key of previews.value.keys()) {
       if (!ids.has(key)) previews.value.delete(key);
     }
@@ -51,6 +52,6 @@ export function useNodeReferences(handleId = "in") {
   return { refList, referenceMentions, setReferencePreview, removeReference };
 }
 
-function referenceKey(item: NodeInputValue) {
+export function referenceKey(item: NodeInputValue) {
   return encodeURIComponent(JSON.stringify([item.source, item.sourceHandle]));
 }

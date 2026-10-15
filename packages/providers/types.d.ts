@@ -297,6 +297,8 @@ interface ProviderDefinition<TRules extends readonly ProviderFormRule[] = readon
   generateImage?: GenerateMedia<ImageRequest, ProviderConfig<TRules>>;
   generateVideo?: GenerateMedia<VideoRequest, ProviderConfig<TRules>>;
   getVideoOptions?: (this: ProviderContext<ProviderConfig<TRules>>, model: string) => Promise<Record<string, unknown>>;
+  getVideoReferences?: (this: ProviderContext<ProviderConfig<TRules>>, model: string, query: { source: "input" | "output"; offset: number; search: string }) => Promise<{ items: { path: string; name: string; mimeType: string; size: number }[]; total: number }>;
+  getVideoReference?: (this: ProviderContext<ProviderConfig<TRules>>, model: string, source: "input" | "output", path: string) => Promise<MediaAsset>;
   generateAudio?: GenerateMedia<AudioRequest, ProviderConfig<TRules>>;
   /** 可选的供应商媒体预处理；未实现时保持原请求。 */
   processMedia?: (this: ProviderContext<ProviderConfig<TRules>>, request: ImageRequest | VideoRequest | AudioRequest) => Promise<ImageRequest | VideoRequest | AudioRequest>;

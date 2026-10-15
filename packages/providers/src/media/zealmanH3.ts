@@ -55,17 +55,25 @@ async function apiRequest<T = ZealmanResponse>(context: ProviderContext, base: s
   let value: T;
   try { value = JSON.parse(Buffer.concat(chunks, size).toString("utf8")); }
   catch { throw Object.assign(new Error(`ZEALMAN-H3 未返回有效 JSON（HTTP ${response.status}）`), { httpStatus: response.status }); }
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("ZEALMAN-H3 返回的接口数据无效");
+  if (!value || typeof value !== "object") throw new Error("ZEALMAN-H3 返回的接口数据无效");
   if (!response.ok) throw Object.assign(new Error(`ZEALMAN-H3 HTTP ${response.status}：${context.tool.errorMessage(value) || "请求失败"}`), { httpStatus: response.status });
   return value;
 }
 
 function fileBytes(input: MediaInput) {
   if (input.type === "binary") return Buffer.from(input.data);
-  if (input.type !== "base64") throw new Error("上传素材需要本地图片或音频内容");
+  if (input.type !== "base64") throw new Error("上传素材需要本地图片、视频或音频内容");
   const data = input.data.replace(/^data:[^;,]+;base64,/, "").replace(/\s/g, "");
   if (data.length > Math.ceil(100 * 1024 * 1024 / 3) * 4 || !/^[a-zA-Z0-9+/]+={0,2}$/.test(data) || data.length % 4 === 1) throw new Error("参考素材 Base64 无效或超过 100 MiB");
   return Buffer.from(data, "base64");
+}
+
+const referenceMimeTypes: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", avif: "image/avif", bmp: "image/bmp", mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime", mp3: "audio/mpeg", wav: "audio/wav", flac: "audio/flac", m4a: "audio/mp4", ogg: "audio/ogg" };
+function referenceUrl(base: string, source: "input" | "output", path: string) {
+  if (!path || path.length > 2048 || /[\\\x00-\x1f]/.test(path) || path.split("/").some(part => !part || part === "." || part === "..") || !referenceMimeTypes[path.split(".").at(-1)!.toLowerCase()]) throw new Error("面板素材路径或格式无效");
+  const parts = path.split("/");
+  const name = parts.pop()!;
+  return `${base}/api/comfy/view?${new URLSearchParams({ filename: name, subfolder: parts.join("/"), type: source })}`;
 }
 
 async function upload(context: ProviderContext, base: string, field: string, input: MediaInput) {
@@ -76,7 +84,7 @@ async function upload(context: ProviderContext, base: string, field: string, inp
   }
   const bytes = fileBytes(input);
   const mimeType = input.mimeType;
-  const mediaType = field.startsWith("ref_image_") ? "image" : "audio";
+  const mediaType = field.startsWith("ref_image_") ? "image" : field.startsWith("ref_video_") ? "video" : "audio";
   if (!bytes.length || bytes.length > 100 * 1024 * 1024 || !new RegExp(`^${mediaType}/[a-z0-9.+-]+$`, "i").test(mimeType)) throw new Error("参考素材为空、类型不匹配或超过 100 MiB");
   if (mediaType === "image") await context.tool.media.inspectImage({ type: "binary", data: bytes, mimeType });
   const extension = ({ "image/jpeg": "jpg", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/x-wav": "wav" } as Record<string, string>)[mimeType] ?? mimeType.split("/")[1];
@@ -155,9 +163,10 @@ const u06Resolutions = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.98, 1, 1.2, 1.
 
 async function u06Options(context: ProviderContext) {
   const base = apiBase(context);
-  const [settings, rtx] = await Promise.all([
+  const [settings, rtx, voiceLibrary] = await Promise.all([
     apiRequest<U06Defaults>(context, base, "/u-series-defaults.json"),
     apiRequest<{ supported: boolean; reason?: string }>(context, base, "/api/gpu/rtx-upscale"),
+    apiRequest<{ success: boolean; voices: { filename: string; comfyAudio: string; label: string; gender: string }[] }>(context, base, "/api/voices"),
   ]);
   const defaults = settings.variants?.u6;
   if (!defaults || !Array.isArray(settings.modelOptions?.ref2va) || !Array.isArray(settings.clipOptions) || !Array.isArray(settings.loraOptions)) throw new Error("面板缺少 U06 模型目录，请确认使用支持快捷生成的 ZEALMAN-H3 面板版本");
@@ -165,8 +174,14 @@ async function u06Options(context: ProviderContext) {
     if (!item || typeof item.key !== "string" || typeof item.label !== "string" || (item.key !== "none" && typeof item.file !== "string")) throw new Error("面板返回的模型或 LoRA 清单无效");
     return { key: item.key, file: item.file, label: item.label, adaln: item.adaln, keyStyle: item.keyStyle, loraKeyStyle: item.loraKeyStyle, sizeGB: item.sizeGB, author: item.author, note: item.note };
   });
+  if (voiceLibrary.success !== true || !Array.isArray(voiceLibrary.voices)) throw new Error("面板返回的内置音色清单无效");
+  const voices = voiceLibrary.voices.map(voice => {
+    if (typeof voice.comfyAudio !== "string" || !/^voices\/[^/\\]+$/.test(voice.comfyAudio) || voice.comfyAudio.split("/").at(-1) === ".." || typeof voice.filename !== "string") throw new Error("面板返回的音色路径无效");
+    return { path: voice.comfyAudio, label: voice.label || voice.filename, gender: voice.gender,
+      url: `${base}/api/comfy/view?filename=${encodeURIComponent(voice.comfyAudio.slice(7))}&subfolder=voices&type=input` };
+  });
   return {
-    models: choices(settings.modelOptions.ref2va), clips: choices(settings.clipOptions), loras: choices(settings.loraOptions),
+    models: choices(settings.modelOptions.ref2va), clips: choices(settings.clipOptions), loras: choices(settings.loraOptions), voices,
     maxDuration: Math.min(300, Math.max(1, Number(settings.maxDurationSeconds) || 30)),
     queueLimit: Math.min(50, Math.max(1, Number(settings.composerJobQueueMax) || 5)),
     resolutions: u06Resolutions, ratios: Object.keys(aspectRatios),
@@ -194,21 +209,28 @@ async function createU06Snapshot(context: ProviderContext, request: VideoRequest
   if (!request.prompt.trim() || request.prompt.length > 10000) throw new Error("U06 提示词须为 1～10000 字符");
   const images = request.images ?? [];
   const audios = request.audios ?? [];
-  if (images.length > 9 || audios.length > 3 || request.videos?.length || request.firstFrame || request.lastFrame) throw new Error("U06 当前接入支持最多 9 图、3 音频，不接受视频参考或首尾帧");
-  if (request.mode !== undefined && request.mode !== "text" && (!Array.isArray(request.mode) || request.mode.length !== 2 || !request.mode.includes("imageReference:9") || !request.mode.includes("audioReference:3"))) throw new Error("请选择 U06 的文生视频或混合参考模式");
-  if (request.mode === "text" && images.length + audios.length) throw new Error("文生视频模式不接受参考素材");
+  const videos = request.videos ?? [];
+  const values = request.other ?? {};
+  const voiceReferences = values.voiceReferences ?? [];
+  if (!Array.isArray(voiceReferences) || voiceReferences.some(value => typeof value !== "string")) throw new Error("内置音色引用无效");
+  if (images.length > 9 || audios.length + voiceReferences.length > 3 || videos.length > 3 || request.firstFrame || request.lastFrame) throw new Error("U06 支持最多 9 图、3 视频和 3 音频，不接受首尾帧模式");
+  if (request.mode !== undefined && request.mode !== "text" && (!Array.isArray(request.mode) || ![2, 3].includes(request.mode.length) || !request.mode.includes("imageReference:9") || !request.mode.includes("audioReference:3") || request.mode.some(mode => !["imageReference:9", "audioReference:3", "videoReference:3"].includes(mode)) || videos.length > 0 && !request.mode.includes("videoReference:3"))) throw new Error("请选择 U06 的文生视频或混合参考模式");
+  if (request.mode === "text" && images.length + audios.length + videos.length + voiceReferences.length) throw new Error("文生视频模式不接受参考素材");
   if (request.generateAudio !== undefined || request.watermark !== undefined) throw new Error("U06 没有声音或水印开关");
-  for (const match of request.prompt.matchAll(/<(Picture|Audio)\s+(\d+)>/g)) {
-    if (Number(match[2]) < 1 || Number(match[2]) > (match[1] === "Picture" ? images.length : audios.length)) throw new Error(`提示词 ${match[0]} 没有对应的参考素材`);
+  for (const match of request.prompt.matchAll(/<(Picture|Audio|Video)\s+(\d+)>/g)) {
+    if (Number(match[2]) < 1 || Number(match[2]) > (match[1] === "Picture" ? images.length : match[1] === "Video" ? videos.length : audios.length + voiceReferences.length)) throw new Error(`提示词 ${match[0]} 没有对应的参考素材`);
   }
   const [options, graph, health, gpu, status] = await Promise.all([
     u06Options(context), apiRequest<ZealmanGraph>(context, base, encodeURI(u06TemplatePath)),
     apiRequest(context, base, "/api/health"), apiRequest(context, base, "/api/gpu/info"), apiRequest(context, base, "/api/comfy/status"),
   ]);
   if (health.status !== "ok" || gpu.hasGPU !== true || status.running !== true) throw new Error("U06 未就绪，请确认 GPU 可用并在面板中启动 ComfyUI");
-  const values = request.other ?? {};
-  const allowed = ["modelKey", "clipKey", "loraKey", "loraStrength", "extraLoraKey", "extraLoraStrength", "accelerated", "steps", "upscale", "forceVramCleanupBeforeVae"];
+  const allowed = ["modelKey", "clipKey", "loraKey", "loraStrength", "extraLoraKey", "extraLoraStrength", "accelerated", "steps", "upscale", "forceVramCleanupBeforeVae", "voiceReferences", "videoReferenceSizes"];
   if (Object.keys(values).some(key => !allowed.includes(key))) throw new Error("U06 包含不支持的生成设置");
+  const knownVoices = new Set(options.voices.map(voice => voice.path));
+  if (voiceReferences.some(path => !knownVoices.has(path))) throw new Error("所选内置音色已不在面板清单中，请刷新后重新选择");
+  const videoSizes = values.videoReferenceSizes as { width: number; height: number }[] | undefined;
+  if ((videos.length || videoSizes !== undefined) && (!Array.isArray(videoSizes) || videoSizes.length !== videos.length || videoSizes.some(size => !size || ![size.width, size.height].every(value => Number.isInteger(value) && value > 0 && value <= 65536)))) throw new Error("参考视频须提供对应的有效宽高，请通过视频节点添加素材后重试");
   const choose = (items: U06Choice[], key: unknown, label: string) => {
     const item = items.find(item => item.key === key);
     if (!item) throw new Error(`${label}已不在面板清单中，请刷新 U06 选项后重新选择`);
@@ -274,12 +296,25 @@ async function createU06Snapshot(context: ProviderContext, request: VideoRequest
     ref[`ref_images.ref_image_${index}`] = [id, 0];
   }
   for (const [index, id] of audioIds.entries()) {
-    if (!audios[index]) { delete graph[id]; delete graph[trimIds[index]]; continue; }
+    const audio = audios[index];
+    const voice = voiceReferences[index - audios.length];
+    if (!audio && !voice) { delete graph[id]; delete graph[trimIds[index]]; continue; }
     if (graph[id]?.class_type !== "LoadAudio" || graph[trimIds[index]]?.class_type !== "TrimAudioDuration") throw new Error("U06 音频输入节点已改变");
-    graph[id].inputs.audio = await upload(context, base, `ref_audio_${index}`, audios[index]);
+    graph[id].inputs.audio = audio ? await upload(context, base, `ref_audio_${index}`, audio) : voice;
     ref[`ref_audios.ref_audio_${index}`] = [trimIds[index], 0];
   }
-  for (const id of ["638", "659", "660", "736", "737", "738", "739", "740", "741", "742", "743", "744"]) delete graph[id];
+  const videoNodes = [["638", "736", "737", "738"], ["659", "739", "740", "741"], ["660", "742", "743", "744"]];
+  for (const [index, [load, resize, output, range]] of videoNodes.entries()) {
+    if (!videos[index]) { for (const id of [load, resize, output, range]) delete graph[id]; continue; }
+    if (graph[load]?.class_type !== "VHS_LoadVideo" || graph[resize]?.class_type !== "ImageResizeKJv2" || graph[range]?.class_type !== "GetImageRangeFromBatch" || graph[output]?.class_type !== "easy clearCacheAll") throw new Error("U06 视频参考节点已改变，请更新适配后提交");
+    graph[load].inputs.video = await upload(context, base, `ref_video_${index}`, videos[index]);
+    const size = videoSizes?.[index];
+    if (size) {
+      const scale = Math.min(1, 768 / Math.min(size.width, size.height), Math.sqrt(1032192 / (size.width * size.height)));
+      Object.assign(graph[resize].inputs, { width: Math.max(32, Math.round(size.width * scale / 32) * 32), height: Math.max(32, Math.round(size.height * scale / 32) * 32), keep_proportion: "stretch", divisible_by: 32 });
+    }
+    ref[`ref_videos.ref_video_${index}`] = [output, 0];
+  }
   ref.ref_image_size = images.length > 2 ? "match" : "max";
   if (cleanup) {
     const decodeKeys: Record<string, string> = { VAEDecode: "samples", VAEDecodeTiled: "samples", VAEDecodeAudio: "samples", MiniMaxH3AVDecodeT8: "av_latent" };
@@ -403,17 +438,37 @@ async function poll(context: ProviderContext, snapshot: ZealmanSnapshot) {
 export default {
   id: "zealmanH3",
   label: "ZEALMAN-H3 自部署",
-  version: "1.1.1",
+  version: "1.2.0",
   apiUrl: "",
-  readme: "连接运行 ZEALMAN-H3 镜像的机器，填写面板 6008 端口对应的 HTTP(S) 访问地址，无需 Token；可先添加供应商，稍后填写地址。请先在面板启动 ComfyUI。U06-V5 使用网页快捷生成模板，自动读取主模型、CLIP、LoRA 和默认参数，不需要配置 API 工作流 ID；在视频节点中调整双 LoRA 强度、原版／加速、采样步数、比例、分辨率、时长、随机／固定种子、VAE 前清理及 RTX 超清 2×。U06 默认 10 秒、16:9、1344×768（0.98MP），时长上限跟随面板（通常 30 秒）。U08、U24、U32、U30 仍使用 API 工作流 ID，请先在面板「API 生成」中保存参数映射，支持 1～15 秒。最多 9 张参考图；除 U32 外最多 3 段参考音频，不支持参考视频或首尾帧。本地素材从节点连接后直接上传，无需 OSS；合计最多 100 MiB，参考图保留原始尺寸和文件内容，不自动缩小或重新编码。U08 二采固定 1MP；U24 固定 1.5 倍放大。U06 支持非负安全整数种子；U24、U30 支持 1～2147483647，留空随机并保存。提示词中的 <Picture 1>、<Audio 1> 对应第一张图和第一段音频。任务保存原始参数和编号，恢复不重新提交，完成后下载到工作区。停止等待只中断本地查询；提交回执丢失时须到面板核查。机器地址改变后须先核实旧任务所在机器。",
+  readme: "连接运行 ZEALMAN-H3 镜像的机器，填写面板 6008 端口对应的 HTTP(S) 地址，无需 Token；请先在面板启动 ComfyUI。U06-V5 使用网页快捷模板，自动读取主模型、CLIP、双 LoRA、内置音色和默认参数，无需 API 工作流 ID。视频节点右侧可调整原版／加速、步数、比例、分辨率、时长、种子、VAE 前清理及 RTX 超清 2×。U06 默认 10 秒、16:9、0.98MP，时长上限跟随面板。支持最多 9 图、3 视频、3 音频（含内置音色）；可命名主体、绑定音色、用 @ 编辑六段提示词、插入对白，调用 Toonflow 文本模型按内置 Skill 优化。面板素材库支持输入与历史输出的搜索、预览和导入。图片保持原文件；视频沿用网页短边 768、面积 1032192 和 32 倍数的尺寸规则。U08、U24、U32、U30 仍使用 API 工作流 ID 和 1～15 秒；最多 9 图，除 U32 外最多 3 音频，不支持参考视频或首尾帧。素材直接上传，无需 OSS；本地素材合计最多 100 MiB。U08 二采固定 1MP；U24 固定 1.5 倍放大。U06 支持非负安全整数种子，U24、U30 支持 1～2147483647，留空随机并保存。<Picture N>、<Video N>、<Audio N> 按各类素材顺序编号。任务保存原参数和编号，恢复不重提，完成后下载到工作区。停止等待只中断本地查询；提交回执丢失须到面板核查。机器地址改变后须先核实旧任务所在机器。",
   rules,
   async getVideoOptions(model: string) {
     if (model !== "u06") throw new Error("此模型没有 U06 快捷生成选项");
     return u06Options(this);
   },
+  async getVideoReferences(model, query) {
+    if (model !== "u06") throw new Error("此模型没有 U06 面板素材库");
+    const base = apiBase(this);
+    const result = await apiRequest<{ path: string; name: string; size: number }[]>(this, base, query.source === "input" ? "/api/input-assets" : "/api/images");
+    if (!Array.isArray(result)) throw new Error("面板素材列表格式无效");
+    // ACT: 面板只提供整页列表；响应限 8 MiB，前端每页 12 项，不逐条查询素材详情。
+    const items = result.flatMap(item => {
+      const mimeType = typeof item.path === "string" ? referenceMimeTypes[item.path.split(".").at(-1)!.toLowerCase()] : undefined;
+      if (!mimeType || typeof item.name !== "string" || !Number.isFinite(item.size) || item.size <= 0 || item.size > 100 * 1024 * 1024 || !item.name.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())) return [];
+      referenceUrl(base, query.source, item.path);
+      return [{ path: item.path, name: item.name, size: item.size, mimeType }];
+    });
+    return { items: items.slice(query.offset, query.offset + 12), total: items.length };
+  },
+  async getVideoReference(model, source, path) {
+    if (model !== "u06") throw new Error("此模型没有 U06 面板素材库");
+    const url = referenceUrl(apiBase(this), source, path);
+    const mimeType = referenceMimeTypes[path.split(".").at(-1)!.toLowerCase()];
+    return { type: "url", url, mimeType, mediaType: mimeType.split("/")[0] as "image" | "video" | "audio" };
+  },
   models: [
     { id: "u08", label: "H3 U08 · 两段采样", type: "video", mode: [["imageReference:9", "audioReference:3"]], taskRecovery: true, defaultDuration: 5, defaultResolution: "0.4MP", videoRatios: ["16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "1:1", "21:9"], durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: ["0.2MP", "0.3MP", "0.4MP", "0.5MP", "0.6MP", "0.8MP", "1MP"] }] },
-    { id: "u06", label: "H3 U06-V5 · 快捷生成", type: "video", mode: ["text", ["imageReference:9", "audioReference:3"]], taskRecovery: true, supportsSeed: true, defaultDuration: 10, defaultResolution: "0.98MP", videoRatios: ["16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "1:1", "21:9"], durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], resolution: ["0.2MP", "0.3MP", "0.4MP", "0.5MP", "0.6MP", "0.7MP", "0.8MP", "0.9MP", "0.98MP", "1MP", "1.2MP", "1.5MP", "1.8MP", "2MP"] }] },
+    { id: "u06", label: "H3 U06-V5 · 快捷生成", type: "video", mode: ["text", ["imageReference:9", "videoReference:3", "audioReference:3"]], taskRecovery: true, supportsSeed: true, defaultDuration: 10, defaultResolution: "0.98MP", videoRatios: ["16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "1:1", "21:9"], durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], resolution: ["0.2MP", "0.3MP", "0.4MP", "0.5MP", "0.6MP", "0.7MP", "0.8MP", "0.9MP", "0.98MP", "1MP", "1.2MP", "1.5MP", "1.8MP", "2MP"] }] },
     { id: "u24", label: "H3 U24 · 文武双修 T8", type: "video", mode: [["imageReference:9", "audioReference:3"]], taskRecovery: true, supportsSeed: true, defaultDuration: 5, defaultResolution: "0.4MP", videoRatios: ["16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "1:1", "21:9"], durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: ["0.2MP", "0.25MP", "0.3MP", "0.35MP", "0.4MP"] }] },
     { id: "u32", label: "H3 U32 · 图片参考", type: "video", mode: [["imageReference:9"]], taskRecovery: true, defaultDuration: 5, defaultResolution: "2MP", videoRatios: ["16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "1:1", "21:9"], durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: ["0.5MP", "1MP", "1.5MP", "2MP", "2.5MP"] }] },
     { id: "u30", label: "H3 U30 · 多参考", type: "video", mode: [["imageReference:9", "audioReference:3"]], taskRecovery: true, supportsSeed: true, defaultDuration: 5, defaultResolution: "0.7MP", videoRatios: ["16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "1:1", "21:9"], durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: ["0.3MP", "0.4MP", "0.5MP", "0.6MP", "0.7MP", "0.8MP", "1MP"] }] },
