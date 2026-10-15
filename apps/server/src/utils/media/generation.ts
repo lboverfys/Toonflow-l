@@ -62,6 +62,15 @@ export async function listMediaModels(): Promise<MediaModel[]> {
   }));
 }
 
+export async function getVideoOptions(providerId: string, modelId: string, signal?: AbortSignal) {
+  const info = await getMediaProvider(providerId);
+  if (!info.models.some(model => model.id === modelId && model.type === "video")) invalid("所选视频模型不存在");
+  const configs = record(conf.get("settings", {}).mediaProviderConfigs);
+  const provider = await loadMediaProviderSource(info.source, record(configs[providerId]), signal);
+  if (!provider.getVideoOptions) invalid("此供应商没有动态视频选项");
+  return provider.getVideoOptions(modelId);
+}
+
 export async function readReference(cwd: string, reference: MediaReference, mediaType: string, signal?: AbortSignal): Promise<Extract<MediaInput, { type: "base64" }>> {
   signal?.throwIfAborted();
   const { path } = await resolveWorkspacePath(cwd, reference.path);
@@ -296,6 +305,7 @@ async function generateMediaResult(
       firstFrame, lastFrame,
       ratio: request.ratio, resolution: request.resolution, duration: request.duration,
       generateAudio: request.generateAudio, mode: request.mode, seed: request.seed,
+      other: request.other,
     });
   if (!Array.isArray(assets) || !assets.length) invalid("供应商未返回生成结果");
   if (videoTask && assets.length !== 1) invalid("此任务应生成一条视频");

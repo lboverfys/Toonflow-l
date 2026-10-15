@@ -115,6 +115,7 @@ export interface MediaGenerationRequest {
   resolution?: string;
   duration?: number;
   seed?: number;
+  other?: Record<string, unknown>;
   generateAudio?: boolean;
   voice?: string;
   speed?: number;
