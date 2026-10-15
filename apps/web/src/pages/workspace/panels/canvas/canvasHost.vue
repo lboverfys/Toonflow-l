@@ -25,6 +25,7 @@ import { waitForControlValue } from "@/lib/mcpControl";
 import canvasPanel from "./index.vue";
 import useWorkspaceFiles from "@/lib/workspaceFiles";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { settingsStorage } from "@/stores/settings";
 import { createCanvasMention, mentionNodeOutputs, queryMentionNodes, type MentionCanvasSource } from "@toonflow/server/agent/mentionSources";
 import type { NodeDocumentState } from "@toonflow/nodes-scaffold/nodeDocument";
 import { copyCanvasFiles, readCanvasFiles, type DocumentNode, type DocumentNodeOptions } from "./canvasFiles";
@@ -39,6 +40,10 @@ const canvasId = computed(() => activeInstance.value?.canvasId ?? "");
 const canvasReady = computed(() => activeInstance.value?.canvasReady ?? false);
 const lifetime = new AbortController();
 const workspaceStore = useWorkspaceStore();
+watch(canvasId, path => {
+  const directory = workspaceStore.project?.directory;
+  if (directory && path) settingsStorage.setItem(`toonflow:lastCanvas:${directory}`, JSON.stringify(path));
+});
 const syncError = ref("");
 watch(() => workspaceStore.project?.directory, (directory, _previous, onCleanup) => {
   if (!directory) return;

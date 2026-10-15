@@ -44,20 +44,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, shallowRef, toRef, watch } from "vue";
 import { IconLayoutSidebar, IconAppWindowBottomRight } from "@tabler/icons-vue";
 import agent from "@/components/agent/index.vue";
+import type { AgentLayout } from "../useWorkspaceView";
 
 const visible = defineModel<boolean>({ default: false });
+const layout = defineModel<AgentLayout>("layout", { required: true });
 const props = defineProps<{ topOffset: number; maxDockedWidth: number }>();
-const emit = defineEmits<{ resize: [width: number] }>();
-const docked = ref(true);
+const docked = toRef(layout.value, "docked");
 const viewport = reactive({ width: window.innerWidth, height: window.innerHeight });
 const gap = computed(() => Math.min(15, viewport.width / 2, viewport.height / 2));
 const maxWidth = computed(() => Math.max(0, docked.value ? Math.min(props.maxDockedWidth, viewport.width) : viewport.width - gap.value * 2));
-const preferredWidth = ref(360);
+const preferredWidth = toRef(layout.value, "width");
 const width = computed(() => Math.min(preferredWidth.value, maxWidth.value));
-const preferredHeight = ref<number>();
+const preferredHeight = toRef(layout.value, "height");
 const floatingHeight = computed(() => Math.min(preferredHeight.value ?? viewport.height * 0.8, viewport.height - gap.value * 2));
 const height = computed(() => (docked.value ? Math.max(0, viewport.height - props.topOffset) : floatingHeight.value));
 const resizeHandles = computed(
@@ -72,8 +73,8 @@ const resizeHandles = computed(
           ]),
     ] as { edge: ResizeEdge; label: string }[]
 );
-const left = ref(gap.value);
-const top = ref(viewport.height - floatingHeight.value - gap.value);
+const left = toRef(layout.value, "left", gap.value);
+const top = toRef(layout.value, "top", viewport.height - floatingHeight.value - gap.value);
 const panelStyle = computed(() => ({
   left: `${docked.value ? 0 : left.value}px`,
   top: `${docked.value ? props.topOffset : top.value}px`,
@@ -181,12 +182,7 @@ watch(
   () => {
     if (!docked.value) movePanel(left.value, top.value);
   },
-  { flush: "sync" }
-);
-watch(
-  () => (visible.value && docked.value ? width.value : 0),
-  (value) => emit("resize", value),
-  { immediate: true }
+  { immediate: true, flush: "sync" }
 );
 window.addEventListener("resize", resizeViewport);
 onBeforeUnmount(() => {

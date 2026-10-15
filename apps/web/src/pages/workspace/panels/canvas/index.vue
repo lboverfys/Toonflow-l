@@ -3,7 +3,7 @@
     ref="canvasElement"
     class="canvas"
     :class="{ edgesHidden: !showEdges, handMode, compositingEnabled: generalSettings.canvasCompositingEnabled }"
-    :style="{ '--canvasEdgeColor': generalSettings.canvasEdgeColorMode === 'custom' ? generalSettings.canvasEdgeColor : 'var(--el-color-primary)', '--inspectorWidth': `${workspaceLayout.inspectorVisible.value && !workspaceLayout.compact.value ? Math.min(workspaceLayout.inspectorWidth.value, workspaceLayout.inspectorMaxWidth.value) : 0}px` }"
+    :style="{ '--canvasEdgeColor': generalSettings.canvasEdgeColorMode === 'custom' ? generalSettings.canvasEdgeColor : 'var(--el-color-primary)', '--inspectorWidth': `${inspectorShown && !workspaceLayout.compact.value ? Math.min(workspaceLayout.inspectorWidth.value, workspaceLayout.inspectorMaxWidth.value) : 0}px` }"
     @dblclick="openNodeMenu"
     @wheel.capture="zoomCanvas"
     @gesturestart.capture="zoomCanvas"
@@ -76,7 +76,7 @@
         <div v-show="active" class="canvasControlsHost" @pointerdown.capture="cancelCanvasZoom">
         <canvasControls
           ref="canvasControlsRef"
-          :active="active && !settingsVisible"
+          :active="active && !settingsVisible && canvasView.ready.value"
           v-model:assetsVisible="assetsVisible"
           v-model:showMap="showMap"
           v-model:snapEnabled="snapEnabled"
@@ -115,7 +115,7 @@
       </teleport>
       <nodeSearch ref="nodeSearchRef" :disabled="!active || settingsVisible || !canvasId || !project?.directory" :nodeTypes="availableNodes" :focusNodes="navigation.focusNodes" />
     </vue-flow>
-    <nodeInspector v-show="workspaceLayout.inspectorVisible.value" v-model:width="workspaceLayout.inspectorWidth.value" :maxWidth="workspaceLayout.inspectorMaxWidth.value" :title="inspectorTitle" @close="workspaceLayout.inspectorVisible.value = false">
+    <nodeInspector v-show="inspectorShown" v-model:width="workspaceLayout.inspectorWidth.value" :maxWidth="workspaceLayout.inspectorMaxWidth.value" :title="inspectorTitle" @close="workspaceLayout.inspectorVisible.value = false">
       <div class="nodeDock">
         <div ref="nodeDockSelection" class="dockSlot" />
         <div ref="nodeDockTop" class="dockSlot" />
@@ -147,7 +147,6 @@
 <script setup lang="ts">
 import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowRef, watch } from "vue";
 import axios from "axios";
-import { debounce } from "lodash-es";
 import { ElMessage } from "element-plus";
 import { isMobile } from "@/lib/mobile";
 import { storeToRefs } from "pinia";
@@ -179,6 +178,7 @@ import canvasConflict from "./components/canvasConflict.vue";
 import type { CanvasSnapshot } from "@toonflow/server/canvasMerge";
 import type { CanvasUpdate } from "@/lib/workspaceFiles";
 import { useCanvasNavigation } from "./useCanvasNavigation";
+import { useCanvasView } from "./useCanvasView";
 import { copyNodeToClipboard, copyNodesToClipboard, nodeClipboardCommand, readClipboardNodes } from "./nodeClipboard";
 import { readClipboardFiles, readClipboardText, writeClipboardImage } from "@/lib/clipboard";
 import nodeMenu from "./components/nodeMenu.vue";
@@ -227,7 +227,7 @@ provide("nodeSlotDock", { top: nodeDockTop, bottom: nodeDockBottom });
 provide("canvasFocusInsets", () => {
   const canvas = flow.vueFlowRef.value?.getBoundingClientRect();
   const bottom = 24;
-  const inspectorInset = workspaceLayout.compact.value && workspaceLayout.inspectorVisible.value ? Math.min(workspaceLayout.inspectorWidth.value, workspaceLayout.inspectorMaxWidth.value) : 0;
+  const inspectorInset = workspaceLayout.compact.value && inspectorShown.value ? Math.min(workspaceLayout.inspectorWidth.value, workspaceLayout.inspectorMaxWidth.value) : 0;
   const panel = document.getElementById("agentPanel")?.getClientRects()[0];
   if (!canvas || !panel || panel.right <= canvas.left || panel.left >= canvas.right) return { left: 0, right: inspectorInset, top: 24, bottom };
   const leftSpace = Math.max(0, panel.left - canvas.left - 20);
@@ -261,13 +261,8 @@ const assetsVisible = ref(false);
 const assetLibraryRef = ref<InstanceType<typeof assetLibrary>>();
 const edgeDisconnect = ref<{ id: string; x: number; y: number }>();
 const flow = useVueFlow(props.runtimeKey);
+const inspectorShown = computed(() => workspaceLayout.inspectorVisible.value && workspaceLayout.inspectorAvailable.value);
 const inspectorTitle = computed(() => flow.getSelectedNodes.value.length > 1 ? `已选中 ${flow.getSelectedNodes.value.length} 个节点` : flow.getSelectedNodes.value[0]?.data.label || "节点设置");
-watch([() => props.active, () => flow.getSelectedNodes.value.map(node => node.id).join(","), () => flow.userSelectionActive.value], ([active, ids, selecting]) => {
-  if (!active || selecting) return;
-  workspaceLayout.inspectorAvailable.value = !!ids;
-  workspaceLayout.inspectorVisible.value = !!ids;
-}, { immediate: true });
-flow.onNodeClick(() => { if (props.active && flow.getSelectedNodes.value.length) workspaceLayout.inspectorVisible.value = true; });
 const { nodeTypes, nodeLoads, nodeErrors, nodeListLoading, remoteNodeTypes, availableNodes, ensureNodeType, prepareNodeMenu } = useRemoteNodes(flow, {
   signal: () => canvasController.signal, revision: () => canvasSave.revision,
 });
@@ -317,7 +312,11 @@ const canvasSync = useCanvasSync(flow, () => project.value?.directory && canvasI
 const canvasSave = useCanvasSave(flow, canvasSync, {
   directory: () => project.value?.directory, path: () => canvasId.value, ready: () => !!canvasMenuRef.value, dirty: canvasDirty, error: canvasSaveError,
 });
-const { scheduleCanvasSave, resetSavedState, flushCanvasSave, cancelCanvasSave } = canvasSave;
+const { scheduleCanvasSave, resetSavedState, cancelCanvasSave } = canvasSave;
+function flushCanvasSave(action?: () => Promise<void>) {
+  canvasView.flush();
+  return canvasSave.flushCanvasSave(action);
+}
 watch([canvasSync.conflict, canvasSync.recoveryError], ([conflict, recoveryError]) => {
   if (conflict || recoveryError) canvasSaveError.value = `${canvasId.value}：${recoveryError || conflict?.message}`;
   else { canvasSaveError.value = ""; canvasSave.clearError(); }
@@ -355,6 +354,19 @@ function getCanvasContext() {
   return canvasId.value ? createCanvasContext(canvasId.value, canvasController.signal, workspaceController.signal) : undefined;
 }
 const canvasReady = computed(() => !!canvasId.value && !nodeListLoading.value && nodeLoads.size === 0);
+const canvasView = useCanvasView(flow, navigation, {
+  directory: () => project.value?.directory, path: () => canvasId.value,
+  active: () => props.active && !props.settingsVisible, loaded: () => canvasReady.value && !canvasReloading.value,
+  showMap, snapEnabled, showEdges,
+});
+watch([() => props.active, () => flow.getSelectedNodes.value.length, () => flow.userSelectionActive.value, canvasView.selectionReady], ([active, count, selecting, ready]) => {
+  if (active && !selecting) workspaceLayout.inspectorAvailable.value = ready && count > 0;
+}, { immediate: true });
+function showInspector() {
+  if (props.active && flow.getSelectedNodes.value.length) workspaceLayout.inspectorVisible.value = true;
+}
+flow.onNodeClick(showInspector);
+flow.onSelectionEnd(showInspector);
 provide("canvas", getCanvasContext);
 const { readDocumentNode, saveDocumentNode, mountDocumentNode, observeDocumentNode } = useDocumentNodes({
   directory: () => project.value?.directory, canvasId, findNode, canvasDirty, canvasSaveError, nodeErrors, flushCanvasSave,
@@ -528,16 +540,6 @@ watch(
   { immediate: true, flush: "post" }
 );
 onScopeDispose(() => elementSaveWatchers.forEach((stop) => stop()));
-// ACT: 平移/缩放属于个人视图，避免浏览项目也覆盖其他成员的整份画布。
-const rememberViewport = debounce((key: string, value: string) => {
-  try { localStorage.setItem(key, value); } catch { /* 视图缓存失败不影响项目保存。 */ }
-}, 300);
-watch(() => [viewport.value.x, viewport.value.y, viewport.value.zoom], () => {
-  const directory = project.value?.directory;
-  if (directory && canvasId.value) rememberViewport(`toonflow.canvasViewport:${JSON.stringify([directory, canvasId.value])}`, JSON.stringify(viewport.value));
-}, { flush: "post" });
-onScopeDispose(() => rememberViewport.flush());
-
 async function prepareRefresh() {
   if (!canvasReady.value && canvasId.value) throw new Error("画布正在加载，请稍后刷新");
   await canvasSync.sync();
