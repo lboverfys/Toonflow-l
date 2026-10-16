@@ -248,6 +248,7 @@ const isH3Prompt = computed(() => selectedModel.value?.providerId === "zealmanH3
 const h3ReferenceList = computed(() => h3References([...refList.value, ...referenceUrls(selectedModel.value).map(url => ({ source: `url:${url}`, sourceHandle: "out", dataType: "IMAGE" as const, value: { url, mimeType: "image/jpeg" } }))], data.value.h3Prompt, isZealmanU06.value ? zealmanOptions.value?.voices ?? [] : undefined, referenceMentions.value));
 watch(() => isH3Prompt.value ? h3ReferenceList.value.map(item => ({ ...item })) : undefined, (references, previous) => {
   if (!references) return;
+  if (previous?.length === references.length && references.every((item, index) => item.id === previous[index].id && item.value === previous[index].value)) return;
   const prompt = reconcileH3References(data.value.prompt, references, data.value.h3Prompt, previous);
   if (prompt !== data.value.prompt) {
     data.value.prompt = prompt;

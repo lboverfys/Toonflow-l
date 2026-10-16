@@ -66,7 +66,7 @@
         <el-segmented v-model="state.editorMode" :options="[{ label: '标签', value: 'tags' }, { label: '代码', value: 'code' }]" :disabled="editingDisabled" size="small" aria-label="提示词编辑模式" />
       </div>
       <promptInput v-if="state.editorMode !== 'code'" ref="editor" v-model="promptModel" v-model:text="prompt" :references="mentions" :referenceGroups="referenceGroups" :disabled="editingDisabled" :maxHeight="expanded ? '52vh' : '260px'" recognizeTokens preserveMissingReferences placeholder="描述画面，输入 @ 插入素材、主体、对白或镜头" @activateReference="activateMention" @insertReference="insertMention" />
-      <el-input v-else v-model="prompt" class="codeEditor" type="textarea" :autosize="{ minRows: 10, maxRows: 24 }" :disabled="editingDisabled" aria-label="H3 提示词代码" @input="syncCodeModel" />
+      <h3CodeEditor v-else v-model="prompt" class="codeEditor" :maxHeight="expanded ? '52vh' : '260px'" :disabled="editingDisabled" @update:modelValue="syncCodeModel" />
       <div class="editorActions">
         <el-button text size="small" :disabled="editingDisabled || historyIndex === 0" @click="restoreHistory(-1)">撤销</el-button>
         <el-button text size="small" :disabled="editingDisabled || historyIndex >= history.length - 1" @click="restoreHistory(1)">重做</el-button>
@@ -78,7 +78,7 @@
       <div v-if="issues.length" class="promptIssues" role="status"><p v-for="issue in issues" :key="issue">{{ issue }}</p></div>
       <el-dialog v-model="dialogueVisible" title="插入对白" width="min(560px, 92vw)" appendToBody :closeOnClickModal="false">
         <el-form labelPosition="top" class="dialogueForm">
-          <el-form-item label="发声主体（多选为齐声）"><el-select v-model="dialogue.subjects" multiple aria-label="对白主体"><el-option v-for="subject in state.subjects" :key="subject.id" :value="subject.id" :label="subject.name" /></el-select></el-form-item>
+          <el-form-item label="发声主体（多选为齐声）"><el-select v-model="dialogue.subjects" multiple aria-label="对白主体"><el-option v-for="subject in dialogueSubjects" :key="subject.id" :value="subject.id" :label="subject.name" /></el-select></el-form-item>
           <el-form-item label="发声方式"><el-select v-model="dialogue.delivery" aria-label="对白发声方式"><el-option v-for="item in deliveries" :key="item.value" :value="item.value" :label="item.label" /><el-option v-if="!deliveries.some(item => item.value === dialogue.delivery)" :value="dialogue.delivery" :label="dialogue.delivery" /></el-select></el-form-item>
           <div class="dialogueRow">
             <el-form-item label="语言"><el-select v-model="dialogue.language" aria-label="对白语言"><el-option v-for="item in h3Languages" :key="item.value" :value="item.value" :label="item.label" /></el-select></el-form-item>
@@ -112,8 +112,9 @@ import { IconSettings, IconSparkles, IconMaximize, IconMinimize } from "@tabler/
 import { type useNode, type NodeAiModel } from "@toonflow/nodes-scaffold/runtime";
 import promptInput from "@toonflow/node-shared/promptInput";
 import h3ReferenceList from "./h3ReferenceList.vue";
+import h3CodeEditor from "./h3CodeEditor.vue";
 import h3PromptSkill from "../h3PromptSkill.txt?raw";
-import { h3GenerationPrompt, h3Languages, h3PromptIssues, h3PromptSubjects, h3Sections, h3Skeleton, parseH3Optimization, type H3PromptState, type H3Reference } from "../h3Prompt";
+import { h3GenerationPrompt, h3Languages, h3PromptIssues, h3PromptSubjects, h3PromptTokens, h3Sections, h3Skeleton, parseH3Optimization, type H3PromptState, type H3Reference } from "../h3Prompt";
 import type { ZealmanVoice } from "../zealmanOptions";
 
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
@@ -160,36 +161,49 @@ const issues = computed(() => h3PromptIssues(finalPrompt.value, props.references
 const dialogueVisible = ref(false);
 let editingDialogue: { start: number; end: number; original: string } | undefined;
 const dialogue = reactive({ subjects: [] as number[], speaker: 1, delivery: "says", language: "Chinese", text: "", sceneTransition: false, cutoff: false });
+const dialogueSubjects = computed(() => {
+  const subjects = new Map(state.value.subjects.map(subject => [subject.id, { id: subject.id, name: subject.name }]));
+  for (const token of h3PromptTokens(prompt.value)) {
+    if (token.category !== "subject") continue;
+    const id = Number(token.value.match(/\d+/)![0]);
+    if (!subjects.has(id)) subjects.set(id, { id, name: token.name });
+  }
+  return [...subjects.values()].sort((a, b) => a.id - b.id);
+});
 const deliveries = [{ value: "says", label: "开口说话" }, { value: "says in a low whisper", label: "小声说" }, { value: "says with a trembling tone", label: "颤抖着说" }, { value: "shouts", label: "喊叫" }, { value: "says off-screen", label: "画外说话" }, { value: "male narrator", label: "男性旁白" }, { value: "female narrator", label: "女性旁白" }, { value: "inner monologue", label: "内心独白（闭口）" }];
 const referenceGroups = [
   { label: "素材", categories: ["picture", "video", "audio", "text"] },
   { label: "主体人物", categories: ["subject"] },
   { label: "说话人", categories: ["speaker"] },
   { label: "镜头", categories: ["shot"] },
-  { label: "对白", categories: ["dialogue"] },
+  { label: "对白", categories: ["dialogue", "transition"] },
   { label: "任务与段落", categories: ["task", "section"] },
 ];
 const mentions = computed<H3Reference[]>((previous) => {
   const byId = new Map(props.references.map(item => [item.id, item]));
-  const subjects = state.value.subjects.filter(subject => subject.references.some(id => byId.has(id)));
+  const subjects = state.value.subjects.filter(subject => subject.references.some(id => byId.has(id))).toSorted((a, b) => a.id - b.id);
   const values: H3Reference[] = [...props.references, ...subjects.map(subject => {
     const preview = subject.references.map(id => byId.get(id)).find(item => item?.avatar);
     return { id: `subject:${subject.id}`, name: subject.name, value: `<Subject ${subject.id}>`, category: "subject", avatar: preview?.avatar, previewUrl: preview?.previewUrl };
   })];
-  for (let index = 1; index <= 12; index++) {
-    values.push({ id: `speaker:${index}`, name: `说话人${index}`, value: `(S${index})`, category: "speaker" });
-    values.push({ id: `shot:${index}`, name: `镜头${index}`, value: `[Shot ${index}]`, category: "shot" });
+  const tokens = h3PromptTokens(prompt.value);
+  const knownValues = new Set(values.map(item => item.value));
+  for (const token of tokens) {
+    if (knownValues.has(token.value) || ["picture", "video", "audio"].includes(token.category)) continue;
+    knownValues.add(token.value);
+    values.push({ id: `token:${token.value}`, name: token.name, value: token.value, category: token.category });
+  }
+  for (const category of ["speaker", "shot"]) {
+    const used = tokens.filter(token => token.category === category).flatMap(token => token.value.match(/\d+/g)!.map(Number));
+    const next = Math.max(0, ...used) + 1;
+    values.push({ id: `${category}:${next}`, name: `${category === "speaker" ? "说话人" : "镜头"}${next}`, value: category === "speaker" ? `(S${next})` : `[Shot ${next}]`, category });
   }
   for (const language of h3Languages) values.push({ id: `dialogue:${language.value}`, name: `${language.label}对白`, value: `<d>[${language.value}] 台词</d>`, category: "dialogue", action: true });
-  const lines = new Set<string>();
-  for (const match of prompt.value.matchAll(/<d>\[([^\]]+)\]\s*([\s\S]*?)<\/d>/g)) {
-    if (lines.has(match[0])) continue;
-    lines.add(match[0]);
-    values.push({ id: `dialogue:${match[0]}`, name: `${h3Languages.find(item => item.value === match[1])?.label ?? match[1]}对白：${match[2]}`, value: match[0], category: "dialogue" });
-  }
-  for (const [value, name] of [["reference generation", "参考生成"], ["video editing", "视频编辑"], ["video continuation", "视频续写"], ["audio reuse", "音频复用"], ["audio reference", "音频参考"]]) values.push({ id: `task:${value}`, name, value: `[${value}]`, category: "task" });
-  for (const [value, name] of h3Sections) values.push({ id: `section:${value}`, name, value: `${value}:`, category: "section" });
-  for (const [value, name] of [["<scenetrans>", "对白跨镜衔接"], ["<cutoff>", "对白结尾截断"]]) values.push({ id: value, name, value, category: "dialogue" });
+  for (const [value, name] of [["reference generation", "参考生成"], ["video editing", "视频编辑"], ["video continuation", "视频续写"], ["audio reuse", "音频复用"], ["audio reference", "音频参考"]]) if (!knownValues.has(`[${value}]`)) values.push({ id: `task:${value}`, name, value: `[${value}]`, category: "task" });
+  for (const [value, name] of h3Sections) if (!knownValues.has(`${value}:`)) values.push({ id: `section:${value}`, name, value: `${value}:`, category: "section" });
+  for (const [value, name] of [["<scenetrans>", "场景过渡"], ["<cutoff>", "对白截断"]]) if (!knownValues.has(value)) values.push({ id: value, name, value, category: "transition" });
+  const categoryOrder = referenceGroups.flatMap(group => group.categories);
+  values.sort((a, b) => categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category) || (["subject", "speaker", "shot"].includes(a.category) ? Number(a.value.match(/\d+/)?.[0]) - Number(b.value.match(/\d+/)?.[0]) : 0));
   return previous?.length === values.length && values.every((item, index) => ["id", "name", "value", "avatar", "previewUrl", "category", "action"].every(key => item[key as keyof H3Reference] === previous[index][key as keyof H3Reference])) ? previous : values;
 });
 
@@ -201,7 +215,13 @@ function remember() {
 }
 watch(prompt, () => { clearTimeout(historyTimer); if (!replaying) historyTimer = setTimeout(remember, 350); }, { flush: "sync" });
 watch(prompt, value => {
-  for (const subject of h3PromptSubjects(value, props.references)) if (!state.value.subjects.some(item => item.id === subject.id)) state.value.subjects.push(subject);
+  for (const subject of h3PromptSubjects(value, props.references)) {
+    const existing = state.value.subjects.find(item => item.id === subject.id);
+    if (existing) {
+      if (existing.name !== subject.name) existing.name = subject.name;
+      if (existing.references.join("\0") !== subject.references.join("\0")) existing.references = subject.references;
+    } else state.value.subjects.push(subject);
+  }
 }, { immediate: true });
 function syncCodeModel(value = prompt.value) { promptModel.value = value.split("\n").map(text => [{ type: "Write", text }]); }
 function replacePrompt(value: string) { remember(); prompt.value = value; syncCodeModel(value); void nextTick(remember); }
@@ -252,18 +272,18 @@ function assignSubject(reference: string, name: string) {
   state.value.subjects = state.value.subjects.filter(item => item.references.length);
   syncDefinitions(text);
 }
-function speakerFor(subject: number) {
+function speakerFor(subject: number, reserved: number[] = []) {
   const previous = new RegExp(`<Subject\\s+${subject}>\\s*\\(S(\\d+)\\)`).exec(prompt.value);
   const binding = Object.values(state.value.audioBindings).find(item => item.subject === subject);
-  const item = state.value.subjects.find(item => item.id === subject)!;
-  const existing = previous ? Number(previous[1]) : binding?.speaker ?? item.speaker;
+  const item = state.value.subjects.find(item => item.id === subject);
+  const existing = previous ? Number(previous[1]) : binding?.speaker ?? item?.speaker;
   if (existing) return existing;
-  const used = new Set([...prompt.value.matchAll(/\bS(\d+)\b/g)].map(match => Number(match[1])));
+  const used = new Set([...reserved, ...[...prompt.value.matchAll(/\bS(\d+)\b/g)].map(match => Number(match[1]))]);
   for (const subject of state.value.subjects) if (subject.speaker) used.add(subject.speaker);
   for (const binding of Object.values(state.value.audioBindings)) used.add(binding.speaker);
   let next = 1;
   while (used.has(next)) next++;
-  item.speaker = next;
+  if (item) item.speaker = next;
   return next;
 }
 function bindAudio(id: string, subject?: number) {
@@ -300,7 +320,7 @@ function openDialogue(value = "", occurrence = 0, inserting = false, at?: number
     let start = -1;
     for (let index = 0; index <= occurrence; index++) start = prompt.value.indexOf(value, start + 1);
     if (start < 0) return;
-    const prefix = /((?:<Subject\s+\d+>(?:\s+and\s+<Subject\s+\d+>)*|a (?:male |female )?narrator))\s*\((S\d+(?:,\s*S\d+)*)\)\s*([^<>\n]+),\s*$/.exec(prompt.value.slice(0, start));
+    const prefix = /((?:<Subject\s+\d+>(?:\s*(?:and|和|、)\s*<Subject\s+\d+>)*|a (?:male |female )?narrator))\s*\((S\d+(?:,\s*S\d+)*)\)\s*([^<>\n]+)[,，]\s*$/.exec(prompt.value.slice(0, start));
     const end = start + value.length;
     if (prefix) {
       start -= prefix[0].length;
@@ -323,12 +343,16 @@ function swapReferences(first: H3Reference, second: H3Reference) {
 }
 async function insertMention(item: { value: string; action?: boolean }, offset: number) { if (item.action) { await nextTick(); openDialogue(item.value, 0, true, offset); } }
 async function applyDialogue() {
-  if (dialogue.subjects.some(id => !state.value.subjects.some(subject => subject.id === id))) { ElMessage.error("发声主体已被移除，请重新选择"); return; }
+  if (dialogue.subjects.some(id => !dialogueSubjects.value.some(subject => subject.id === id))) { ElMessage.error("发声主体已被移除，请重新选择"); return; }
   const line = `<d>[${dialogue.language}] ${dialogue.text}${dialogue.sceneTransition ? "<scenetrans>" : ""}${dialogue.cutoff ? "<cutoff>" : ""}</d>`;
   let text = line;
   {
     const subjects = dialogue.subjects.map(id => `<Subject ${id}>`).join(" and ");
-    const speakers = [...new Set(dialogue.subjects.map(speakerFor))];
+    const speakers: number[] = [];
+    for (const id of dialogue.subjects) {
+      const speaker = speakerFor(id, speakers);
+      if (!speakers.includes(speaker)) speakers.push(speaker);
+    }
     const speaker = `(${(speakers.length ? speakers : [dialogue.speaker]).map(id => `S${id}`).join(",")})`;
     const narrator = dialogue.delivery.includes("narrator") ? `a ${dialogue.delivery}` : "a narrator";
     const delivery = dialogue.delivery === "inner monologue" ? "says in an off-screen voiceover, while their lips remain completely closed"
@@ -435,6 +459,7 @@ onScopeDispose(() => { clearTimeout(historyTimer); optimizationController?.abort
 
 <style scoped lang="scss">
 .h3PromptEditor {
+  --h3MediaColor: #6d28d9; --h3SubjectColor: #047857; --h3SpecColor: #0369a1; --h3DialogueColor: #c2410c;
   display: grid; gap: 10px; min-width: 0; margin-bottom: 12px;
   .editorHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; > div { display: grid; gap: 4px; strong { font-size: 14px; } span { font-size: 11px; color: var(--el-text-color-secondary); } } }
   .materialHeader { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; > span { font-size: 12px; font-weight: 600; } > div { display: flex; gap: 4px; :deep(.el-button) { margin: 0; } } }
@@ -449,16 +474,16 @@ onScopeDispose(() => { clearTimeout(historyTimer); optimizationController?.abort
   .audioBinding { margin-top: 8px; .bindingRow { > span { flex: 1; min-width: 90px; } :deep(.el-select) { flex: 1; min-width: 120px; } } .bindingDetails { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 6px; margin-top: 6px; :deep(.el-input-number) { width: 100%; } } }
   .helpText { margin: 8px 0 0; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.6; }
   .promptIssues { color: var(--el-color-warning); font-size: 11px; p { margin: 3px 0; } }
-  .codeEditor :deep(textarea) { font-family: ui-monospace, monospace; line-height: 1.7; }
-  :deep(.promptInputWrap) { margin: 0; padding: 12px; border: 1px solid var(--el-border-color-light); border-radius: 10px; background: var(--el-bg-color); }
-  :deep(.imageReference[data-category]) { --tagColor: var(--el-text-color-regular); padding: 2px 7px; border-radius: 6px; border-color: color-mix(in srgb, var(--tagColor) 35%, var(--el-border-color-light)); background: color-mix(in srgb, var(--tagColor) 10%, var(--el-bg-color)); color: var(--tagColor); font-weight: 600; }
-  :deep(.imageReference[data-category="picture"]) { --tagColor: #8b5cf6; }
-  :deep(.imageReference[data-category="video"]), :deep(.imageReference[data-category="shot"]) { --tagColor: #2563eb; }
-  :deep(.imageReference[data-category="audio"]) { --tagColor: var(--el-color-warning-dark-2); }
-  :deep(.imageReference[data-category="subject"]) { --tagColor: var(--el-color-success-dark-2); cursor: pointer; }
-  :deep(.imageReference[data-category="speaker"]), :deep(.imageReference[data-category="task"]) { --tagColor: #9b59b6; }
-  :deep(.imageReference[data-category="dialogue"]) { --tagColor: #d44889; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
-  :deep(.imageReference[data-category="section"]) { background: var(--el-fill-color); font-size: 12px; }
+  :deep(.promptInputWrap) { margin: 0; padding: 12px 16px; border: 1px solid var(--el-border-color-light); border-radius: 10px; background: var(--el-bg-color); &:focus-within { border-color: #a78bfa; box-shadow: 0 0 0 1px #a78bfa; } }
+  :deep(.chat-rich-text), :deep(.chat-placeholder-wrap) { font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.9 !important; }
+  :deep(.chat-tag-wrap) { margin: 0; }
+  :deep(.chat-tag-grid), :deep(.chat-write-wrap), :deep(.chat-write-input) { word-break: normal; overflow-wrap: anywhere; }
+  :deep(.imageReference[data-category]) { --tagColor: var(--h3SpecColor); gap: 4px; margin: 0; padding: 0 4px; border-radius: 6px; border-color: color-mix(in srgb, var(--tagColor) 25%, var(--el-bg-color)); background: color-mix(in srgb, var(--tagColor) 6%, var(--el-bg-color)); color: var(--tagColor); font-size: 10px; line-height: 1; font-weight: 700; img { width: 16px; height: 16px; } }
+  :deep(.imageReference[data-category="picture"]), :deep(.imageReference[data-category="video"]), :deep(.imageReference[data-category="audio"]) { --tagColor: var(--h3MediaColor); }
+  :deep(.imageReference[data-category="subject"]) { --tagColor: var(--h3SubjectColor); cursor: pointer; }
+  :deep(.imageReference[data-category="dialogue"]) { --tagColor: var(--h3DialogueColor); cursor: pointer; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
+  :deep(.imageReference[data-category="section"]) { --tagColor: var(--el-text-color-secondary); background: var(--el-fill-color-light); }
+  :deep(.imageReference[data-category="missing"]) { --tagColor: var(--el-color-danger); }
   &.expandedEditor {
     width: min(1120px, 100%); margin: 0 auto 24px;
     .editorHeading { position: sticky; top: 0; z-index: 2; padding: 10px 0; background: var(--el-bg-color); }
@@ -466,7 +491,12 @@ onScopeDispose(() => { clearTimeout(historyTimer); optimizationController?.abort
     :deep(.promptInputWrap) { margin: 0; }
     .codeEditor :deep(textarea) { min-height: 40vh; }
   }
+  @media (min-width: 1920px) {
+    :deep(.chat-rich-text), :deep(.chat-placeholder-wrap) { font-size: 16px !important; }
+    :deep(.imageReference[data-category]) { font-size: 13px; padding: 0 6px; }
+  }
 }
+:global(.dark .h3PromptEditor) { --h3MediaColor: #67e8f9; --h3SubjectColor: #6ee7b7; --h3SpecColor: #7dd3fc; --h3DialogueColor: #fdba74; }
 .h3ExpandedTarget { min-width: 0; }
 .optimizerSettings { display: grid; gap: 8px; > span { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.6; } }
 .dialogueForm { .dialogueRow { display: flex; flex-wrap: wrap; gap: 16px; > * { flex: 1; } } }
