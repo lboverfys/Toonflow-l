@@ -21,6 +21,42 @@ export const h3Sections = [
   ["detailed_description", "详细描述"], ["overall_soundscape", "环境音"], ["non_diegetic_music", "非剧情配乐"],
 ] as const;
 export const h3Languages = [{ value: "Chinese", label: "中文" }, { value: "English", label: "英文" }, { value: "Japanese", label: "日文" }, { value: "Korean", label: "韩文" }];
+const h3TaskNames: Record<string, string> = { "keyframe completion": "首尾帧补全", "reference generation": "参考生成", "video editing": "视频编辑", "video continuation": "视频续写", "audio reuse": "音频复用", "audio reference": "音频参考" };
+const h3TokenPattern = new RegExp(`<d>\\[[^\\]\\n]+\\]\\s*[\\s\\S]*?<\\/d>|<(?:Missing )?(?:Picture|Video|Audio|Subject)\\s+\\d+>|\\[Shot\\s+\\d+\\]|\\(S\\d+(?:,\\s*S\\d+)*\\)|<\\/?(?:scenetrans|cutoff)>|\\[(?:${Object.keys(h3TaskNames).join("|")})(?:\\s+\\+\\s+(?:${Object.keys(h3TaskNames).join("|")}))*\\]|^[ \\t]*(?:${h3Sections.map(item => item[0]).join("|")})[ \\t]*:`, "gim");
+
+export function h3PromptTokens(prompt: string) {
+  return [...prompt.matchAll(h3TokenPattern)].map(match => {
+    const value = match[0].trimStart();
+    let category: string;
+    let name: string;
+    const media = /^<(Missing )?(Picture|Video|Audio|Subject)\s+(\d+)>$/i.exec(value);
+    if (media) {
+      category = media[1] ? "missing" : media[2].toLowerCase();
+      name = `${media[1] ? "已移除的" : ""}${({ picture: "图", video: "视", audio: "音", subject: "主体" } as Record<string, string>)[media[2].toLowerCase()]}${Number(media[3])}`;
+    } else if (/^<d>/i.test(value)) {
+      const dialogue = /^<d>\[([^\]]+)\]\s*([\s\S]*?)<\/d>$/i.exec(value)!;
+      category = "dialogue";
+      name = `${h3Languages.find(item => item.value.toLowerCase() === dialogue[1].toLowerCase())?.label ?? dialogue[1]}对白：${dialogue[2].trim()}`;
+    } else if (/^\[Shot\s/i.test(value)) {
+      category = "shot";
+      name = `镜头${Number(value.match(/\d+/)![0])}`;
+    } else if (/^\(S/i.test(value)) {
+      const speakers = value.match(/\d+/g)!;
+      category = "speaker";
+      name = speakers.length > 1 ? `齐声${speakers.join(",")}` : `说话人${speakers[0]}`;
+    } else if (value.startsWith("<")) {
+      category = "transition";
+      name = /scenetrans/i.test(value) ? "场景过渡" : "对白截断";
+    } else if (value.startsWith("[")) {
+      category = "task";
+      name = value.slice(1, -1).split(/\s+\+\s+/).map(task => h3TaskNames[task.toLowerCase()]).join("+");
+    } else {
+      category = "section";
+      name = h3Sections.find(([key]) => key === value.slice(0, -1).trim().toLowerCase())![1];
+    }
+    return { index: match.index + match[0].length - value.length, value, category, name };
+  });
+}
 const h3ResultSchema = z.strictObject({
   subject_definitions: z.array(z.string()), summary: z.string().min(1), retention_analysis: z.array(z.string()),
   detailed_description: z.string().min(1), overall_soundscape: z.string(), non_diegetic_music: z.string(),
@@ -136,8 +172,11 @@ export function h3PromptIssues(prompt: string, references: H3Reference[], durati
     if (time <= previous || time >= duration) issues.push("镜头切点须递增且小于视频时长");
     previous = time;
   }
-  const words = detail.replace(/<d>[\s\S]*?<\/d>/g, "").match(/[a-z]+(?:['-][a-z]+)*/gi)?.length ?? 0;
-  if (detail && words && (words < 350 || words > 500)) issues.push(`分镜正文约 ${words} 个英文词，建议 350～500 词（对白密集时可适当调整）`);
+  const description = detail.replace(/<d>[\s\S]*?<\/d>/g, "");
+  const words = description.match(/[a-z]+(?:['-][a-z]+)*/gi)?.length ?? 0;
+  // ACT: 沿用 U06 的 28% 汉字占比，中文正文不按英文词数提醒。
+  const chinese = (description.match(/[\u3400-\u9fff\uf900-\ufaff]/g)?.length ?? 0) / description.replace(/\s/g, "").length >= 0.28;
+  if (detail && !chinese && words && (words < 350 || words > 500)) issues.push(`分镜正文约 ${words} 个英文词，建议 350～500 词（对白密集时可适当调整）`);
   return [...new Set(issues)];
 }
 
