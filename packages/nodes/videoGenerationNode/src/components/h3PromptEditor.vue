@@ -1,117 +1,135 @@
 <template>
-  <section class="h3PromptEditor nodrag nopan nowheel" aria-label="H3 提示词创作" @pointerdown.stop @mousedown.stop @dblclick.stop @keydown.capture="handleHistoryKey" @keydown.stop @wheel.stop>
-    <div class="promptTools">
-      <el-button type="primary" size="small" :icon="IconSparkles" :loading="optimizing" :disabled="disabled || !prompt.trim() || !selectedModel" @click="optimize">Skill 优化提示词</el-button>
-      <el-button v-if="optimizing" size="small" @click="optimizationController?.abort()">停止优化</el-button>
-      <el-popover trigger="click" placement="bottom-start" :width="300">
-        <template #reference><el-button size="small" :icon="IconSettings" aria-label="提示词优化设置" /></template>
-        <div class="optimizerSettings">
-          <label>优化使用的文本模型</label>
-          <el-select v-model="state.model" filterable :loading="modelsLoading" :disabled="optimizing" aria-label="提示词优化模型" @visibleChange="(opened: boolean) => opened && loadModels()">
-            <el-option v-for="item in models" :key="JSON.stringify([item.providerId, item.modelId])" :value="JSON.stringify([item.providerId, item.modelId])" :label="`${item.providerLabel} / ${item.label}`" />
-          </el-select>
-          <span>沿用 Toonflow 中配置的文本模型；参考图分析需要模型支持看图。</span>
-          <el-button text size="small" @click="skillVisible = true">查看内置 Skill 原文</el-button>
+  <teleport :to="expandedTarget || 'body'" :disabled="!expanded || !expandedTarget">
+    <section class="h3PromptEditor nodrag nopan nowheel" :class="{ expandedEditor: expanded }" aria-label="H3 提示词创作" @pointerdown.stop @mousedown.stop @dblclick.stop @keydown.capture="handleHistoryKey" @keydown="!expanded && $event.stopPropagation()" @wheel.stop>
+      <div class="editorHeading">
+        <div><strong>视频提示词</strong><span>素材与标签一一对应，换位置后自动更新引用</span></div>
+        <el-button :icon="expanded ? IconMinimize : IconMaximize" size="small" @click="expanded = !expanded">{{ expanded ? '完成编辑' : '全屏编辑' }}</el-button>
+      </div>
+      <div class="materialHeader">
+        <span>1 · 添加素材</span>
+        <div>
+          <el-button size="small" :disabled="editingDisabled" @click="emit('upload')">上传素材</el-button>
+          <el-button v-if="remoteLibrary" size="small" :disabled="editingDisabled" @click="emit('openLibrary')">面板素材库</el-button>
+          <el-button text size="small" :disabled="editingDisabled || !references.length" @click="emit('clearReferences')">清空</el-button>
         </div>
-      </el-popover>
-      <el-button size="small" :disabled="editingDisabled" @click="openDialogue()">插入对白</el-button>
-      <el-button size="small" :disabled="editingDisabled" @click="insertSkeleton">插入骨架</el-button>
-      <el-button size="small" :disabled="editingDisabled" @click="emit('upload')">上传素材</el-button>
-      <el-button v-if="remoteLibrary" size="small" :disabled="editingDisabled" @click="emit('openLibrary')">面板素材库</el-button>
-      <el-button size="small" :disabled="editingDisabled || !references.length" @click="emit('clearReferences')">清空素材</el-button>
-    </div>
-    <el-alert v-if="error" :title="error" type="error" :closable="false" />
-    <el-collapse class="referenceSettings">
-      <el-collapse-item title="主体与音色" name="subjects">
-        <div v-for="item in references.filter(item => ['picture', 'video'].includes(item.category))" :key="item.id" class="subjectRow">
-          <span>{{ item.name }}</span>
-          <el-select :modelValue="state.subjects.find(subject => subject.references.includes(item.id))?.name ?? ''" filterable allowCreate defaultFirstOption clearable :disabled="editingDisabled" :aria-label="`${item.name}主体名称`" placeholder="输入主体名称，相同名称合并为同一主体" @update:modelValue="value => assignSubject(item.id, String(value || ''))">
-            <el-option v-for="subject in state.subjects" :key="subject.id" :value="subject.name" :label="subject.name" />
-          </el-select>
-          <el-button text size="small" @click="previewReference = item">预览</el-button>
-          <el-button text size="small" :disabled="editingDisabled" @click="emit('replaceReference', item)">替换</el-button>
-        </div>
-        <div v-if="voices" class="voiceLibrary">
-          <span>内置音色（与上传音频合计最多 3 段）</span>
-          <el-select v-model="state.voices" multiple filterable :disabled="editingDisabled" aria-label="H3 内置音色" placeholder="选择面板内置音色">
-            <el-option v-for="voice in voices" :key="voice.path" :value="voice.path" :label="`${voice.gender === 'female' ? '女声' : '男声'} · ${voice.label}`" :disabled="!state.voices.includes(voice.path) && references.filter(item => item.category === 'audio').length >= 3" />
-          </el-select>
-        </div>
-        <div v-for="item in references.filter(item => item.category === 'audio')" :key="item.id" class="audioBinding">
-          <div class="bindingRow">
-            <span>{{ item.name }}</span>
-            <el-select :modelValue="state.audioBindings[item.id]?.subject" clearable :disabled="editingDisabled" :aria-label="`${item.name}绑定主体`" placeholder="不绑定主体" @update:modelValue="value => bindAudio(item.id, value ? Number(value) : undefined)">
-              <el-option v-for="subject in state.subjects" :key="subject.id" :value="subject.id" :label="subject.name" />
+      </div>
+      <h3ReferenceList v-if="references.length" :references="references" :subjects="state.subjects" :disabled="editingDisabled" :activeId="activeReferenceId"
+        @swap="swapReferences" @remove="emit('removeReference', $event)" @replace="emit('replaceReference', $event)" @inspect="previewReference = $event"
+        @preview="(item, url, original) => emit('referencePreview', item, url, original)" @assignSubject="assignSubject" />
+      <p v-if="references.length" class="referenceHint">给图片或视频中的主体取名；点「换位置」或拖到同类素材上交换，正文引用会跟着更新。</p>
+      <div class="stepTitle">2 · 编写提示词</div>
+      <div class="promptTools">
+        <el-button type="primary" size="small" :icon="IconSparkles" :loading="optimizing" :disabled="disabled || !prompt.trim() || !selectedModel" @click="optimize">Skill 优化提示词</el-button>
+        <el-button v-if="optimizing" size="small" @click="optimizationController?.abort()">停止优化</el-button>
+        <el-popover trigger="click" placement="bottom-start" :width="300">
+          <template #reference><el-button size="small" :icon="IconSettings" aria-label="提示词优化设置" /></template>
+          <div class="optimizerSettings">
+            <label>优化使用的文本模型</label>
+            <el-select v-model="state.model" filterable :loading="modelsLoading" :disabled="optimizing" aria-label="提示词优化模型" @visibleChange="(opened: boolean) => opened && loadModels()">
+              <el-option v-for="item in models" :key="JSON.stringify([item.providerId, item.modelId])" :value="JSON.stringify([item.providerId, item.modelId])" :label="`${item.providerLabel} / ${item.label}`" />
             </el-select>
-            <el-button text size="small" @click="previewReference = item">试听</el-button>
-            <el-button v-if="item.input" text size="small" :disabled="editingDisabled" @click="emit('replaceReference', item)">替换</el-button>
+            <span>沿用 Toonflow 中配置的文本模型；参考图分析需要模型支持看图。</span>
+            <el-button text size="small" @click="skillVisible = true">查看内置 Skill 原文</el-button>
           </div>
-          <div v-if="state.audioBindings[item.id]" class="bindingDetails">
-            <el-input-number :modelValue="state.audioBindings[item.id]!.speaker" :min="1" :max="99" :disabled="editingDisabled" :aria-label="`${item.name}说话人编号`" @update:modelValue="value => changeSpeaker(item.id, value)" />
-            <el-input v-model="state.audioBindings[item.id]!.description" :disabled="editingDisabled" :aria-label="`${item.name}英文音色特征`" placeholder="英文音色特征（可选）" @change="syncDefinitions()" />
+        </el-popover>
+        <el-button size="small" :disabled="editingDisabled" @click="openDialogue()">插入对白</el-button>
+        <el-button size="small" :disabled="editingDisabled" @click="insertSkeleton">插入骨架</el-button>
+      </div>
+      <el-alert v-if="error" :title="error" type="error" :closable="false" />
+      <el-collapse v-if="voices || references.some(item => item.category === 'audio')" class="referenceSettings">
+        <el-collapse-item title="音色与说话人设置" name="voices">
+          <div v-if="voices" class="voiceLibrary">
+            <span>内置音色（与上传音频合计最多 3 段）</span>
+            <el-select v-model="state.voices" multiple filterable :disabled="editingDisabled" aria-label="H3 内置音色" placeholder="选择面板内置音色">
+              <el-option v-for="voice in voices" :key="voice.path" :value="voice.path" :label="`${voice.gender === 'female' ? '女声' : '男声'} · ${voice.label}`" :disabled="!state.voices.includes(voice.path) && references.filter(item => item.category === 'audio').length >= 3" />
+            </el-select>
           </div>
-        </div>
-        <p class="helpText">相同主体可以绑定多张图或视频；音频绑定会生成音色参考句。移除最后一份素材后，主体和关联音色绑定会从候选中移除；正文保留失效标记，方便修正。</p>
-      </el-collapse-item>
-    </el-collapse>
-    <div class="editorHeader">
-      <span>输入 @ 选择素材、主体、说话人、对白、镜头和任务类型</span>
-      <el-segmented v-model="state.editorMode" :options="[{ label: '标签', value: 'tags' }, { label: '代码', value: 'code' }]" :disabled="editingDisabled" size="small" aria-label="提示词编辑模式" />
-    </div>
-    <promptInput v-if="state.editorMode !== 'code'" ref="editor" v-model="promptModel" v-model:text="prompt" :references="mentions" :referenceGroups="referenceGroups" :disabled="editingDisabled" recognizeTokens preserveMissingReferences expandable placeholder="描述画面，输入 @ 插入素材、主体、对白或镜头" @activateReference="activateMention" @insertReference="insertMention" />
-    <el-input v-else v-model="prompt" class="codeEditor" type="textarea" :autosize="{ minRows: 10, maxRows: 24 }" :disabled="editingDisabled" aria-label="H3 提示词代码" @input="syncCodeModel" />
-    <div class="editorActions">
-      <el-button text size="small" :disabled="editingDisabled || historyIndex === 0" @click="restoreHistory(-1)">撤销</el-button>
-      <el-button text size="small" :disabled="editingDisabled || historyIndex >= history.length - 1" @click="restoreHistory(1)">重做</el-button>
-      <span class="characterCount">{{ prompt.length }} 字符</span>
-      <el-button text size="small" :disabled="!prompt" @click="copyPrompt">复制</el-button>
-      <el-button text size="small" :disabled="editingDisabled || !prompt" @click="replacePrompt('')">清空</el-button>
-      <el-button text size="small" @click="helpVisible = true">对白写法</el-button>
-    </div>
-    <div v-if="issues.length" class="promptIssues" role="status"><p v-for="issue in issues" :key="issue">{{ issue }}</p></div>
-    <el-dialog v-model="dialogueVisible" title="插入对白" width="min(560px, 92vw)" appendToBody :closeOnClickModal="false">
-      <el-form labelPosition="top" class="dialogueForm">
-        <el-form-item label="发声主体（多选为齐声）"><el-select v-model="dialogue.subjects" multiple aria-label="对白主体"><el-option v-for="subject in state.subjects" :key="subject.id" :value="subject.id" :label="subject.name" /></el-select></el-form-item>
-        <el-form-item label="发声方式"><el-select v-model="dialogue.delivery" aria-label="对白发声方式"><el-option v-for="item in deliveries" :key="item.value" :value="item.value" :label="item.label" /><el-option v-if="!deliveries.some(item => item.value === dialogue.delivery)" :value="dialogue.delivery" :label="dialogue.delivery" /></el-select></el-form-item>
-        <div class="dialogueRow">
-          <el-form-item label="语言"><el-select v-model="dialogue.language" aria-label="对白语言"><el-option v-for="item in h3Languages" :key="item.value" :value="item.value" :label="item.label" /></el-select></el-form-item>
-          <el-form-item label="旁白说话人编号"><el-input-number v-model="dialogue.speaker" :min="1" :max="99" :disabled="!!dialogue.subjects.length" aria-label="旁白说话人编号" /></el-form-item>
-        </div>
-        <el-form-item label="台词"><el-input v-model="dialogue.text" type="textarea" :autosize="{ minRows: 3, maxRows: 10 }" aria-label="对白台词" /></el-form-item>
-        <div class="dialogueRow"><el-checkbox v-model="dialogue.sceneTransition">台词跨镜衔接</el-checkbox><el-checkbox v-model="dialogue.cutoff">结尾截断</el-checkbox></div>
-      </el-form>
-      <template #footer><el-button @click="dialogueVisible = false">取消</el-button><el-button type="primary" :disabled="!dialogue.text.trim()" @click="applyDialogue">{{ editingDialogue ? '更新对白' : '插入对白' }}</el-button></template>
-    </el-dialog>
-    <el-dialog v-model="skillVisible" title="内置 H3 Skill 原文" width="min(960px, 94vw)" appendToBody><el-input :modelValue="h3PromptSkill" type="textarea" :rows="22" readonly aria-label="内置 H3 Skill 原文" /></el-dialog>
-    <el-dialog v-model="helpVisible" title="主体与对白写法" width="min(620px, 92vw)" appendToBody>
-      <ol class="dialogueHelp"><li>在“主体与音色”中给图片或视频命名，同一个人物的多个素材使用同一名称。</li><li>在提示词中输入 @，可以插入主体、素材、说话人、镜头和任务类型。</li><li>点击“插入对白”，选择主体、语言和发声方式；多选主体生成齐声编号，例如 (S1,S2)。</li><li>音频可绑定主体和说话人；内置音色和上传音频一起按音频顺序编号。</li><li>画面内对白默认开口说话；只有明确选择旁白或内心独白时才使用画外音写法。</li><li>“代码”展示实际 H3 标签；“复制”复制完整提交文本。“撤销”可恢复优化前的内容。</li></ol>
-    </el-dialog>
-    <el-dialog :modelValue="!!previewReference" :title="previewReference?.name" width="min(760px, 92vw)" appendToBody destroyOnClose @close="previewReference = undefined">
-      <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" />
-      <div v-else-if="previewSource" class="referencePreview"><img v-if="previewReference?.category === 'picture'" :src="previewSource" :alt="previewReference.name" /><video v-else-if="previewReference?.category === 'video'" :src="previewSource" controls preload="metadata" /><audio v-else :src="previewSource" controls preload="metadata" aria-label="参考音频试听" /></div>
-    </el-dialog>
-    <el-dialog v-model="resultVisible" title="优化结果（原内容已保留）" width="min(900px, 94vw)" appendToBody><p>优化期间内容或素材发生了变化，请对照后取用，避免覆盖正在编辑的内容。</p><el-input :modelValue="pendingResult" type="textarea" :rows="18" readonly aria-label="未应用的优化结果" /></el-dialog>
-  </section>
+          <div v-for="item in references.filter(item => item.category === 'audio')" :key="item.id" class="audioBinding">
+            <div class="bindingRow">
+              <span>{{ item.name }}</span>
+              <el-select :modelValue="state.audioBindings[item.id]?.subject" clearable :disabled="editingDisabled" :aria-label="`${item.name}绑定主体`" placeholder="不绑定主体" @update:modelValue="value => bindAudio(item.id, value ? Number(value) : undefined)">
+                <el-option v-for="subject in state.subjects" :key="subject.id" :value="subject.id" :label="subject.name" />
+              </el-select>
+              <el-button text size="small" @click="previewReference = item">试听</el-button>
+              <el-button v-if="item.input" text size="small" :disabled="editingDisabled" @click="emit('replaceReference', item)">替换</el-button>
+            </div>
+            <div v-if="state.audioBindings[item.id]" class="bindingDetails">
+              <el-input-number :modelValue="state.audioBindings[item.id]!.speaker" :min="1" :max="99" :disabled="editingDisabled" :aria-label="`${item.name}说话人编号`" @update:modelValue="value => changeSpeaker(item.id, value)" />
+              <el-input v-model="state.audioBindings[item.id]!.description" :disabled="editingDisabled" :aria-label="`${item.name}英文音色特征`" placeholder="英文音色特征（可选）" @change="syncDefinitions()" />
+            </div>
+          </div>
+          <p class="helpText">音频绑定主体后会自动补充音色参考句；移除人物最后一份素材后清理主体与音色绑定，正文保留失效标记。</p>
+        </el-collapse-item>
+      </el-collapse>
+      <div class="editorHeader">
+        <span>输入 @ 插入彩色标签；点对白标签可修改台词</span>
+        <el-segmented v-model="state.editorMode" :options="[{ label: '标签', value: 'tags' }, { label: '代码', value: 'code' }]" :disabled="editingDisabled" size="small" aria-label="提示词编辑模式" />
+      </div>
+      <promptInput v-if="state.editorMode !== 'code'" ref="editor" v-model="promptModel" v-model:text="prompt" :references="mentions" :referenceGroups="referenceGroups" :disabled="editingDisabled" :maxHeight="expanded ? '52vh' : '260px'" recognizeTokens preserveMissingReferences placeholder="描述画面，输入 @ 插入素材、主体、对白或镜头" @activateReference="activateMention" @insertReference="insertMention" />
+      <el-input v-else v-model="prompt" class="codeEditor" type="textarea" :autosize="{ minRows: 10, maxRows: 24 }" :disabled="editingDisabled" aria-label="H3 提示词代码" @input="syncCodeModel" />
+      <div class="editorActions">
+        <el-button text size="small" :disabled="editingDisabled || historyIndex === 0" @click="restoreHistory(-1)">撤销</el-button>
+        <el-button text size="small" :disabled="editingDisabled || historyIndex >= history.length - 1" @click="restoreHistory(1)">重做</el-button>
+        <span class="characterCount">{{ prompt.length }} 字符</span>
+        <el-button text size="small" :disabled="!prompt" @click="copyPrompt">复制</el-button>
+        <el-button text size="small" :disabled="editingDisabled || !prompt" @click="replacePrompt('')">清空</el-button>
+        <el-button text size="small" @click="helpVisible = true">对白写法</el-button>
+      </div>
+      <div v-if="issues.length" class="promptIssues" role="status"><p v-for="issue in issues" :key="issue">{{ issue }}</p></div>
+      <el-dialog v-model="dialogueVisible" title="插入对白" width="min(560px, 92vw)" appendToBody :closeOnClickModal="false">
+        <el-form labelPosition="top" class="dialogueForm">
+          <el-form-item label="发声主体（多选为齐声）"><el-select v-model="dialogue.subjects" multiple aria-label="对白主体"><el-option v-for="subject in state.subjects" :key="subject.id" :value="subject.id" :label="subject.name" /></el-select></el-form-item>
+          <el-form-item label="发声方式"><el-select v-model="dialogue.delivery" aria-label="对白发声方式"><el-option v-for="item in deliveries" :key="item.value" :value="item.value" :label="item.label" /><el-option v-if="!deliveries.some(item => item.value === dialogue.delivery)" :value="dialogue.delivery" :label="dialogue.delivery" /></el-select></el-form-item>
+          <div class="dialogueRow">
+            <el-form-item label="语言"><el-select v-model="dialogue.language" aria-label="对白语言"><el-option v-for="item in h3Languages" :key="item.value" :value="item.value" :label="item.label" /></el-select></el-form-item>
+            <el-form-item label="旁白说话人编号"><el-input-number v-model="dialogue.speaker" :min="1" :max="99" :disabled="!!dialogue.subjects.length" aria-label="旁白说话人编号" /></el-form-item>
+          </div>
+          <el-form-item label="台词"><el-input v-model="dialogue.text" type="textarea" :autosize="{ minRows: 3, maxRows: 10 }" aria-label="对白台词" /></el-form-item>
+          <div class="dialogueRow"><el-checkbox v-model="dialogue.sceneTransition">台词跨镜衔接</el-checkbox><el-checkbox v-model="dialogue.cutoff">结尾截断</el-checkbox></div>
+        </el-form>
+        <template #footer><el-button @click="dialogueVisible = false">取消</el-button><el-button type="primary" :disabled="!dialogue.text.trim()" @click="applyDialogue">{{ editingDialogue ? '更新对白' : '插入对白' }}</el-button></template>
+      </el-dialog>
+      <el-dialog v-model="skillVisible" title="内置 H3 Skill 原文" width="min(960px, 94vw)" appendToBody><el-input :modelValue="h3PromptSkill" type="textarea" :rows="22" readonly aria-label="内置 H3 Skill 原文" /></el-dialog>
+      <el-dialog v-model="helpVisible" title="主体与对白写法" width="min(620px, 92vw)" appendToBody>
+        <ol class="dialogueHelp"><li>在素材卡下方给图片或视频中的主体取名，同一个人物的多个素材使用同一名称。</li><li>点“换位置”或把素材拖到同类素材上交换，提示词中的编号自动更新。</li><li>在提示词中输入 @，可以插入主体、素材、说话人、镜头和任务类型。</li><li>点击“插入对白”，选择主体、语言和发声方式；多选主体生成齐声编号，例如 (S1,S2)。</li><li>音频可绑定主体和说话人；内置音色和上传音频一起按音频顺序编号。</li><li>“代码”展示实际 H3 标签；“复制”复制完整提交文本。“撤销”可恢复优化前的内容。</li></ol>
+      </el-dialog>
+      <el-dialog :modelValue="!!previewReference" :title="previewReference?.name" width="min(760px, 92vw)" appendToBody destroyOnClose @close="previewReference = undefined">
+        <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" />
+        <div v-else-if="previewSource" class="referencePreview"><img v-if="previewReference?.category === 'picture'" :src="previewSource" :alt="previewReference.name" /><video v-else-if="previewReference?.category === 'video'" :src="previewSource" controls preload="metadata" /><audio v-else :src="previewSource" controls preload="metadata" aria-label="参考音频试听" /></div>
+      </el-dialog>
+      <el-dialog v-model="resultVisible" title="优化结果（原内容已保留）" width="min(900px, 94vw)" appendToBody><p>优化期间内容或素材发生了变化，请对照后取用，避免覆盖正在编辑的内容。</p><el-input :modelValue="pendingResult" type="textarea" :rows="18" readonly aria-label="未应用的优化结果" /></el-dialog>
+    </section>
+  </teleport>
+  <el-dialog v-model="expanded" class="h3EditorDialog" title="视频创作 · 素材与提示词" fullscreen appendToBody :closeOnClickModal="false">
+    <div ref="expandedTarget" class="h3ExpandedTarget" />
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onScopeDispose, reactive, ref, watch } from "vue";
 import { ElAlert, ElButton, ElCheckbox, ElCollapse, ElCollapseItem, ElDialog, ElForm, ElFormItem, ElInput, ElInputNumber, ElMessage, ElOption, ElPopover, ElSegmented, ElSelect } from "element-plus";
-import { IconSettings, IconSparkles } from "@tabler/icons-vue";
+import { IconSettings, IconSparkles, IconMaximize, IconMinimize } from "@tabler/icons-vue";
 import { type useNode, type NodeAiModel } from "@toonflow/nodes-scaffold/runtime";
 import promptInput from "@toonflow/node-shared/promptInput";
+import h3ReferenceList from "./h3ReferenceList.vue";
 import h3PromptSkill from "../h3PromptSkill.txt?raw";
 import { h3GenerationPrompt, h3Languages, h3PromptIssues, h3PromptSubjects, h3Sections, h3Skeleton, parseH3Optimization, type H3PromptState, type H3Reference } from "../h3Prompt";
 import type { ZealmanVoice } from "../zealmanOptions";
 
 type PromptModel = NonNullable<InstanceType<typeof promptInput>["$props"]["modelValue"]>;
 const props = defineProps<{ references: H3Reference[]; ai: ReturnType<typeof useNode>["ai"]; files: ReturnType<typeof useNode>["files"]; maxDuration: number; voices?: ZealmanVoice[]; remoteLibrary?: boolean; disabled?: boolean }>();
-const emit = defineEmits<{ upload: []; clearReferences: []; replaceReference: [item: H3Reference]; busy: [value: boolean]; openLibrary: [] }>();
+const emit = defineEmits<{
+  upload: []; clearReferences: []; replaceReference: [item: H3Reference]; removeReference: [item: H3Reference]; busy: [value: boolean]; openLibrary: [];
+  swapReferences: [first: H3Reference, second: H3Reference]; referencePreview: [item: H3Reference, url: string, original: string];
+}>();
 const state = defineModel<H3PromptState>({ required: true });
 const prompt = defineModel<string>("prompt", { required: true });
 const promptModel = defineModel<PromptModel>("promptModel", { required: true });
 const duration = defineModel<number | undefined>("duration", { required: true });
 const editor = ref<InstanceType<typeof promptInput>>();
+const expanded = ref(false);
+const expandedTarget = ref<HTMLElement>();
+const activeReferenceId = ref("");
 const models = ref<NodeAiModel[]>([]);
 const modelsLoading = ref(false);
 const optimizing = ref(false);
@@ -294,7 +312,15 @@ function openDialogue(value = "", occurrence = 0, inserting = false, at?: number
   }
   dialogueVisible.value = true;
 }
-function activateMention(item: { value: string; category?: string }, occurrence: number) { if (item.category === "dialogue" && item.value.startsWith("<d>")) openDialogue(item.value, occurrence); }
+function activateMention(item: { id: string; value: string; category?: string }, occurrence: number) {
+  if (item.category === "dialogue" && item.value.startsWith("<d>")) openDialogue(item.value, occurrence);
+  activeReferenceId.value = item.category === "subject" ? state.value.subjects.find(subject => `subject:${subject.id}` === item.id)?.references[0] ?? "" : item.id;
+}
+function swapReferences(first: H3Reference, second: H3Reference) {
+  if (editingDisabled.value) return;
+  emit("swapReferences", first, second);
+  activeReferenceId.value = first.id;
+}
 async function insertMention(item: { value: string; action?: boolean }, offset: number) { if (item.action) { await nextTick(); openDialogue(item.value, 0, true, offset); } }
 async function applyDialogue() {
   if (dialogue.subjects.some(id => !state.value.subjects.some(subject => subject.id === id))) { ElMessage.error("发声主体已被移除，请重新选择"); return; }
@@ -394,6 +420,14 @@ async function optimize() {
   } finally { optimizing.value = false; emit("busy", false); }
 }
 
+watch(() => props.references.map(item => ({ id: item.id, value: item.value })), (current, previous) => {
+  if (!previous) return;
+  const nextById = new Map(current.map(item => [item.id, item.value]));
+  const replacements = new Map(previous.filter(item => /^<(Picture|Video|Audio) /.test(item.value)).map(item => [item.value, nextById.get(item.id) ?? item.value.replace("<", "<Missing ")]));
+  const remap = (text: string) => text.replace(/<(Picture|Video|Audio)\s+\d+>/g, value => replacements.get(value) ?? value);
+  // ACT: 撤销只撤销文字编辑，历史中的引用也跟随素材身份更新，避免换位后撤销指向另一张图。
+  history.value = history.value.map(remap);
+}, { flush: "pre" });
 watch(() => state.value.editorMode, () => { remember(); syncCodeModel(); });
 onMounted(async () => { await loadModels(); await nextTick(); const normalized = h3GenerationPrompt(prompt.value, props.references, state.value); if (normalized !== prompt.value) replacePrompt(normalized); });
 onScopeDispose(() => { clearTimeout(historyTimer); optimizationController?.abort(); emit("busy", false); });
@@ -401,23 +435,39 @@ onScopeDispose(() => { clearTimeout(historyTimer); optimizationController?.abort
 
 <style scoped lang="scss">
 .h3PromptEditor {
-  display: grid; gap: 10px; margin-bottom: 12px;
+  display: grid; gap: 10px; min-width: 0; margin-bottom: 12px;
+  .editorHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; > div { display: grid; gap: 4px; strong { font-size: 14px; } span { font-size: 11px; color: var(--el-text-color-secondary); } } }
+  .materialHeader { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; > span { font-size: 12px; font-weight: 600; } > div { display: flex; gap: 4px; :deep(.el-button) { margin: 0; } } }
+  .stepTitle { font-size: 12px; font-weight: 600; margin-top: 2px; }
+  .referenceHint { margin: 0; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.6; }
   .promptTools, .editorHeader, .editorActions, .bindingRow, .subjectRow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
   .promptTools, .editorActions { :deep(.el-button) { margin: 0; } }
   .editorHeader { justify-content: space-between; color: var(--el-text-color-secondary); font-size: 11px; }
   .characterCount { margin-left: auto; color: var(--el-text-color-secondary); font-size: 11px; }
   .referenceSettings { border-top: 0; }
-  .subjectRow { margin: 6px 0; > span { min-width: 30px; } :deep(.el-select) { flex: 1; min-width: 150px; } }
   .voiceLibrary { display: grid; gap: 6px; margin: 10px 0; }
   .audioBinding { margin-top: 8px; .bindingRow { > span { flex: 1; min-width: 90px; } :deep(.el-select) { flex: 1; min-width: 120px; } } .bindingDetails { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 6px; margin-top: 6px; :deep(.el-input-number) { width: 100%; } } }
   .helpText { margin: 8px 0 0; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.6; }
   .promptIssues { color: var(--el-color-warning); font-size: 11px; p { margin: 3px 0; } }
   .codeEditor :deep(textarea) { font-family: ui-monospace, monospace; line-height: 1.7; }
-  :deep(.imageReference[data-category="subject"]) { color: var(--el-color-success); background: var(--el-color-success-light-9); }
-  :deep(.imageReference[data-category="shot"]), :deep(.imageReference[data-category="speaker"]) { color: var(--el-color-primary); }
-  :deep(.imageReference[data-category="dialogue"]) { cursor: pointer; white-space: normal; }
-  :deep(.imageReference[data-category="section"]) { color: var(--el-text-color-regular); background: var(--el-fill-color); }
+  :deep(.promptInputWrap) { margin: 0; padding: 12px; border: 1px solid var(--el-border-color-light); border-radius: 10px; background: var(--el-bg-color); }
+  :deep(.imageReference[data-category]) { --tagColor: var(--el-text-color-regular); padding: 2px 7px; border-radius: 6px; border-color: color-mix(in srgb, var(--tagColor) 35%, var(--el-border-color-light)); background: color-mix(in srgb, var(--tagColor) 10%, var(--el-bg-color)); color: var(--tagColor); font-weight: 600; }
+  :deep(.imageReference[data-category="picture"]) { --tagColor: #8b5cf6; }
+  :deep(.imageReference[data-category="video"]), :deep(.imageReference[data-category="shot"]) { --tagColor: #2563eb; }
+  :deep(.imageReference[data-category="audio"]) { --tagColor: var(--el-color-warning-dark-2); }
+  :deep(.imageReference[data-category="subject"]) { --tagColor: var(--el-color-success-dark-2); cursor: pointer; }
+  :deep(.imageReference[data-category="speaker"]), :deep(.imageReference[data-category="task"]) { --tagColor: #9b59b6; }
+  :deep(.imageReference[data-category="dialogue"]) { --tagColor: #d44889; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
+  :deep(.imageReference[data-category="section"]) { background: var(--el-fill-color); font-size: 12px; }
+  &.expandedEditor {
+    width: min(1120px, 100%); margin: 0 auto 24px;
+    .editorHeading { position: sticky; top: 0; z-index: 2; padding: 10px 0; background: var(--el-bg-color); }
+    :deep(.h3ReferenceList) { display: grid; grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); overflow: visible; .referenceEntry { width: auto; } }
+    :deep(.promptInputWrap) { margin: 0; }
+    .codeEditor :deep(textarea) { min-height: 40vh; }
+  }
 }
+.h3ExpandedTarget { min-width: 0; }
 .optimizerSettings { display: grid; gap: 8px; > span { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.6; } }
 .dialogueForm { .dialogueRow { display: flex; flex-wrap: wrap; gap: 16px; > * { flex: 1; } } }
 .dialogueHelp { padding-left: 22px; line-height: 1.8; li { margin-bottom: 8px; } }

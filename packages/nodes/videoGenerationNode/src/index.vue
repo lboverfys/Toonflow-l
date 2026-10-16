@@ -48,7 +48,7 @@
     <template #bottom>
       <el-card class="promptCard" shadow="never" :bodyStyle="{ padding: '14px 16px 12px' }">
         <referenceItem
-          v-if="refList.length"
+          v-if="refList.length && !isH3Prompt"
           v-model="refList"
           :disabled="promptOptimizing || uploadingReferences || zealmanEnqueuing"
           @preview="setReferencePreview"
@@ -59,7 +59,8 @@
         <h3PromptEditor v-if="isH3Prompt" v-model="data.h3Prompt" v-model:prompt="data.prompt" v-model:promptModel="data.promptModel" v-model:duration="data.duration"
           :references="h3ReferenceList" :ai="ai" :files="files" :maxDuration="h3MaxDuration" :voices="isZealmanU06 ? zealmanOptions?.voices : undefined" :remoteLibrary="isZealmanU06"
           :disabled="deleting || uploadingReferences || taskChecking || zealmanEnqueuing || (!isZealmanU06 && generating)" @busy="promptOptimizing = $event"
-          @upload="uploadReferences()" @replaceReference="uploadReferences" @clearReferences="clearReferences" @openLibrary="libraryVisible = true" />
+          @upload="uploadReferences()" @replaceReference="uploadReferences" @clearReferences="clearReferences" @openLibrary="libraryVisible = true"
+          @swapReferences="swapH3References" @removeReference="removeH3Reference" @referencePreview="(item, url, original) => item.input && setReferencePreview(item.input, url, original)" />
         <promptInput v-else-if="selectedModel || !data.model" v-model="data.promptModel" v-model:text="data.prompt" :references="referenceMentions" expandable />
         <zealmanSettings
           v-if="isZealmanU06"
@@ -170,7 +171,7 @@ import { showNodeError } from "@toonflow/node-shared/showNodeError";
 import { useNodeGeneration, type GenerationTiming } from "@toonflow/node-shared/useNodeGeneration";
 import generationTiming from "@toonflow/node-shared/generationTiming";
 import { useGenerationPreferences } from "@toonflow/node-shared/useGenerationPreferences";
-import { useNodeReferences } from "@toonflow/node-shared/useNodeReferences";
+import { useNodeReferences, referenceKey } from "@toonflow/node-shared/useNodeReferences";
 import promptInput from "@toonflow/node-shared/promptInput";
 import videoPlayer from "@toonflow/node-video/videoPlayer";
 import videoActions from "@toonflow/node-video/videoActions";
@@ -180,7 +181,7 @@ import generationSettings from "./components/generationSettings.vue";
 import zealmanSettings from "./components/zealmanSettings.vue";
 import h3PromptEditor from "./components/h3PromptEditor.vue";
 import h3MediaLibrary from "./components/h3MediaLibrary.vue";
-import { h3GenerationPrompt, h3References, h3PromptIssues, reconcileH3References, type H3PromptState, type H3Reference } from "./h3Prompt";
+import { h3GenerationPrompt, h3References, h3ReferenceGroup, h3PromptIssues, reconcileH3References, type H3PromptState, type H3Reference } from "./h3Prompt";
 import { loadZealmanOptions, validateZealmanSettings, zealmanAssetUrl, type ZealmanOptions, type ZealmanAsset } from "./zealmanOptions";
 
 defineOptions({
@@ -360,6 +361,41 @@ function removeReference(item: NodeInputValue) {
   if (promptOptimizing.value || uploadingReferences.value) return;
   data.value.h3Prompt.attachments = data.value.h3Prompt.attachments.filter(attachment => (attachment.source ?? `h3:${attachment.id}`) !== item.source || (attachment.sourceHandle ?? "out") !== item.sourceHandle);
   disconnectReference(item);
+}
+function removeH3Reference(item: H3Reference) {
+  if (promptOptimizing.value || uploadingReferences.value || deleting.value || zealmanEnqueuing.value) return;
+  if (item.id.startsWith("voice:")) data.value.h3Prompt.voices = data.value.h3Prompt.voices.filter(path => `voice:${path}` !== item.id);
+  else if (h3ReferenceGroup(item).endsWith(":url")) data.value.referenceImageUrlsText = referenceUrls(selectedModel.value).filter(url => `url:${url}` !== item.input!.source).join("\n");
+  else if (item.input) removeReference(item.input);
+}
+function swapH3References(first: H3Reference, second: H3Reference) {
+  if (promptOptimizing.value || uploadingReferences.value || deleting.value || zealmanEnqueuing.value) return;
+  const current = h3ReferenceList.value;
+  const left = current.find(item => item.id === first.id);
+  const right = current.find(item => item.id === second.id);
+  if (!left || !right || left.category === "text" || left.id === right.id || h3ReferenceGroup(left) !== h3ReferenceGroup(right)) return;
+  if (left.id.startsWith("voice:")) {
+    const voices = [...data.value.h3Prompt.voices];
+    const from = voices.indexOf(left.id.slice(6));
+    const to = voices.indexOf(right.id.slice(6));
+    if (from < 0 || to < 0) return;
+    [voices[from], voices[to]] = [voices[to], voices[from]];
+    data.value.h3Prompt.voices = voices;
+  } else if (h3ReferenceGroup(left).endsWith(":url")) {
+    const urls = referenceUrls(selectedModel.value);
+    const from = urls.findIndex(url => `url:${url}` === left.input!.source);
+    const to = urls.findIndex(url => `url:${url}` === right.input!.source);
+    if (from < 0 || to < 0) return;
+    [urls[from], urls[to]] = [urls[to], urls[from]];
+    data.value.referenceImageUrlsText = urls.join("\n");
+  } else {
+    const items = [...refList.value];
+    const from = items.findIndex(item => referenceKey(item) === left.id);
+    const to = items.findIndex(item => referenceKey(item) === right.id);
+    if (from < 0 || to < 0) return;
+    [items[from], items[to]] = [items[to], items[from]];
+    refList.value = items;
+  }
 }
 function clearReferences() {
   for (const item of [...refList.value]) removeReference(item);

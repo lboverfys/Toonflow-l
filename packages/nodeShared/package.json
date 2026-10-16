@@ -6,6 +6,7 @@
   "exports": {
     "./promptInput": "./src/components/promptInput.vue",
     "./referenceItem": "./src/components/referenceItem.vue",
+    "./referenceCard": "./src/components/referenceCard.vue",
     "./mediaHistory": "./src/components/mediaHistory.vue",
     "./showNodeError": "./src/showNodeError.ts",
     "./useNodeReferences": "./src/useNodeReferences.ts",
