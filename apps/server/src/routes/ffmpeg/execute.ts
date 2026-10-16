@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { z } from "zod";
-import { relative, resolve } from "node:path";
 import type { BrowserFfmpegRequest } from "@toonflow/ffmpeg";
 import { validateFields } from "@/lib/middleware";
 import { success } from "@/lib/responseFormat";
@@ -40,9 +39,7 @@ export default Router().post("/", validateFields(inputSchema.shape), async (req,
     res.json(success());
     return;
   }
-  if (u.mobileLink.isMobileLinkRequest(req) && input.operation.method !== "prepare") {
-    await u.ffmpeg.validateFfmpegRequest(input, async path => (await u.workspaceFile.resolveWorkspacePath(cwd, relative(cwd, resolve(cwd, path)), true)).path, false);
-  }
+  // 配对设备已通过设备令牌鉴权，FFmpeg 能力与本机页面一致；工作区路径边界仍由原生工厂检查。
   const controller = new AbortController();
   const finished = Promise.withResolvers<void>();
   if (input.operation.method !== "prepare") {
