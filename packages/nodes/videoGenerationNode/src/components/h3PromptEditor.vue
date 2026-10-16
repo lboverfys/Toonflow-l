@@ -51,14 +51,14 @@
             <el-input v-model="state.audioBindings[item.id]!.description" :disabled="editingDisabled" :aria-label="`${item.name}英文音色特征`" placeholder="英文音色特征（可选）" @change="syncDefinitions()" />
           </div>
         </div>
-        <p class="helpText">相同主体可以绑定多张图或视频；音频绑定会生成音色参考句。移除素材保留提示词，并提示需要修正的引用。</p>
+        <p class="helpText">相同主体可以绑定多张图或视频；音频绑定会生成音色参考句。移除最后一份素材后，主体和关联音色绑定会从候选中移除；正文保留失效标记，方便修正。</p>
       </el-collapse-item>
     </el-collapse>
     <div class="editorHeader">
       <span>输入 @ 选择素材、主体、说话人、对白、镜头和任务类型</span>
       <el-segmented v-model="state.editorMode" :options="[{ label: '标签', value: 'tags' }, { label: '代码', value: 'code' }]" :disabled="editingDisabled" size="small" aria-label="提示词编辑模式" />
     </div>
-    <promptInput v-if="state.editorMode !== 'code'" ref="editor" v-model="promptModel" v-model:text="prompt" :references="mentions" :disabled="editingDisabled" recognizeTokens preserveMissingReferences expandable placeholder="描述画面，输入 @ 插入素材、主体、对白或镜头" @activateReference="activateMention" @insertReference="insertMention" />
+    <promptInput v-if="state.editorMode !== 'code'" ref="editor" v-model="promptModel" v-model:text="prompt" :references="mentions" :referenceGroups="referenceGroups" :disabled="editingDisabled" recognizeTokens preserveMissingReferences expandable placeholder="描述画面，输入 @ 插入素材、主体、对白或镜头" @activateReference="activateMention" @insertReference="insertMention" />
     <el-input v-else v-model="prompt" class="codeEditor" type="textarea" :autosize="{ minRows: 10, maxRows: 24 }" :disabled="editingDisabled" aria-label="H3 提示词代码" @input="syncCodeModel" />
     <div class="editorActions">
       <el-button text size="small" :disabled="editingDisabled || historyIndex === 0" @click="restoreHistory(-1)">撤销</el-button>
@@ -143,8 +143,21 @@ const dialogueVisible = ref(false);
 let editingDialogue: { start: number; end: number; original: string } | undefined;
 const dialogue = reactive({ subjects: [] as number[], speaker: 1, delivery: "says", language: "Chinese", text: "", sceneTransition: false, cutoff: false });
 const deliveries = [{ value: "says", label: "开口说话" }, { value: "says in a low whisper", label: "小声说" }, { value: "says with a trembling tone", label: "颤抖着说" }, { value: "shouts", label: "喊叫" }, { value: "says off-screen", label: "画外说话" }, { value: "male narrator", label: "男性旁白" }, { value: "female narrator", label: "女性旁白" }, { value: "inner monologue", label: "内心独白（闭口）" }];
+const referenceGroups = [
+  { label: "素材", categories: ["picture", "video", "audio", "text"] },
+  { label: "主体人物", categories: ["subject"] },
+  { label: "说话人", categories: ["speaker"] },
+  { label: "镜头", categories: ["shot"] },
+  { label: "对白", categories: ["dialogue"] },
+  { label: "任务与段落", categories: ["task", "section"] },
+];
 const mentions = computed<H3Reference[]>((previous) => {
-  const values: H3Reference[] = [...props.references, ...state.value.subjects.map(subject => ({ id: `subject:${subject.id}`, name: subject.name, value: `<Subject ${subject.id}>`, category: "subject" }))];
+  const byId = new Map(props.references.map(item => [item.id, item]));
+  const subjects = state.value.subjects.filter(subject => subject.references.some(id => byId.has(id)));
+  const values: H3Reference[] = [...props.references, ...subjects.map(subject => {
+    const preview = subject.references.map(id => byId.get(id)).find(item => item?.avatar);
+    return { id: `subject:${subject.id}`, name: subject.name, value: `<Subject ${subject.id}>`, category: "subject", avatar: preview?.avatar, previewUrl: preview?.previewUrl };
+  })];
   for (let index = 1; index <= 12; index++) {
     values.push({ id: `speaker:${index}`, name: `说话人${index}`, value: `(S${index})`, category: "speaker" });
     values.push({ id: `shot:${index}`, name: `镜头${index}`, value: `[Shot ${index}]`, category: "shot" });
@@ -169,7 +182,7 @@ function remember() {
   historyIndex.value = history.value.length - 1;
 }
 watch(prompt, () => { clearTimeout(historyTimer); if (!replaying) historyTimer = setTimeout(remember, 350); }, { flush: "sync" });
-watch([prompt, () => props.references], ([value]) => {
+watch(prompt, value => {
   for (const subject of h3PromptSubjects(value, props.references)) if (!state.value.subjects.some(item => item.id === subject.id)) state.value.subjects.push(subject);
 }, { immediate: true });
 function syncCodeModel(value = prompt.value) { promptModel.value = value.split("\n").map(text => [{ type: "Write", text }]); }
@@ -381,13 +394,6 @@ async function optimize() {
   } finally { optimizing.value = false; emit("busy", false); }
 }
 
-watch(() => props.references.map(item => ({ id: item.id, value: item.value })), (current, previous) => {
-  if (!previous) return;
-  const nextById = new Map(current.map(item => [item.id, item.value]));
-  const replacements = new Map(previous.filter(item => /^<(Picture|Video|Audio) /.test(item.value)).map(item => [item.value, nextById.get(item.id) ?? item.value.replace("<", "<Missing ")]));
-  const text = prompt.value.replace(/<(Picture|Video|Audio)\s+\d+>/g, value => replacements.get(value) ?? value);
-  if (text !== prompt.value) replacePrompt(text);
-}, { flush: "pre" });
 watch(() => state.value.editorMode, () => { remember(); syncCodeModel(); });
 onMounted(async () => { await loadModels(); await nextTick(); const normalized = h3GenerationPrompt(prompt.value, props.references, state.value); if (normalized !== prompt.value) replacePrompt(normalized); });
 onScopeDispose(() => { clearTimeout(historyTimer); optimizationController?.abort(); emit("busy", false); });

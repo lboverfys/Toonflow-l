@@ -180,7 +180,7 @@ import generationSettings from "./components/generationSettings.vue";
 import zealmanSettings from "./components/zealmanSettings.vue";
 import h3PromptEditor from "./components/h3PromptEditor.vue";
 import h3MediaLibrary from "./components/h3MediaLibrary.vue";
-import { h3GenerationPrompt, h3References, h3PromptIssues, type H3PromptState, type H3Reference } from "./h3Prompt";
+import { h3GenerationPrompt, h3References, h3PromptIssues, reconcileH3References, type H3PromptState, type H3Reference } from "./h3Prompt";
 import { loadZealmanOptions, validateZealmanSettings, zealmanAssetUrl, type ZealmanOptions, type ZealmanAsset } from "./zealmanOptions";
 
 defineOptions({
@@ -245,6 +245,14 @@ const selectedModel = computed(() => models.value.find((item) => JSON.stringify(
 const isZealmanU06 = computed(() => selectedModel.value?.providerId === "zealmanH3" && selectedModel.value.modelId === "u06");
 const isH3Prompt = computed(() => selectedModel.value?.providerId === "zealmanH3" || selectedModel.value?.providerId === "autoDl" && selectedModel.value.modelId === "minimaxH3");
 const h3ReferenceList = computed(() => h3References([...refList.value, ...referenceUrls(selectedModel.value).map(url => ({ source: `url:${url}`, sourceHandle: "out", dataType: "IMAGE" as const, value: { url, mimeType: "image/jpeg" } }))], data.value.h3Prompt, isZealmanU06.value ? zealmanOptions.value?.voices ?? [] : undefined, referenceMentions.value));
+watch(() => isH3Prompt.value ? h3ReferenceList.value.map(item => ({ ...item })) : undefined, (references, previous) => {
+  if (!references) return;
+  const prompt = reconcileH3References(data.value.prompt, references, data.value.h3Prompt, previous);
+  if (prompt !== data.value.prompt) {
+    data.value.prompt = prompt;
+    data.value.promptModel = prompt.split("\n").map(text => [{ type: "Write", text }]);
+  }
+}, { immediate: true });
 const h3MaxDuration = computed(() => isZealmanU06.value ? zealmanOptions.value?.maxDuration ?? 30 : Math.max(1, ...(selectedModel.value?.durationResolutionMap ?? []).flatMap(item => item.duration)));
 const ratioOptions = computed(() => selectedModel.value?.videoRatios?.length ? selectedModel.value.videoRatios : defaultRatios);
 const selectedMode = computed(() => selectedModel.value?.mode?.find((item) => JSON.stringify(item) === data.value.mode) as NodeVideoRequest["mode"]);
