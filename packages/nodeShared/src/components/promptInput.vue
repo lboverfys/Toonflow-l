@@ -19,7 +19,7 @@ import xSender, { type AnyTagProps, type MentionItem } from "x-sender";
 import "x-sender/lib/XSender.css";
 
 type PromptReference = MentionItem & { value: string; previewUrl?: string; category?: string; action?: boolean };
-const props = defineProps<{ references: PromptReference[]; expandable?: boolean; placeholder?: string; recognizeTokens?: boolean; preserveMissingReferences?: boolean; disabled?: boolean }>();
+const props = defineProps<{ references: PromptReference[]; expandable?: boolean; placeholder?: string; recognizeTokens?: boolean; preserveMissingReferences?: boolean; disabled?: boolean; maxHeight?: string }>();
 const emit = defineEmits<{ activateReference: [reference: PromptReference, occurrence: number]; insertReference: [reference: PromptReference, offset: number] }>();
 const model = defineModel<AnyTagProps[][]>({ required: true });
 const text = defineModel<string>("text", { default: "" });
@@ -219,7 +219,7 @@ watch(senderElement, (element, _previous, onCleanup) => {
   const instance = new xSender(element, {
     autoFocus: false,
     placeholder: props.placeholder ?? "描述一下生成风格提示词，输入 @ 引用参考",
-    chatStyle: { minHeight: "54px", maxHeight: "180px", fontSize: "14px", lineHeight: "1.6" },
+    chatStyle: { minHeight: "54px", maxHeight: props.maxHeight ?? "180px", fontSize: "14px", lineHeight: "1.6" },
     getPopupContainer: () => popup,
     mentionConfig: { dialogTitle: "选择参考", callEvery: false, options: props.references },
     keyboardSendFun: () => false,
@@ -228,12 +228,11 @@ watch(senderElement, (element, _previous, onCleanup) => {
   sender = instance;
   const stopDisabledWatch = watch(() => props.disabled, disabled => disabled ? instance.disable() : instance.enable(), { immediate: true });
   // ACT: 弹窗只移动现有编辑器，保留参考标签、光标与撤销记录。
-  const stopExpandedWatch = watch([expanded, expandedTarget], async ([visible, target]) => {
+  const stopExpandedWatch = watch([expanded, expandedTarget, () => props.maxHeight], async ([visible]) => {
     instance.bus.emit(xSender.EventSet.EVENT_COMMON_DIALOG_CLOSE);
-    instance.updateConfig({ chatStyle: { minHeight: visible ? "100%" : "54px", maxHeight: visible ? "100%" : "180px" } });
-    if (!visible || !target) return;
+    instance.updateConfig({ chatStyle: { minHeight: visible ? "100%" : "54px", maxHeight: visible ? "100%" : props.maxHeight ?? "180px" } });
     await nextTick();
-    if (sender !== instance || !expanded.value) return;
+    if (sender !== instance) return;
     popup.style.zIndex = String(nextZIndex());
   });
   const editor = instance.chatElement.richText;

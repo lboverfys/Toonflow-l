@@ -12,6 +12,10 @@ export type H3PromptState = {
   editorMode: "tags" | "code";
 };
 export type H3Reference = { id: string; name: string; value: string; category: string; avatar?: string; previewUrl?: string; input?: NodeInputValue; voice?: ZealmanVoice; action?: boolean };
+export function h3ReferenceGroup(item: H3Reference) {
+  const remote = item.input?.dataType === "IMAGE" && /^https?:\/\//i.test(item.input.value?.url ?? "");
+  return `${item.category}:${item.id.startsWith("voice:") ? "voice" : remote ? "url" : "input"}`;
+}
 export const h3Sections = [
   ["subject_definitions", "主体定义"], ["summary", "摘要"], ["retention_analysis", "保留分析"],
   ["detailed_description", "详细描述"], ["overall_soundscape", "环境音"], ["non_diegetic_music", "非剧情配乐"],

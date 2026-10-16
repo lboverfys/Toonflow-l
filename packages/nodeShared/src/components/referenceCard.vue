@@ -8,7 +8,7 @@
       :previewSrcList="[originalUrl || previewUrl]"
       previewTeleported
       fit="cover"
-      :alt="`预览引用 ${index}`"
+      :alt="`预览${label || `引用 ${index}`}`"
       decoding="async"
       draggable="false"
       @click.stop
@@ -39,13 +39,13 @@
       :disabled="disabled"
       :icon="IconX"
       circle
-      :aria-label="`删除引用 ${index}`"
+      :aria-label="`删除${label || `引用 ${index}`}`"
       title="删除引用"
       @pointerdown.stop
       @mousedown.stop
       @dblclick.stop
       @click.stop="emit('remove')" />
-    <span class="indexBadge" aria-hidden="true">{{ index }}</span>
+    <span class="indexBadge" aria-hidden="true">{{ label || index }}</span>
     <div v-if="item.dataType === 'VIDEO' && previewUrl && !previewError" class="videoInfo" aria-hidden="true">
       <icon-player-play :size="12" />
       <span v-if="duration">{{ duration }}</span>
@@ -60,7 +60,7 @@ import { IconX, IconFileText, IconPhoto, IconVideo, IconMusic, IconPlayerPlay } 
 import { useNodeFiles } from "@toonflow/nodes-scaffold/workspaceFiles";
 import type { NodeInputValue } from "@toonflow/nodes-scaffold/values";
 
-const props = defineProps<{ item: NodeInputValue; index: number; disabled?: boolean }>();
+const props = defineProps<{ item: NodeInputValue; index: number; label?: string; disabled?: boolean }>();
 const emit = defineEmits<{ remove: []; preview: [url: string, originalUrl: string] }>();
 const imageRef = ref<InstanceType<typeof ElImage>>();
 const previewError = ref("");
@@ -71,7 +71,7 @@ const media = computed(() => props.item.value !== undefined && (props.item.dataT
 const itemIcon = computed(() => props.item.dataType === "IMAGE" ? IconPhoto : props.item.dataType === "VIDEO" ? IconVideo : props.item.dataType === "AUDIO" ? IconMusic : IconFileText);
 const title = computed(() => {
   const content = props.item.value === undefined ? "暂无内容" : props.item.dataType === "STRING" ? props.item.value : props.item.dataType === "VIDEO" ? "视频" : props.item.dataType === "AUDIO" ? "音频" : "图片";
-  return `引用 ${props.index}：${content}${previewError.value ? `（${previewError.value}）` : ""}`;
+  return `${props.label || `引用 ${props.index}`}：${content}${previewError.value ? `（${previewError.value}）` : ""}`;
 });
 
 watch(media, () => {
