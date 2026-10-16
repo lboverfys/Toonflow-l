@@ -32,7 +32,7 @@ export function h3References(inputs: NodeInputValue[], state: H3PromptState, voi
   const references: H3Reference[] = inputs.flatMap((input, index) => {
     const kind = String(input.dataType);
     const tag = ({ IMAGE: "Picture", VIDEO: "Video", AUDIO: "Audio", STRING: "Text" } as Record<string, string>)[kind];
-    if (!tag) return [];
+    if (!tag || input.value === undefined || input.value === null || input.value === "") return [];
     const number = counts[tag] = (counts[tag] ?? 0) + 1;
     const id = referenceKey(input);
     const preview = previewById.get(id);
@@ -65,7 +65,7 @@ export function h3GenerationPrompt(prompt: string, references: H3Reference[], st
   for (const subject of state.subjects) {
     const sources = subject.references.flatMap(id => byId.has(id) ? [byId.get(id)!.value] : []);
     if (!sources.length) continue;
-    const generated = new RegExp(`(<Subject ${subject.id}> is the )[^\\n]*? in <(?:Picture|Video) \\d+>(?: and <(?:Picture|Video) \\d+>)*`, "g");
+    const generated = new RegExp(`(<Subject ${subject.id}> is the )[^\\n]*? in <(?:Missing )?(?:Picture|Video) \\d+>(?: and <(?:Missing )?(?:Picture|Video) \\d+>)*`, "g");
     if (updateBindings) text = text.replace(generated, () => `<Subject ${subject.id}> is the ${subject.name} in ${sources.join(" and ")}`);
     if (new RegExp(`<Subject\\s+${subject.id}>\\s+(?:is|是)`, "i").test(text)) continue;
     definitions.push(`<Subject ${subject.id}> is the ${subject.name} in ${sources.join(" and ")}.`);
@@ -91,7 +91,29 @@ export function h3PromptSubjects(prompt: string, references: H3Reference[]) {
   return [...(h3SectionText(prompt, "subject_definitions") || prompt).matchAll(/^\s*<Subject (\d+)> is (?:the )?([^\n]+?)(?: in | from )(<(?:Picture|Video) \d+>[^\n]*)/gm)].map(match => ({
     id: Number(match[1]), name: match[2].trim(),
     references: [...match[3].matchAll(/<(?:Picture|Video) \d+>/g)].flatMap(token => byTag.has(token[0]) ? [byTag.get(token[0])!] : []),
-  }));
+  })).filter(subject => subject.references.length);
+}
+
+export function reconcileH3References(prompt: string, references: H3Reference[], state: H3PromptState, previous: { id: string; value: string }[] = []) {
+  const byId = new Map(references.map(item => [item.id, item]));
+  const replacements = new Map(previous.filter(item => /^<(Picture|Video|Audio) /.test(item.value)).map(item => [item.value, byId.get(item.id)?.value ?? item.value.replace("<", "<Missing ")]));
+  let text = prompt.replace(/<(Picture|Video|Audio)\s+\d+>/g, value => replacements.get(value) ?? value);
+  const removedSubjects = new Set<number>();
+  for (const subject of state.subjects) {
+    const retained = subject.references.filter(id => ["picture", "video"].includes(byId.get(id)?.category ?? ""));
+    if (retained.length !== subject.references.length) subject.references = retained;
+    if (!retained.length) removedSubjects.add(subject.id);
+  }
+  if (removedSubjects.size) {
+    state.subjects = state.subjects.filter(subject => !removedSubjects.has(subject.id));
+    text = text.replace(/<Subject\s+(\d+)>/g, (token, id: string) => removedSubjects.has(Number(id)) ? `<Missing Subject ${id}>` : token);
+  }
+  const subjects = new Set(state.subjects.map(subject => subject.id));
+  for (const [id, binding] of Object.entries(state.audioBindings)) {
+    if (byId.get(id)?.category !== "audio" || !subjects.has(binding.subject)) delete state.audioBindings[id];
+  }
+  // ACT: 只更新应用生成的素材定义；正文与台词保留失效标记，避免编号复用后误指向另一人物。
+  return h3GenerationPrompt(text, references, state, true);
 }
 
 export function h3PromptIssues(prompt: string, references: H3Reference[], duration: number) {

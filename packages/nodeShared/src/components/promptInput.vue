@@ -9,6 +9,19 @@
     <div ref="expandedTarget" class="promptExpandedTarget nodrag nopan nowheel" @pointerdown.stop @mousedown.stop @dblclick.stop />
   </el-dialog>
   <el-image-viewer v-if="previewUrl" :urlList="[previewUrl]" teleported @close="previewReferenceId = undefined" />
+  <teleport v-if="mentionTarget" :to="mentionTarget">
+    <div class="referenceColumns" @mousedown.prevent @pointerdown.stop @wheel.stop @keydown.stop="handleMentionKey">
+      <section v-for="group in mentionGroups" :key="group.label" class="referenceColumn" :aria-label="group.label">
+        <h4>{{ group.label }} <span>{{ group.items.length }}</span></h4>
+        <div class="referenceOptions" role="listbox" :aria-label="group.label">
+          <button v-for="item in group.items" :key="item.id" type="button" class="referenceOption" :class="{ active: activeMentionId === item.id }" :data-id="item.id" role="option" :aria-selected="activeMentionId === item.id" :title="`${item.name} · ${item.value}`" @mouseenter="activeMentionId = item.id" @click.stop="insertReference(item)">
+            <img v-if="item.avatar" :src="String(item.avatar)" alt="" />
+            <span><strong>{{ item.name }}</strong><small>{{ item.value }}</small></span>
+          </button>
+        </div>
+      </section>
+    </div>
+  </teleport>
 </template>
 
 <script setup lang="ts">
@@ -19,13 +32,20 @@ import xSender, { type AnyTagProps, type MentionItem } from "x-sender";
 import "x-sender/lib/XSender.css";
 
 type PromptReference = MentionItem & { value: string; previewUrl?: string; category?: string; action?: boolean };
-const props = defineProps<{ references: PromptReference[]; expandable?: boolean; placeholder?: string; recognizeTokens?: boolean; preserveMissingReferences?: boolean; disabled?: boolean; maxHeight?: string }>();
+const props = defineProps<{ references: PromptReference[]; referenceGroups?: { label: string; categories: string[] }[]; expandable?: boolean; placeholder?: string; recognizeTokens?: boolean; preserveMissingReferences?: boolean; disabled?: boolean; maxHeight?: string }>();
 const emit = defineEmits<{ activateReference: [reference: PromptReference, occurrence: number]; insertReference: [reference: PromptReference, offset: number] }>();
 const model = defineModel<AnyTagProps[][]>({ required: true });
 const text = defineModel<string>("text", { default: "" });
 const senderElement = ref<HTMLElement>();
 const expanded = ref(false);
 const expandedTarget = ref<HTMLElement>();
+const mentionTarget = ref<HTMLElement>();
+const mentionMatches = ref<string[]>([]);
+const activeMentionId = ref<string>();
+const mentionGroups = computed(() => {
+  const matches = new Set(mentionMatches.value);
+  return (props.referenceGroups ?? []).map(group => ({ label: group.label, items: props.references.filter(item => matches.has(item.id) && group.categories.includes(item.category ?? "")) })).filter(group => group.items.length);
+});
 const { nextZIndex } = useZIndex();
 const previewReferenceId = ref<string>();
 const previewUrl = computed(() => {
@@ -226,6 +246,37 @@ watch(senderElement, (element, _previous, onCleanup) => {
     keyboardWrapFun: event => event.key === "Enter" && !event.isComposing,
   });
   sender = instance;
+  // ACT: XSender 1.4.6 没有候选渲染插槽；保留其匹配与光标协议，仅替换分组候选视图。
+  const mentionDialog = instance.chatElement.dialogRoot.querySelector<HTMLElement>(".chat-mention-dialog-wrap")!;
+  let mentionObserver: MutationObserver | undefined;
+  if (props.referenceGroups) {
+    mentionDialog.classList.add("groupedMentions");
+    const target = document.createElement("div");
+    mentionDialog.appendChild(target);
+    mentionTarget.value = target;
+    const updateMentions = () => {
+      const matches = Array.from(mentionDialog.querySelectorAll<HTMLElement>(".chat-mention-dialog-main > .chat-mention-dialog-item.chat-view-show"), item => item.dataset.id!);
+      if (matches.join("\0") !== mentionMatches.value.join("\0")) mentionMatches.value = matches;
+      if (!matches.includes(activeMentionId.value ?? "")) activeMentionId.value = matches[0];
+      void nextTick(() => {
+        if (sender !== instance || !mentionDialog.classList.contains("chat-view-show")) return;
+        const selection = instance.getSelection();
+        if (!selection.rangeCount) return;
+        const caret = selection.getRangeAt(0).getBoundingClientRect();
+        const width = mentionDialog.offsetWidth;
+        const height = mentionDialog.offsetHeight;
+        const left = Math.max(8, Math.min(caret.left, window.innerWidth - width - 8));
+        const top = Math.max(8, Math.min(caret.top >= height + 8 ? caret.top - height - 8 : caret.bottom + 8, window.innerHeight - height - 8));
+        for (const [key, value] of Object.entries({ position: "fixed", left: `${left}px`, top: `${top}px`, bottom: "auto" })) {
+          if (mentionDialog.style.getPropertyValue(key) !== value) mentionDialog.style.setProperty(key, value);
+        }
+      });
+    };
+    mentionObserver = new MutationObserver(updateMentions);
+    mentionObserver.observe(mentionDialog, { attributes: true, attributeFilter: ["class", "style"] });
+    mentionObserver.observe(mentionDialog.children[1], { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+    updateMentions();
+  }
   const stopDisabledWatch = watch(() => props.disabled, disabled => disabled ? instance.disable() : instance.enable(), { immediate: true });
   // ACT: 弹窗只移动现有编辑器，保留参考标签、光标与撤销记录。
   const stopExpandedWatch = watch([expanded, expandedTarget, () => props.maxHeight], async ([visible]) => {
@@ -295,6 +346,8 @@ watch(senderElement, (element, _previous, onCleanup) => {
   popup.addEventListener("click", selectReference, true);
   document.addEventListener("pointerdown", closeOutside, true);
   onCleanup(() => {
+    mentionObserver?.disconnect();
+    mentionTarget.value = undefined;
     stopDisabledWatch();
     stopExpandedWatch();
     model.value = instance.getModel();
@@ -325,7 +378,12 @@ async function insertReference(reference: MentionItem) {
   if (sender === instance && current) {
     const offset = Math.max(0, (caretOffset() ?? text.value.length) - (before.length - start));
     // ACT: 沿用 1.4.6 自带候选的 del 协议，一次替换 @ 查询；分两次删除、插入会被异步光标恢复打断。
-    await new Promise<void>(resolve => instance.bus.emit(xSender.EventSet.EVENT_EDITOR_INSERT_CUSTOM, { html: `<span style="display: inline-block;">${referenceHtml(current)}</span>`, del: before.length - start }, resolve));
+    const insertion = new Promise<void>(resolve => instance.bus.emit(xSender.EventSet.EVENT_EDITOR_INSERT_CUSTOM, { html: `<span style="display: inline-block;">${referenceHtml(current)}</span>`, del: before.length - start }, resolve));
+    // 插入已同步写入库模型，但 change 要等下一帧；先同步正文，避免紧接着移除素材时读到旧的 @ 查询。
+    const inserted = instance.getModel();
+    model.value = inserted;
+    text.value = getPromptText(inserted);
+    await insertion;
     if (sender !== instance) return;
     syncModel();
     emit("insertReference", current, offset);
@@ -333,13 +391,26 @@ async function insertReference(reference: MentionItem) {
 }
 
 function handleMentionKey(event: KeyboardEvent) {
-  if (!sender || event.isComposing || !["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(event.key)) return;
+  if (!sender || event.isComposing || !["ArrowUp", "ArrowDown", "Enter", "Escape", ...(props.referenceGroups ? ["ArrowLeft", "ArrowRight"] : [])].includes(event.key)) return;
   const dialog = sender.chatElement.dialogRoot.querySelector<HTMLElement>(".chat-mention-dialog-wrap");
   if (!dialog?.getClientRects().length) return;
   event.preventDefault();
   event.stopPropagation();
   if (event.key === "Escape") {
     sender.bus.emit(xSender.EventSet.EVENT_COMMON_DIALOG_CLOSE);
+    return;
+  }
+  if (props.referenceGroups) {
+    const groups = mentionGroups.value;
+    if (!groups.length) return;
+    const column = Math.max(0, groups.findIndex(group => group.items.some(item => item.id === activeMentionId.value)));
+    const row = Math.max(0, groups[column].items.findIndex(item => item.id === activeMentionId.value));
+    if (event.key === "Enter") { void insertReference(groups[column].items[row]); return; }
+    const horizontal = event.key === "ArrowLeft" || event.key === "ArrowRight";
+    const direction = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 1;
+    const items = groups[horizontal ? (column + direction + groups.length) % groups.length : column].items;
+    activeMentionId.value = items[horizontal ? Math.min(row, items.length - 1) : (row + direction + items.length) % items.length].id;
+    void nextTick(() => mentionTarget.value?.querySelector(".referenceOption.active")?.scrollIntoView({ block: "nearest", inline: "nearest" }));
     return;
   }
   // ACT: 1.4.6 的候选键盘监听在 window，会被骨架截断；只适配当前实例，库支持局部键盘 API 后可替换。
@@ -409,6 +480,47 @@ function handleMentionKey(event: KeyboardEvent) {
 
 :global(.textNodeMentions .chat-dialog-wrap .chat-mention-dialog-wrap.chat-view-show) {
   animation: none;
+}
+
+:global(.textNodeMentions .chat-dialog-wrap .groupedMentions) {
+  width: min(1040px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 12px;
+  border-radius: 12px;
+}
+
+:global(.textNodeMentions .groupedMentions .chat-mention-dialog-main) { display: none; }
+
+.referenceColumns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  max-height: min(460px, 60vh);
+  overflow: auto;
+  .referenceColumn {
+    min-width: 0;
+    h4 {
+      display: flex; justify-content: space-between; margin: 0 0 6px; padding: 6px;
+      color: var(--el-text-color-primary); font-size: 13px; border-bottom: 1px solid var(--el-border-color-lighter);
+      span { color: var(--el-text-color-secondary); font-weight: normal; }
+    }
+    .referenceOptions {
+      max-height: 260px; overflow-y: auto;
+      .referenceOption {
+        display: flex; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 6px;
+        border: 0; border-radius: 6px; background: transparent; color: var(--el-text-color-primary); text-align: left; cursor: pointer;
+        &:hover, &.active { background: var(--el-fill-color); color: var(--el-color-primary); }
+        &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: -2px; }
+        img { width: 32px; height: 32px; flex-shrink: 0; object-fit: cover; border-radius: 4px; }
+        > span {
+          display: grid; gap: 3px; min-width: 0;
+          strong, small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          strong { font-size: 12px; font-weight: 500; }
+          small { color: var(--el-text-color-secondary); font-size: 10px; }
+        }
+      }
+    }
+  }
 }
 
 .promptInput {
