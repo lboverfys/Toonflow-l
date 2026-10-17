@@ -30,7 +30,7 @@
       </div>
     </div>
     <div class="playerControls">
-      <el-button class="playButton nodrag nopan nowheel" :icon="playing ? IconPlayerPause : IconPlayerPlay" :disabled="!duration || failed" circle :aria-label="playing ? '暂停音频' : '播放音频'" :title="playing ? '暂停' : '播放'" @pointerdown.stop @mousedown.stop @dblclick.stop @click="togglePlayback" />
+      <el-button class="playButton nodrag nopan nowheel" :icon="playing ? IconPlayerPause : IconPlayerPlay" :disabled="!duration || failed" circle :aria-label="playing ? '暂停音频' : playLabel" :title="playing ? '暂停' : playLabel" @pointerdown.stop @mousedown.stop @dblclick.stop @click="togglePlayback" />
       <span class="timeLabel"><slot name="time"><span>{{ formatTime(currentTime) }}</span><span class="timeSeparator">/</span>{{ formatTime(duration) }}</slot></span>
       <div class="volumeControl nodrag nopan nowheel" @pointerdown.stop @mousedown.stop @dblclick.stop>
         <el-button class="volumeButton" :icon="muted || !volume ? IconVolumeOff : IconVolume" text circle :disabled="failed" :aria-label="muted || !volume ? '取消静音' : '静音音频'" :title="muted || !volume ? '取消静音' : '静音'" :aria-pressed="muted || !volume" @click="toggleMute" />
@@ -46,7 +46,7 @@ import { ElButton, ElMessage } from "element-plus";
 import { IconPlayerPlay, IconPlayerPause, IconVolume, IconVolumeOff } from "@tabler/icons-vue";
 import { getWaveformPeaks } from "../audioWaveform";
 
-const { src, label = "节点音频" } = defineProps<{ src: string; label?: string }>();
+const { src, label = "节点音频", playLabel = "播放音频" } = defineProps<{ src: string; label?: string; playLabel?: string }>();
 const emit = defineEmits<{ loadedmetadata: [event: Event]; play: [] }>();
 const audio = ref<HTMLAudioElement>();
 const peaks = shallowRef<number[]>([]);
@@ -154,7 +154,7 @@ function pause() {
   audio.value?.pause();
 }
 
-defineExpose({ duration, currentTime, playing, seekTo, pause });
+defineExpose({ duration, currentTime, playing, seekTo, pause, togglePlayback });
 
 function readVolume() {
   volume.value = Math.round((audio.value?.volume ?? 1) * 100);

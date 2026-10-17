@@ -1,20 +1,53 @@
-import { resolve } from "node:path";
+import { open } from "@toonflow/file";
+import { dirname, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import type { BrowserFfmpegRequest, FfmpegCall } from "./browserTypes";
 
 const inputMethods = new Set(["input", "addInput", "mergeAdd"]);
+const inputFormatMethods = new Set(["inputFormat", "withInputFormat", "fromFormat"]);
 const outputMethods = new Set(["output", "addOutput", "save", "saveToFile", "concat", "concatenate", "mergeToFile"]);
 const screenshotMethods = new Set(["screenshots", "screenshot", "takeScreenshots", "thumbnail", "thumbnails"]);
 const filters = new Set("scale crop pad fps format aformat setsar setdar setpts asetpts trim atrim concat overlay amix amerge asplit split aresample volume atempo hflip vflip transpose rotate fade afade xfade acrossfade color anull null eq hue unsharp reverse areverse drawbox drawgrid subtitles ass movie amovie".split(" "));
 const fileFilters = new Set(["subtitles", "ass", "movie", "amovie"]);
 const filterMethods = new Set("withAudioFilter withAudioFilters audioFilter audioFilters withVideoFilter withVideoFilters videoFilter videoFilters filterGraph complexFilter".split(" "));
 const switches = new Set("y n an vn sn dn shortest copyts start_at_zero count_frames count_packets show_streams show_format show_frames show_packets show_error show_programs show_chapters hide_banner nostats".split(" "));
-const valueOptions = new Set("c codec vcodec acodec b ab vb r ar ac crf preset profile level pix_fmt sample_fmt t ss to frames vframes aframes s aspect threads q qscale vtag atag movflags fflags map map_metadata map_chapters metadata disposition maxrate minrate bufsize filter_threads filter_complex_threads analyzeduration probesize read_intervals select_streams show_entries of print_format loglevel v vsync fps_mode f".split(" "));
+const valueOptions = new Set("c codec vcodec acodec b ab vb r ar ac crf preset profile level pix_fmt sample_fmt t ss to frames vframes aframes s aspect threads q qscale vtag atag movflags fflags map map_metadata map_chapters metadata disposition maxrate minrate bufsize filter_threads filter_complex_threads analyzeduration probesize read_intervals select_streams show_entries of print_format loglevel v vsync fps_mode f safe".split(" "));
 
 function invalid(message: string): never { throw Object.assign(new Error(message), { status: 403 }); }
 
 export async function validateFfmpegRequest(request: BrowserFfmpegRequest, resolvePath: (path: string) => Promise<string>, allowRawOptions: boolean) {
   const workingDirectory = request.options.cwd ? await resolvePath(request.options.cwd) : request.directory;
-  if (request.options.source) await resolvePath(request.options.source);
+  const inputs: string[] = [];
+  const concatFiles = new Set<string>();
+  if (request.options.source) inputs.push(await resolvePath(request.options.source));
+
+  async function validateFormat(format: string, input?: string) {
+    if (/^(hls|dash|sdp|lavfi)$/i.test(format) || /^concat$/i.test(format) && !input) invalid("不允许通过媒体清单间接访问文件");
+    if (!/^concat$/i.test(format) || !input || concatFiles.has(input)) return;
+    const handle = await open(input, "r");
+    const stream = handle.createReadStream({ encoding: "utf8", autoClose: false });
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    stream.on("error", error => lines.emit("error", error));
+    try {
+      for await (const line of lines) {
+        if (/^[ \t]*(?:#.*)?$/.test(line) || /^[ \t]*ffconcat[ \t]+version[ \t]+1\.0[ \t]*$/.test(line)
+          || /^[ \t]*(?:duration|inpoint|outpoint)[ \t]+[^\s\x00-\x1f]+[ \t]*$/.test(line)) continue;
+        // ACT: 只开放拼接所需指令；按 FFmpeg 的单引号和反斜杠规则解析文件名，拒绝 option 等间接配置。
+        const token = /^[ \t]*file[ \t]+((?:[^\\'\s\x00-\x1f]|\\[^\r\n]|'[^'\r\n]*')+)[ \t]*$/.exec(line)?.[1];
+        if (!token) invalid("concat 清单仅支持 file、duration、inpoint、outpoint 和 ffconcat version 1.0");
+        const path = token.replace(/\\(.)|'([^']*)'/g, (_match, escaped: string | undefined, quoted: string | undefined) => escaped ?? quoted!);
+        if (!path || /[\x00-\x1f]/.test(path) || /^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path)) {
+          invalid("FFmpeg 文件路径无效，不能使用协议或设备路径");
+        }
+        await resolvePath(resolve(dirname(input), path));
+      }
+      concatFiles.add(input);
+    } finally {
+      lines.close();
+      stream.destroy();
+      await handle.close();
+    }
+  }
 
   async function fileFilterPath(value: unknown) {
     if (typeof value !== "string" || !value || /[\\:'";,\[\]\x00-\x1f]/.test(value) || value.startsWith("/") || value.split("/").includes("..")) {
@@ -56,7 +89,7 @@ export async function validateFfmpegRequest(request: BrowserFfmpegRequest, resol
     }
   }
 
-  async function validateOptions(args: unknown[]) {
+  async function validateOptions(args: unknown[], input?: string) {
     const values = args.flatMap(value => Array.isArray(value) ? value : [value]).flatMap(value => {
       if (typeof value !== "string") invalid("原始参数不在允许范围内，请使用专用方法");
       const combined = /^(-\S+)\s+([\s\S]+)$/.exec(value);
@@ -71,18 +104,23 @@ export async function validateFfmpegRequest(request: BrowserFfmpegRequest, resol
       const value = values[++index];
       if (value === undefined) invalid("原始参数不在允许范围内，请使用专用方法");
       if (["vf", "af", "filter_complex"].includes(name)) await validateFilter(value);
-      if (name === "f" && /^(concat|hls|dash|sdp|lavfi)$/i.test(value)) invalid("不允许通过媒体清单间接访问文件");
+      if (name === "safe") {
+        if (!input || !/^[01]$/.test(value)) invalid("原始参数不在允许范围内，请使用专用方法");
+        await validateFormat("concat", input);
+      }
+      if (name === "f") await validateFormat(value, input);
     }
   }
 
   for (const call of [...request.calls, request.operation]) {
     if (inputMethods.has(call.method) || outputMethods.has(call.method)) {
       if (typeof call.args[0] !== "string") invalid("浏览器 FFmpeg 输入、输出必须使用工作区文件路径");
-      await resolvePath(call.args[0]);
+      const path = await resolvePath(call.args[0]);
+      if (inputMethods.has(call.method)) inputs.push(path);
     }
     if (/options?$/i.test(call.method)) {
       if (!allowRawOptions) invalid("配对设备不能使用 FFmpeg 原始参数或滤镜");
-      await validateOptions(call.args);
+      await validateOptions(call.args, /input/i.test(call.method) ? inputs.at(-1) : undefined);
     }
     if (filterMethods.has(call.method)) {
       if (!allowRawOptions) invalid("配对设备不能使用 FFmpeg 原始参数或滤镜");
@@ -91,7 +129,9 @@ export async function validateFfmpegRequest(request: BrowserFfmpegRequest, resol
         for (const value of call.args.slice(1)) await validateFilter(value);
       } else if (call.args[1] !== undefined && (Array.isArray(call.args[1]) ? call.args[1] : [call.args[1]]).some((value: unknown) => typeof value !== "string" || !/^\[?[\w:.]+\]?$/.test(value))) invalid("滤镜不在允许范围内，请使用结构化参数与工作区相对路径");
     }
-    if (/format/i.test(call.method) && typeof call.args[0] === "string" && /^(concat|hls|dash|sdp|lavfi)$/i.test(call.args[0])) invalid("不允许通过媒体清单间接访问文件");
+    if (/format/i.test(call.method) && typeof call.args[0] === "string") {
+      await validateFormat(call.args[0], inputFormatMethods.has(call.method) ? inputs.at(-1) : undefined);
+    }
     if (screenshotMethods.has(call.method)) {
       const options = call.args[0];
       if (options && typeof options === "object" && !Array.isArray(options)) {
@@ -114,7 +154,7 @@ export async function validateFfmpegRequest(request: BrowserFfmpegRequest, resol
         || config.options !== undefined && !Array.isArray(config.options)) invalid("原始参数不在允许范围内，请使用专用方法");
       const options = config.options as unknown[] | undefined;
       if (!allowRawOptions && options?.length) invalid("配对设备不能使用 FFmpeg 原始参数或滤镜");
-      if (options) await validateOptions(options);
+      if (options) await validateOptions(options, inputs[typeof config.index === "number" ? config.index : inputs.length - 1]);
       call.args = [{ ...Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined)), options: ["-protocol_whitelist", "file,pipe", ...(options ?? [])] }];
       delete call.undefinedArgs;
     }

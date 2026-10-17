@@ -1,6 +1,7 @@
 <template>
   <nodeSkeleton
     v-bind="nodeProps"
+    sideActions
     :topVisible="node.selected"
     :bottomVisible="node.selected && (lightingVisible || multiAngleVisible || editor?.mode === 'inpaint')"
     :bottomWidth="660"

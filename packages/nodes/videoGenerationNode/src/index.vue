@@ -1,6 +1,7 @@
 <template>
   <nodeSkeleton
     v-bind="nodeProps"
+    sideActions
     v-model:bottomVisible="node.selected"
     :topVisible="node.selected"
     topWidth="max-content"
@@ -20,9 +21,9 @@
       <el-button :icon="IconTransfer" :loading="uploading" :disabled="generating || deleting" text title="替换视频" aria-label="替换视频" @click.stop="fileInput?.click()">替换视频</el-button>
       <input ref="fileInput" type="file" accept="video/*" hidden aria-label="选择替换视频" :disabled="generating || deleting || uploading" @change="replaceOutput" />
     </template>
-    <template #topRightActions>
-      <el-dropdown trigger="click" placement="bottom-end" :disabled="!player?.ready || player?.capturing || generating || deleting || uploading" @command="player?.captureFrame($event)">
-        <el-button :icon="IconPhotoScan" :loading="player?.capturing" :disabled="!player?.ready || player?.capturing || generating || deleting || uploading" text title="截取视频帧" aria-label="截取视频帧" />
+    <template #sideActions>
+      <el-dropdown trigger="click" placement="bottom-end" :disabled="!previewUrl || (player && !player.ready) || player?.capturing || generating || deleting || uploading" @command="player?.captureFrame($event)">
+        <el-button :icon="IconPhotoScan" :loading="player?.capturing" :disabled="!previewUrl || (player && !player.ready) || player?.capturing || generating || deleting || uploading" text title="截取视频帧" aria-label="截取视频帧" />
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item command="current" :icon="IconPhotoScan">截取当前帧</el-dropdown-item>

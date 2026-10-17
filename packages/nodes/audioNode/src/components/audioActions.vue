@@ -7,24 +7,26 @@
         <el-slider v-model="speed" class="speedSlider" :min="0.1" :max="4" :step="0.1" :disabled="processing" :formatTooltip="value => `${value.toFixed(2)}×`" aria-label="音频变速滑块" />
         <span class="speedLimit">4×</span>
         <el-input-number :key="String(processing)" v-model="speed" class="speedInput" :min="0.1" :max="4" :step="0.1" :precision="2" :disabled="processing" controlsPosition="right" aria-label="音频变速倍数" />
-        <el-button class="generateButton" :icon="IconArrowUp" type="primary" :loading="processing" :disabled="disabled || !validSpeed" title="生成变速音频" aria-label="生成变速音频" @click="run" />
+        <el-button class="generateButton" :icon="IconArrowUp" type="primary" :loading="processing" :disabled="disabled || !validSpeed" title="生成变速音频" aria-label="生成变速音频" @click="run()" />
       </div>
       <div v-if="processing" class="processingStatus" role="status">{{ cancelling ? '正在取消并清理…' : '正在生成变速音频…' }}</div>
     </el-card>
   </teleport>
-  <el-dialog class="clipDialog" :modelValue="mode === 'clip'" width="900px" alignCenter appendToBody destroyOnClose :showClose="false" :closeOnClickModal="!processing" :closeOnPressEscape="!processing" :style="{ maxWidth: 'calc(100vw - 24px)', maxHeight: '84vh', display: 'flex', flexDirection: 'column' }" @update:modelValue="value => !value && close()">
+  <el-dialog class="clipDialog" title="截取音频" :modelValue="mode === 'clip'" width="900px" alignCenter appendToBody destroyOnClose :showClose="false" :closeOnClickModal="!processing" :closeOnPressEscape="!processing" :style="{ maxWidth: 'calc(100vw - 24px)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }" @update:modelValue="value => !value && close()">
     <template #header>
       <div class="clipHeader">
         <el-button :icon="IconX" text :disabled="cancelling" :aria-label="processing ? '取消截取处理' : '关闭音频截取'" :title="processing ? '取消处理' : '关闭'" @click="close" />
-        <span>截取与拼接</span>
+        <span>截取音频</span>
       </div>
     </template>
     <audioClipEditor v-if="mode === 'clip'" ref="clipEditor" v-model="segments" :src="src" :disabled="processing" />
     <template #footer>
       <div class="clipFooter">
-        <span v-if="processing" class="processingStatus" role="status">{{ cancelling ? '正在取消并清理…' : '正在导出音频…' }}</span>
-        <el-button :disabled="cancelling" @click="close">{{ processing ? '取消处理' : '取消' }}</el-button>
-        <el-button type="primary" :loading="processing" :disabled="disabled || !clipEditor?.valid" @click="run">导出音频</el-button>
+        <span v-if="processing" class="processingStatus" role="status">{{ cancelling ? '正在取消并清理…' : exportScope === 'all' ? '正在拼接导出全部片段…' : '正在导出选中片段…' }}</span>
+        <span v-else class="exportHint">导出为新音频节点，可继续截取下一段。</span>
+        <el-button :disabled="cancelling" @click="close">{{ processing ? '取消处理' : '关闭' }}</el-button>
+        <el-button v-if="segments.length > 1" :loading="processing && exportScope === 'all'" :disabled="disabled || processing || !clipEditor?.valid" @click="run('all')">拼接导出全部 · {{ clipEditor?.totalDuration.toFixed(2) }} 秒</el-button>
+        <el-button type="primary" :loading="processing && exportScope === 'selected'" :disabled="disabled || processing || !clipEditor?.valid" @click="run('selected')">导出选中片段 · {{ (clipEditor?.selectedDuration ?? 0).toFixed(2) }} 秒</el-button>
       </div>
     </template>
   </el-dialog>
@@ -51,6 +53,7 @@ const batchHistory = inject<(action: () => Promise<void>) => Promise<void>>("bat
 const mode = ref<"speed" | "clip">();
 const speed = ref(1);
 const segments = ref<AudioSegment[]>([]);
+const exportScope = ref<"selected" | "all">("selected");
 const processing = ref(false);
 const cancelling = ref(false);
 const clipEditor = ref<InstanceType<typeof audioClipEditor>>();
@@ -95,20 +98,22 @@ async function cancelAndWait() {
 
 defineExpose({ open, mode, processing, cancelAndWait });
 
-function run() {
+function run(scope: "selected" | "all" = "selected") {
   if (processing.value || props.disabled || !props.file || !mode.value || (mode.value === "speed" ? !validSpeed.value : !clipEditor.value?.valid)) return;
-  job = process();
+  exportScope.value = scope;
+  job = process(scope);
 }
 
-async function process() {
+async function process(scope: "selected" | "all") {
   if (!nodeTypes?.value?.["remote-audioNode"]) return void ElMessage.error("请先启用音频节点插件");
   const source = props.file!.url;
   const id = crypto.randomUUID();
   const outputPath = `assets/${id}/audio.m4a`;
   const options: AudioProcessingOptions = mode.value === "speed"
     ? { action: "speed", outputPath, speed: speed.value }
-    : { action: "clip", outputPath, segments: segments.value.map(segment => ({ ...segment })) };
-  const label = options.action === "speed" ? `${options.speed.toFixed(2)}×` : "拼接";
+    : { action: "clip", outputPath, segments: (scope === "all" ? segments.value : clipEditor.value!.selectedSegments).map(segment => ({ ...segment })) };
+  const label = options.action === "speed" ? `${options.speed.toFixed(2)}×`
+    : options.segments.length === 1 ? `${options.segments[0]!.start.toFixed(2)}–${options.segments[0]!.end.toFixed(2)} 秒` : `拼接 ${options.segments.length} 段`;
   const current = controller = new AbortController();
   processing.value = true;
   cancelling.value = false;
@@ -140,7 +145,7 @@ async function process() {
       addNodes([{ id, type: "remote-audioNode", position: { x, y }, data: { label: `${node.data.label || "音频"} · ${label}`, outputs: { audio: { dataType: "AUDIO", value: { url: outputPath, mimeType: "audio/mp4" } } } } }]);
       committed = true;
     });
-    mode.value = undefined;
+    if (options.action === "speed") mode.value = undefined;
     ElMessage.success("已在右侧生成新的音频节点");
   } catch (error) {
     if (!current.signal.aborted) showNodeError(error, "音频处理失败");
@@ -170,7 +175,7 @@ async function process() {
   .processingStatus { margin: 6px 4px 0; }
 }
 .clipHeader { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; .el-button { width: 30px; padding: 0; } }
-.clipFooter { display: flex; align-items: center; justify-content: flex-end; gap: 8px; .processingStatus { margin-right: auto; } .el-button { margin: 0; } }
+.clipFooter { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; .processingStatus, .exportHint { margin-right: auto; } .exportHint { font-size: 12px; color: var(--el-text-color-secondary); } .el-button { margin: 0; } }
 .processingStatus { font-size: 12px; color: var(--el-text-color-secondary); }
 :global(.clipDialog .el-dialog__body) { min-height: 0; overflow-y: auto; }
 :global(.clipDialog .el-dialog__header), :global(.clipDialog .el-dialog__footer) { flex-shrink: 0; }
