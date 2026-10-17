@@ -242,6 +242,8 @@ nodeTools.register({
 
 `topWidth`、`bottomWidth` 默认均为 `"20vw"`。数字按 px 处理，字符串支持百分比等 CSS 宽度。默认工具栏建议设置 `topWidth="max-content"`；传入 `downloadUrl`、`downloadName` 控制下载，通过 `@fullscreen` 打开节点自己的预览视图，`fullscreenLabel` 默认是“全屏”，视频节点使用“预览视频”。素材库按钮复用节点的输出与宿主保存弹窗，没有输出时禁用。额外按钮放在 `topActions` 插槽，位置在下载按钮前；图片、视频、音频节点在此提供替换按钮。自定义 `top` 则替换整个工具栏。编辑浮层内容不会拖动画布或弹出节点右键菜单。
 
+图片、视频及其生成节点传入 `sideActions`，将下载、全屏、刷新、删除放到节点右侧常驻工具栏；视频通过同名 `sideActions` 插槽提供截帧菜单。工具栏不依赖选中或悬停，与连线端口留有间隔，宽度计入节点布局，避免新节点与按钮重叠。文档模式下操作回到节点上方；未启用此属性的节点保持原有布局。
+
 ```vue
 <template>
   <nodeSkeleton v-model:topVisible="topVisible" v-model:bottomVisible="bottomVisible" :bottomWidth="480">

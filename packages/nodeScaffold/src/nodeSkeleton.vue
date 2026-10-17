@@ -1,7 +1,7 @@
 <template>
   <div v-if="documentTarget" class="nodeDocumentPlaceholder" :style="canvasSize" aria-hidden="true" />
   <teleport :to="documentTarget ?? 'body'" :disabled="!documentTarget">
-  <div ref="skeletonElement" v-bind="$attrs" class="nodeSkeleton" :class="{ documentNode: documentTarget }" @wheel.capture="zoomCanvas" @dblclick.stop="focusNode" @contextmenu="documentTarget && openMenu($event)">
+  <div ref="skeletonElement" v-bind="$attrs" class="nodeSkeleton" :class="{ documentNode: documentTarget, withSideActions: showSideActions }" @wheel.capture="zoomCanvas" @dblclick.stop="focusNode" @contextmenu="documentTarget && openMenu($event)">
     <el-dropdown
       ref="menu"
       trigger="contextmenu"
@@ -49,10 +49,12 @@
               @click.stop="handleCommand('saveAsset')">添加到素材库</el-button>
             <slot name="topActions" />
           </div>
-          <el-divider v-if="!docked" direction="vertical" />
-          <div class="mediaSecondaryActions">
+          <el-divider v-if="!docked && ($slots.topRightActions || !showSideActions)" direction="vertical" />
+          <div v-if="$slots.topRightActions || !showSideActions" class="mediaSecondaryActions">
             <slot name="topRightActions" />
+            <slot v-if="!showSideActions" name="sideActions" />
             <el-button
+              v-if="!showSideActions"
               :tag="downloadUrl ? 'a' : 'button'"
               :href="downloadUrl || undefined"
               :download="downloadName"
@@ -66,7 +68,7 @@
               @downloadstate="downloading = $event.detail"
               @click.stop />
             <el-button
-              v-if="fullscreenVisible"
+              v-if="fullscreenVisible && !showSideActions"
               :icon="IconMaximize"
               :disabled="!downloadUrl"
               text
@@ -121,7 +123,7 @@
         @keydown.enter.stop.prevent="editLabel">
         {{ label }}
       </span>
-      <div class="nodeActions nodrag nopan" @pointerdown.stop @mousedown.stop @dblclick.stop>
+      <div v-if="!showSideActions" class="nodeActions nodrag nopan" @pointerdown.stop @mousedown.stop @dblclick.stop>
         <el-button
           :icon="IconRefresh"
           :loading="loading || reloading"
@@ -152,6 +154,29 @@
           <span v-if="overviewLabel" class="overviewLabel" role="status">{{ overviewLabel }}</span>
         </div>
       </el-card>
+      <div v-if="showSideActions" class="sideToolbar nodrag nopan nowheel" role="group" aria-label="节点快捷操作" @pointerdown.stop="activateSideActions" @focusin="activateSideActions" @mousedown.stop @click.stop @dblclick.stop @keydown.stop @contextmenu.stop>
+        <div class="mediaActions">
+          <slot name="sideActions" />
+          <el-button
+            :tag="downloadUrl ? 'a' : 'button'"
+            :href="downloadUrl || undefined"
+            :download="downloadName"
+            :icon="IconDownload"
+            :disabled="!downloadUrl"
+            :loading="downloading"
+            :aria-busy="downloading"
+            text
+            :title="downloading ? '正在保存…' : '下载'"
+            aria-label="下载"
+            @downloadstate="downloading = $event.detail"
+            @click.stop />
+          <el-button v-if="fullscreenVisible" :icon="IconMaximize" :disabled="!downloadUrl" text :title="fullscreenLabel" :aria-label="fullscreenLabel" @click.stop="emit('fullscreen')" />
+        </div>
+        <div class="managementActions">
+          <el-button :icon="IconRefresh" :loading="loading || reloading" :disabled="loading || deleting || !reloadRemoteNode" text title="刷新节点" aria-label="刷新节点" @click.stop="reloadNode" />
+          <el-button class="deleteAction" :icon="IconTrash" :loading="deleting" :disabled="loading || reloading" text title="移除节点" aria-label="移除节点" @click.stop="deleteNode" />
+        </div>
+      </div>
       <template v-for="group in handleGroups" :key="group.type">
         <handle
           v-for="(item, index) in group.items"
@@ -230,6 +255,7 @@ const props = withDefaults(
       downloadName?: string;
       fullscreenVisible?: boolean;
       fullscreenLabel?: string;
+      sideActions?: boolean;
     }
   >(),
   {
@@ -256,6 +282,7 @@ watch(() => props.overviewSrc, () => { overviewError.value = false; });
 const { id: nodeId, node } = useNode();
 const documentContext = inject<NodeDocumentContext | undefined>("nodeDocument", undefined);
 const documentTarget = computed(() => documentContext?.targets.get(nodeId));
+const showSideActions = computed(() => props.sideActions && !documentTarget.value);
 const slotDock = inject<{ top: Ref<HTMLElement | undefined>; bottom: Ref<HTMLElement | undefined> } | undefined>("nodeSlotDock", undefined);
 // 宿主提供停靠区时，选中节点的上下插槽移入停靠区；未选中但主动显示的插槽仍浮在节点旁。
 const docked = computed(() => !documentTarget.value && !!node.selected && !!slotDock?.top.value && !!slotDock.bottom.value);
@@ -431,6 +458,12 @@ async function reloadNode() {
   } finally {
     reloading.value = false;
   }
+}
+
+function activateSideActions() {
+  if (contentVisible.value) return;
+  removeSelectedElements();
+  addSelectedNodes([node]);
 }
 
 async function openMenu(event: MouseEvent | TouchEvent) {
@@ -626,6 +659,8 @@ watch(
   color: var(--el-text-color-primary);
   text-align: left;
 
+  &.withSideActions { padding-right: 80px; box-sizing: content-box; }
+
   .overviewContent {
     position: relative;
     display: grid;
@@ -739,6 +774,40 @@ watch(
 
   .cardContainer {
     position: relative;
+
+    .sideToolbar {
+      position: absolute;
+      top: 0;
+      left: calc(100% + 32px);
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--el-border-color-light);
+      border-radius: 10px;
+      background: var(--el-bg-color-overlay);
+      box-shadow: var(--el-box-shadow-lighter);
+      cursor: default;
+
+      .mediaActions, .managementActions { display: flex; flex-direction: column; gap: 4px; }
+      .managementActions { padding-top: 5px; border-top: 1px solid var(--el-border-color-lighter); }
+      :deep(.el-button) {
+        width: 32px;
+        min-width: 32px;
+        height: 32px;
+        margin: 0;
+        padding: 0;
+        border-radius: 6px;
+        color: var(--el-text-color-regular);
+        text-decoration: none;
+        font-size: 16px;
+        &:hover:not(:disabled) { color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
+        &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
+        &.is-disabled { color: var(--el-text-color-placeholder); }
+      }
+      .managementActions .deleteAction:hover:not(:disabled) { color: var(--el-color-danger); background: var(--el-color-danger-light-9); }
+    }
 
     .contentCard.selected {
       border-color: color-mix(in srgb, var(--el-color-primary) 50%, var(--el-border-color-light));
