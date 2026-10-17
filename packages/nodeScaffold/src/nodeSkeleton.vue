@@ -286,7 +286,11 @@ const showSideActions = computed(() => props.sideActions && !documentTarget.valu
 const slotDock = inject<{ top: Ref<HTMLElement | undefined>; bottom: Ref<HTMLElement | undefined> } | undefined>("nodeSlotDock", undefined);
 // 宿主提供停靠区时，选中节点的上下插槽移入停靠区；未选中但主动显示的插槽仍浮在节点旁。
 const docked = computed(() => !documentTarget.value && !!node.selected && !!slotDock?.top.value && !!slotDock.bottom.value);
-const contentVisible = computed(() => !!documentTarget.value || props.previewReady && (props.previewDetailed || props.overviewSrc === undefined));
+const sidePreviewActive = ref(false);
+const contentVisible = computed(() => !!documentTarget.value || sidePreviewActive.value || props.previewReady && (props.previewDetailed || props.overviewSrc === undefined));
+watch([() => props.previewReady, () => props.previewDetailed], ([ready, detailed]) => {
+  if (!ready || detailed) sidePreviewActive.value = false;
+});
 watch(contentVisible, (ready, previous) => {
   if (!ready && previous && contentCard.value) previewHeight.value = contentCard.value.$el.offsetHeight;
 }, { flush: "pre" });
@@ -461,9 +465,7 @@ async function reloadNode() {
 }
 
 function activateSideActions() {
-  if (contentVisible.value) return;
-  removeSelectedElements();
-  addSelectedNodes([node]);
+  if (!contentVisible.value) sidePreviewActive.value = true;
 }
 
 async function openMenu(event: MouseEvent | TouchEvent) {
