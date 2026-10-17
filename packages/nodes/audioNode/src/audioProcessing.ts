@@ -68,9 +68,13 @@ export async function processAudio(ffmpeg: BrowserFfmpegFactory, source: string,
     while (tempo < 0.5) { filters.push("atempo=0.5"); tempo /= 0.5; }
     while (tempo > 2) { filters.push("atempo=2"); tempo /= 2; }
     command.audioFilters([...filters, `atempo=${tempo}`]).outputOptions("-map", "0:a:0");
+  } else if (options.segments.length === 1) {
+    const segment = options.segments[0]!;
+    command.audioFilters(["asetpts=PTS-STARTPTS", `atrim=start=${segment.start}:end=${segment.end}`, "asetpts=PTS-STARTPTS"])
+      .outputOptions("-map", "0:a:0");
   } else {
     const filters = options.segments.map((segment, index) =>
-      `[0:a:0]atrim=start=${segment.start}:end=${segment.end},asetpts=PTS-STARTPTS[part${index}]`);
+      `[0:a:0]asetpts=PTS-STARTPTS,atrim=start=${segment.start}:end=${segment.end},asetpts=PTS-STARTPTS[part${index}]`);
     filters.push(`${options.segments.map((_segment, index) => `[part${index}]`).join("")}concat=n=${options.segments.length}:v=0:a=1[result]`);
     command.complexFilter(filters).outputOptions("-map", "[result]");
   }
@@ -79,6 +83,12 @@ export async function processAudio(ffmpeg: BrowserFfmpegFactory, source: string,
   const resultDuration = Number(result.format.duration);
   if (!Number.isFinite(resultDuration) || resultDuration <= 0 || !result.streams.some(stream => stream.codec_type === "audio")) {
     throw new Error("生成的音频文件无效");
+  }
+  if (options.action === "clip") {
+    const expected = options.segments.reduce((total, segment) => total + segment.end - segment.start, 0);
+    // AAC 尾部可能补齐编码帧；超过两帧的时长偏差不能作为正确的截取结果交付。
+    const tolerance = Math.max(0.05, 2048 / Number(audio.sample_rate));
+    if (Math.abs(resultDuration - expected) > tolerance) throw new Error("导出音频时长与所选片段不一致，请重新截取");
   }
   return { duration: resultDuration };
 }

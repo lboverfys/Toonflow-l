@@ -67,10 +67,11 @@ const plugin: ToolPlugin = {
     }, {
       name: "ffmpeg",
       label: "处理媒体",
-      description: "通过宿主 fluent-ffmpeg 处理工作区媒体。steps 按顺序传入链式方法及 args，支持常用剪辑滤镜、多输入、多输出和图片序列；inputOptions/outputOptions 与滤镜受允许列表约束，禁止额外输入、脚本、协议覆盖及 concat/HLS/DASH/SDP/lavfi 格式。带文件的滤镜须使用结构化参数及工作区相对路径。operation 默认 run，也支持 save、screenshots、concat 和能力查询。不自动重命名输出、不限制执行时长；输出目录需已存在，文件覆盖遵循原生规则。",
+      description: "通过宿主 fluent-ffmpeg 处理工作区媒体。steps 按顺序传入链式方法及 args，支持常用剪辑滤镜、多输入、多输出、图片序列及 concat 清单配合 -c copy 无损拼接；清单及其引用文件须在工作区内。inputOptions/outputOptions 与滤镜受允许列表约束，禁止额外输入、脚本、协议覆盖及 HLS/DASH/SDP/lavfi 格式。带文件的滤镜须使用结构化参数及工作区相对路径。operation 默认 run，也支持 save、screenshots、concat 和能力查询；concat/mergeToFile 使用滤镜重新编码，不是无损拼接。不自动重命名输出、不限制执行时长；输出目录需已存在，文件覆盖遵循原生规则。",
       promptSnippet: "使用 ffmpeg 处理本地媒体，ffprobe 查询媒体信息；按用户要求选择输出位置。",
       promptGuidelines: [
         '截帧示例：{"steps":[{"method":"input","args":["assets/input.mp4"]},{"method":"seekInput","args":[1]},{"method":"frames","args":[1]},{"method":"output","args":["assets/frame.png"]}]}。',
+        '无损拼接：先写 concat 清单，每行 file 后跟单引号包裹的文件名，路径相对清单所在目录；再调用 input(清单路径)、inputFormat("concat")、inputOptions(["-safe", "0"])、outputOptions(["-map", "0", "-c", "copy"])，最后 save(输出路径)。也支持 inputOptions(["-f", "concat", "-safe", "0"])。源文件的流布局和编码参数须兼容；失败时报告原因，不改用 concat/mergeToFile 或滤镜重新编码。',
         'inputOptions/outputOptions 仅使用允许的编解码、质量、时长、映射和探测选项。含空格的元数据使用 args:["-metadata","title=a b"]。先用 operation={"method":"availableEncoders","args":[]} 等查询实际能力；查询结果不代表工具允许所有原生选项和滤镜。',
         '工作区字幕示例：{"method":"videoFilters","args":[[{"filter":"subtitles","options":{"filename":"assets/captions.srt"}}]]}。文件参数不得包含协议、上级目录、引号或转义符；复杂表达式及不在允许列表中的滤镜会被拒绝。',
         "除非用户要求覆盖，否则使用新文件名；所有显式路径及滤镜中引用的文件都应位于当前工作区，不使用媒体清单读取外部文件。",
