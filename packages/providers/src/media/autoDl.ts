@@ -203,7 +203,7 @@ export default {
   label: "AutoDL 图生视频",
   version: "1.1.0",
   apiUrl: "https://autodl.art",
-  readme: "使用 ComfyUI 分组的 Token，两个模型共用 Token 和默认 seed，各自配置工作流 ID。图生视频默认 minimax_h3_zm_u08，支持 1～9 张图片、0～3 段音频；首尾帧视频默认 minimax_h3_lightx2v，首帧和尾帧均必填，不支持额外参考图、音频或视频。两者均支持 1～15 秒、480p/768p、9:16、16:9、1:1，仅适用于各自相同参数协议的工作流。图片可填 HTTPS 直链；本地图片和音频从画布节点连接，在「设置 → 素材存储」启用 OSS 后上传。首尾帧按图片节点在前、链接在后的顺序使用两张图片。图片支持 PNG/JPEG/WebP，音频支持 MP3/WAV/FLAC/MP4 音频容器，单个本地素材最多 20 MiB，合计 50 MiB。节点 seed 优先于此处默认值，0 有效，两处留空则不传。工作流、素材和 seed 按首次提交快照恢复；任务受理回执丢失时不会重复提交，请到平台核查。结果链接有效期较短，成功后立即下载保存。接口说明：https://autodl.art/docs/comfyui_api/",
+  readme: "使用 ComfyUI 分组的 Token，两个模型共用 Token 和默认 seed，各自配置工作流 ID。图生视频默认 minimax_h3_zm_u08，支持 1～9 张图片、0～3 段音频；首尾帧视频默认 minimax_h3_lightx2v，首帧和尾帧均必填，不支持额外参考图、音频或视频。两者均支持 1～15 秒、480p/768p、9:16、16:9、1:1，仅适用于各自相同参数协议的工作流。图片可填 HTTPS 直链；本地图片和音频从画布节点连接，在「设置 → 素材存储」启用 OSS 后上传。首尾帧按图片节点在前、链接在后的顺序使用两张图片。图片支持 PNG/JPEG/WebP，音频支持 MP3/WAV/FLAC/MP4 音频容器，单个本地素材最多 20 MiB，合计 300 MiB。节点 seed 优先于此处默认值，0 有效，两处留空则不传。工作流、素材和 seed 按首次提交快照恢复；任务受理回执丢失时不会重复提交，请到平台核查。结果链接有效期较短，成功后立即下载保存。接口说明：https://autodl.art/docs/comfyui_api/",
   rules,
   models: [{
     id: "minimaxH3", label: "MiniMax H3 图生视频", type: "video",
