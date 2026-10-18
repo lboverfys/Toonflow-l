@@ -227,7 +227,7 @@ async function generateMediaResult(
       const info = await stat(path);
       if (!info.isFile() || !info.size || info.size > 20 * 1024 * 1024) invalid("OSS 本地参考素材为空或超过单个 20 MiB 的传输限制");
       total += info.size;
-      if (total > 50 * 1024 * 1024) invalid("OSS 本地参考素材合计超过 50 MiB 的传输限制");
+      if (total > 300 * 1024 * 1024) invalid("OSS 本地参考素材合计超过 300 MiB 的传输限制");
     }
   }
   if (!restoring && providerInfo.id === "dola") {

@@ -83,14 +83,14 @@ async function ossRequest(config: OssStorageSettings, method: "PUT" | "HEAD", ke
 export async function uploadOssReferences(inputs: MediaInput[], config: OssStorageSettings, signal?: AbortSignal): Promise<MediaInput[]> {
   const prepared: (Extract<MediaInput, { type: "url" }> | { type: "upload"; bytes: Buffer; mimeType: string; format: string })[] = [];
   let total = 0;
-  // ACT: 先完成同批素材的格式和体积校验，再开始上传；总计 50 MiB 限制同时约束内存占用。
+  // ACT: 先完成同批素材的格式和体积校验，再开始上传；总计 300 MiB 限制同时约束内存占用。
   for (const input of inputs) {
     signal?.throwIfAborted();
     if (input.type === "url") { prepared.push(input); continue; }
     const bytes = input.type === "binary" ? Buffer.from(input.data) : Buffer.from(input.data.replace(/^data:[^;]+;base64,/, ""), "base64");
     if (!bytes.length || bytes.length > 20 * 1024 * 1024) throw new Error("OSS 本地参考素材为空或超过单个 20 MiB 的传输限制，尚未提交视频任务");
     total += bytes.length;
-    if (total > 50 * 1024 * 1024) throw new Error("OSS 本地参考素材合计超过 50 MiB 的传输限制，尚未提交视频任务");
+    if (total > 300 * 1024 * 1024) throw new Error("OSS 本地参考素材合计超过 300 MiB 的传输限制，尚未提交视频任务");
     let mimeType: string;
     let format: string;
     if (input.mimeType.startsWith("audio/")) {

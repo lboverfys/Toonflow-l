@@ -32,7 +32,7 @@
           <el-input-number v-model="form.urlExpiryHours" :min="1" :max="168" :precision="0" controlsPosition="right" aria-label="OSS 链接有效期（小时）" />
         </el-form-item>
       </div>
-      <p class="description">有效期必须覆盖视频排队和生成时间，默认 24 小时。仅上传本次引用的本地图片与音频，保持各类素材的引用顺序，引用数量以所选模型能力为准。图片支持 PNG、JPEG、WebP；音频支持 MP3、WAV、FLAC、MP4。单个本地素材最多 20 MiB，同次上传图片与音频合计最多 50 MiB，素材不压缩。</p>
+      <p class="description">有效期必须覆盖视频排队和生成时间，默认 24 小时。仅上传本次引用的本地图片与音频，保持各类素材的引用顺序，引用数量以所选模型能力为准。图片支持 PNG、JPEG、WebP；音频支持 MP3、WAV、FLAC、MP4。单个本地素材最多 20 MiB，同次上传图片与音频合计最多 300 MiB，素材不压缩。</p>
       <el-alert v-if="error" :title="error" type="error" :closable="false" showIcon role="alert" />
       <div class="actions">
         <el-button type="primary" nativeType="submit" :loading="saving" :disabled="!dirty">保存设置</el-button>
