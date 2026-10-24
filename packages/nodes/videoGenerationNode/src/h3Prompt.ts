@@ -22,6 +22,7 @@ export const h3Sections = [
 ] as const;
 export const h3Languages = [{ value: "Chinese", label: "中文" }, { value: "English", label: "英文" }, { value: "Japanese", label: "日文" }, { value: "Korean", label: "韩文" }];
 const h3TaskNames: Record<string, string> = { "keyframe completion": "首尾帧补全", "reference generation": "参考生成", "video editing": "视频编辑", "video continuation": "视频续写", "audio reuse": "音频复用", "audio reference": "音频参考" };
+const h3VoiceoverBindingPattern = /<Subject\s+\d+>(?:\s*(?:and|和|、)\s*<Subject\s+\d+>)*\s*\(S\d+(?:,\s*S\d+)*\)[^<>\n]*(?:voice[ -]?over|(?:inner|internal) monologue|旁白|内心独白|思维配音|闭口配音)[^<>\n]*<d>/gi;
 const h3TokenPattern = new RegExp(`<d>\\[[^\\]\\n]+\\]\\s*[\\s\\S]*?<\\/d>|<(?:Missing )?(?:Picture|Video|Audio|Subject)\\s+\\d+>|\\[Shot\\s+\\d+\\]|\\(S\\d+(?:,\\s*S\\d+)*\\)|<\\/?(?:scenetrans|cutoff)>|\\[(?:${Object.keys(h3TaskNames).join("|")})(?:\\s+\\+\\s+(?:${Object.keys(h3TaskNames).join("|")}))*\\]|^[ \\t]*(?:${h3Sections.map(item => item[0]).join("|")})[ \\t]*:`, "gim");
 
 export function h3PromptTokens(prompt: string) {
@@ -163,6 +164,9 @@ export function h3PromptIssues(prompt: string, references: H3Reference[], durati
   const defined = new Set([...definitions.matchAll(/<Subject\s+(\d+)>\s+(?:is|是)/g)].map(match => Number(match[1])));
   for (const match of prompt.matchAll(/<Subject\s+(\d+)>/g)) if (!defined.has(Number(match[1]))) issues.push(`${match[0]} 尚未定义`);
   const detail = h3SectionText(prompt, "detailed_description");
+  if ((detail || prompt).match(h3VoiceoverBindingPattern)) issues.push("旁白和内心独白必须使用独立声源，不能绑定人物标签");
+  const boundSpeakers = new Set([...prompt.matchAll(/<Subject\s+\d+>\s*\((S\d+(?:,\s*S\d+)*)\)/g)].flatMap(match => match[1].match(/S\d+/g)!));
+  if ([...(detail || prompt).matchAll(/(?:narrator|inner voice)\s*\((S\d+)\)/gi)].some(match => boundSpeakers.has(match[1]))) issues.push("旁白和内心独白不能复用已绑定人物的声音编号");
   if (detail && (prompt.match(/<d>/g)?.length ?? 0) !== (detail.match(/<d>/g)?.length ?? 0)) issues.push("完整对白须放在详细描述 detailed_description 段内");
   const shots = [...detail.matchAll(/\[Shot\s+(\d+)\]/g)];
   if (shots.some((match, index) => Number(match[1]) !== index + 1)) issues.push("镜头编号须从 Shot 1 开始连续递增");
@@ -209,7 +213,7 @@ export function parseH3Optimization(result: string, original: string, references
   if (!nextShots.length) throw new Error("优化结果缺少分镜，原提示词已保留，请重试");
   if (originalShots.length && originalShots.join(",") !== nextShots.join(",")) throw new Error("优化结果改变了原有镜头序列，已保留原提示词，请重试");
   for (const pattern of [/<Subject\s+\d+>\s*\(S\d+(?:,\s*S\d+)*\)/g, /<scenetrans>|<cutoff>/g]) {
-    const before: string[] = originalDetail.match(pattern) ?? [];
+    const before: string[] = originalDetail.replace(h3VoiceoverBindingPattern, "").match(pattern) ?? [];
     const after: string[] = data.detailed_description.match(pattern) ?? [];
     // ACT: 已有结构按顺序保留；自然语言中的新增对白仍交给原文 Skill 处理。
     let offset = 0;

@@ -78,11 +78,11 @@
       <div v-if="issues.length" class="promptIssues" role="status"><p v-for="issue in issues" :key="issue">{{ issue }}</p></div>
       <el-dialog v-model="dialogueVisible" title="插入对白" width="min(560px, 92vw)" appendToBody :closeOnClickModal="false">
         <el-form labelPosition="top" class="dialogueForm">
-          <el-form-item label="发声主体（多选为齐声）"><el-select v-model="dialogue.subjects" multiple aria-label="对白主体"><el-option v-for="subject in dialogueSubjects" :key="subject.id" :value="subject.id" :label="subject.name" /></el-select></el-form-item>
+          <el-form-item v-if="!independentVoice" label="发声主体（多选为齐声）"><el-select v-model="dialogue.subjects" multiple aria-label="对白主体"><el-option v-for="subject in dialogueSubjects" :key="subject.id" :value="subject.id" :label="subject.name" /></el-select></el-form-item>
           <el-form-item label="发声方式"><el-select v-model="dialogue.delivery" aria-label="对白发声方式"><el-option v-for="item in deliveries" :key="item.value" :value="item.value" :label="item.label" /><el-option v-if="!deliveries.some(item => item.value === dialogue.delivery)" :value="dialogue.delivery" :label="dialogue.delivery" /></el-select></el-form-item>
           <div class="dialogueRow">
             <el-form-item label="语言"><el-select v-model="dialogue.language" aria-label="对白语言"><el-option v-for="item in h3Languages" :key="item.value" :value="item.value" :label="item.label" /></el-select></el-form-item>
-            <el-form-item label="旁白说话人编号"><el-input-number v-model="dialogue.speaker" :min="1" :max="99" :disabled="!!dialogue.subjects.length" aria-label="旁白说话人编号" /></el-form-item>
+            <el-form-item label="独立声音编号"><el-input-number v-model="dialogue.speaker" :min="1" :max="99" :disabled="!independentVoice && !!dialogue.subjects.length" aria-label="独立声音编号" /></el-form-item>
           </div>
           <el-form-item label="台词"><el-input v-model="dialogue.text" type="textarea" :autosize="{ minRows: 3, maxRows: 10 }" aria-label="对白台词" /></el-form-item>
           <div class="dialogueRow"><el-checkbox v-model="dialogue.sceneTransition">台词跨镜衔接</el-checkbox><el-checkbox v-model="dialogue.cutoff">结尾截断</el-checkbox></div>
@@ -161,6 +161,7 @@ const issues = computed(() => h3PromptIssues(finalPrompt.value, props.references
 const dialogueVisible = ref(false);
 let editingDialogue: { start: number; end: number; original: string } | undefined;
 const dialogue = reactive({ subjects: [] as number[], speaker: 1, delivery: "says", language: "Chinese", text: "", sceneTransition: false, cutoff: false });
+const independentVoice = computed(() => /narrator|inner monologue|internal monologue|voiceover/i.test(dialogue.delivery));
 const dialogueSubjects = computed(() => {
   const subjects = new Map(state.value.subjects.map(subject => [subject.id, { id: subject.id, name: subject.name }]));
   for (const token of h3PromptTokens(prompt.value)) {
@@ -320,13 +321,14 @@ function openDialogue(value = "", occurrence = 0, inserting = false, at?: number
     let start = -1;
     for (let index = 0; index <= occurrence; index++) start = prompt.value.indexOf(value, start + 1);
     if (start < 0) return;
-    const prefix = /((?:<Subject\s+\d+>(?:\s*(?:and|和|、)\s*<Subject\s+\d+>)*|a (?:male |female )?narrator))\s*\((S\d+(?:,\s*S\d+)*)\)\s*([^<>\n]+)[,，]\s*$/.exec(prompt.value.slice(0, start));
+    const prefix = /((?:<Subject\s+\d+>(?:\s*(?:and|和|、)\s*<Subject\s+\d+>)*|a (?:male |female )?narrator|an inner voice))\s*\((S\d+(?:,\s*S\d+)*)\)\s*([^<>\n]+)[,，]\s*$/.exec(prompt.value.slice(0, start));
     const end = start + value.length;
     if (prefix) {
       start -= prefix[0].length;
       dialogue.subjects = [...prefix[1].matchAll(/<Subject\s+(\d+)>/g)].map(match => Number(match[1]));
       dialogue.speaker = Number(/S(\d+)/.exec(prefix[2])![1]);
-      dialogue.delivery = prefix[1].includes("narrator") ? prefix[1].slice(2) : prefix[3];
+      dialogue.delivery = prefix[1] === "an inner voice" || /internal monologue|lips remain completely closed/i.test(prefix[3]) ? "inner monologue"
+        : prefix[1].includes("narrator") ? prefix[1].slice(2) : prefix[3];
     }
     editingDialogue = { start, end, original: prompt.value.slice(start, end) };
   }
@@ -343,21 +345,29 @@ function swapReferences(first: H3Reference, second: H3Reference) {
 }
 async function insertMention(item: { value: string; action?: boolean }, offset: number) { if (item.action) { await nextTick(); openDialogue(item.value, 0, true, offset); } }
 async function applyDialogue() {
-  if (dialogue.subjects.some(id => !dialogueSubjects.value.some(subject => subject.id === id))) { ElMessage.error("发声主体已被移除，请重新选择"); return; }
+  const subjectIds = independentVoice.value ? [] : dialogue.subjects;
+  if (subjectIds.some(id => !dialogueSubjects.value.some(subject => subject.id === id))) { ElMessage.error("发声主体已被移除，请重新选择"); return; }
+  if (!subjectIds.length) {
+    const remaining = editingDialogue ? prompt.value.slice(0, editingDialogue.start) + prompt.value.slice(editingDialogue.end) : prompt.value;
+    const bound = [...remaining.matchAll(/<Subject\s+\d+>\s*\((S\d+(?:,\s*S\d+)*)\)/g)].flatMap(match => match[1].match(/\d+/g)!.map(Number));
+    if (bound.includes(dialogue.speaker) || state.value.subjects.some(subject => subject.speaker === dialogue.speaker) || Object.values(state.value.audioBindings).some(binding => binding.speaker === dialogue.speaker)) {
+      ElMessage.error("该声音编号已绑定人物，请为旁白或内心独白选择独立编号"); return;
+    }
+  }
   const line = `<d>[${dialogue.language}] ${dialogue.text}${dialogue.sceneTransition ? "<scenetrans>" : ""}${dialogue.cutoff ? "<cutoff>" : ""}</d>`;
   let text = line;
   {
-    const subjects = dialogue.subjects.map(id => `<Subject ${id}>`).join(" and ");
+    const subjects = subjectIds.map(id => `<Subject ${id}>`).join(" and ");
     const speakers: number[] = [];
-    for (const id of dialogue.subjects) {
+    for (const id of subjectIds) {
       const speaker = speakerFor(id, speakers);
       if (!speakers.includes(speaker)) speakers.push(speaker);
     }
     const speaker = `(${(speakers.length ? speakers : [dialogue.speaker]).map(id => `S${id}`).join(",")})`;
-    const narrator = dialogue.delivery.includes("narrator") ? `a ${dialogue.delivery}` : "a narrator";
-    const delivery = dialogue.delivery === "inner monologue" ? "says in an off-screen voiceover, while their lips remain completely closed"
-      : dialogue.delivery.includes("narrator") || !subjects ? "says in an off-screen voiceover"
-      : dialogue.subjects.length > 1 ? dialogue.delivery.replace(/^says/, "say").replace(/^shouts/, "shout together") : dialogue.delivery;
+    const narrator = dialogue.delivery === "inner monologue" ? "an inner voice" : dialogue.delivery.includes("narrator") ? `a ${dialogue.delivery}` : "a narrator";
+    const delivery = dialogue.delivery === "inner monologue" ? "says in an internal monologue"
+      : !subjects ? "says in an off-screen voiceover"
+      : subjectIds.length > 1 ? dialogue.delivery.replace(/^says/, "say").replace(/^shouts/, "shout together") : dialogue.delivery;
     text = `${subjects || narrator} ${speaker} ${delivery}, ${line}`;
   }
   if (editingDialogue) {
