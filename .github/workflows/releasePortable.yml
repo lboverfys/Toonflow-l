@@ -234,7 +234,8 @@ jobs:
             if (!$archiveName -or !$archiveName.StartsWith($prefix) -or $archiveName -notmatch '^[a-zA-Z0-9._-]+\.tar\.zst$') { throw 'Mac 更新包名称无效' }
             $macArchive = Get-Item -LiteralPath (Join-Path $env:artifactDirectory $archiveName)
             if (!$macArchive.Length) { throw 'Mac 更新包为空' }
-            if ($mac.artifact -and ($mac.schemaVersion -ne 1 -or $mac.identifier -ne 'local.toonflow.desktop' -or $mac.channel -ne 'stable' -or $macArchive.Length -ne $mac.artifact.size -or (Get-FileHash -LiteralPath $macArchive.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne $mac.artifact.sha256)) { throw 'Mac 更新包身份、长度或 SHA-256 不匹配' }
+            # ACT: 原生 Mac SDK 清单只记录归档名；归档身份在 Mac 构建中核对，SHA-256 在上传后与 GitHub digest 核对。
+            if ($mac.artifact -and ($mac.schemaVersion -ne 1 -or $mac.identifier -ne 'local.toonflow.desktop' -or $mac.channel -ne 'stable')) { throw 'Mac 更新包应用标识或通道不匹配' }
             $installers = @($files | Where-Object { $_.Name.EndsWith('.dmg') -and $_.Name.Contains($arch) -and $_.Length -gt 0 })
             if ($installers.Count -ne 1) { throw '每种 Mac 架构必须有一个 DMG 安装包' }
             $names += @($manifestName, $archiveName, $installers[0].Name)
