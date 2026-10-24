@@ -7,7 +7,7 @@ on:
         description: 构建平台
         type: choice
         default: windowsX64
-        options: [windowsX64, macArm64, macX64, androidArm64, all]
+        options: [windowsX64, macArm64, macX64, mac, androidArm64, all]
       ref:
         description: 代码分支、标签或提交；签名构建要求与所选工作流版本为同一提交
         type: string
@@ -18,6 +18,10 @@ on:
         description: 基于上一版本生成增量更新，尚无基线时生成首版完整包
         type: boolean
         default: false
+      macCodesign:
+        description: Apple Silicon 使用 Developer ID 签名和 Apple 公证（需要仓库证书）
+        type: boolean
+        default: true
       androidRelease:
         description: Android 发布模式（关闭调试，使用专用签名与证书轮换）
         type: boolean
@@ -36,6 +40,9 @@ on:
       generatePatch:
         type: boolean
         default: false
+      macCodesign:
+        type: boolean
+        default: true
       androidRelease:
         type: boolean
         default: false
@@ -114,7 +121,7 @@ jobs:
             { target: "androidArm64", os: "windows-2025", platform: "win32", arch: "x64", releaseFolder: "build/mobile/releases" },
           ];
           const selected = process.env.buildTarget || "all";
-          const include = targets.filter(item => selected === "all" || item.target === selected);
+          const include = targets.filter(item => selected === "all" || item.target === selected || selected === "mac" && item.platform === "darwin");
           if (!include.length) throw new Error(`不支持的构建平台：${selected}`);
           const refVersion = /^v\d+\.\d+\.\d+$/.test(process.env.buildRef ?? "") ? process.env.buildRef : "";
           const version = (process.env.buildVersion?.trim() || refVersion || config.app.version).replace(/^v/, "");
@@ -125,7 +132,6 @@ jobs:
   build:
     name: 构建 ${{ matrix.target }}
     needs: prepare
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -134,7 +140,7 @@ jobs:
     env:
       appVersion: ${{ needs.prepare.outputs.version }}
       releaseMode: ${{ inputs.generatePatch && '--auto' || '--initial' }}
-      macCodesign: ${{ matrix.target == 'macArm64' && '1' || '0' }}
+      macCodesign: ${{ matrix.target == 'macArm64' && inputs.macCodesign && '1' || '0' }}
       BUN_INSTALL_CACHE_DIR: ${{ matrix.platform == 'win32' && 'D:/toonflowBuild/cache/bun' || '/tmp/toonflowBuild/cache/bun' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -250,7 +256,7 @@ jobs:
         run: |
           bun -e 'import { rm } from "@toonflow/file"; import { join } from "node:path"; await Promise.all(["toonflowAndroidRelease.keystore", "toonflowAndroidLineage.bin"].map(name => rm(join(process.env.RUNNER_TEMP, name), { force: true })));'
       - name: 准备 ARM 签名与公证凭据
-        if: matrix.target == 'macArm64'
+        if: matrix.target == 'macArm64' && inputs.macCodesign
         id: signing
         env:
           certificateBase64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
@@ -301,16 +307,16 @@ jobs:
           fi
           printf 'identity=%s\n' "$identity" >> "$GITHUB_OUTPUT"
           printf 'notarizationKeyPath=%s\n' "$notarizationKeyPath" >> "$GITHUB_OUTPUT"
-      - name: 构建 macOS 安装包及更新文件（ARM 自动公证）
+      - name: 构建 macOS 安装包及更新文件
         if: runner.os == 'macOS'
         env:
           ELECTROBUN_DEVELOPER_ID: ${{ steps.signing.outputs.identity }}
-          ELECTROBUN_APPLEAPIKEY: ${{ matrix.target == 'macArm64' && secrets.MACOS_NOTARIZATION_KEY_ID || '' }}
-          ELECTROBUN_APPLEAPIISSUER: ${{ matrix.target == 'macArm64' && secrets.MACOS_NOTARIZATION_ISSUER_ID || '' }}
+          ELECTROBUN_APPLEAPIKEY: ${{ matrix.target == 'macArm64' && inputs.macCodesign && secrets.MACOS_NOTARIZATION_KEY_ID || '' }}
+          ELECTROBUN_APPLEAPIISSUER: ${{ matrix.target == 'macArm64' && inputs.macCodesign && secrets.MACOS_NOTARIZATION_ISSUER_ID || '' }}
           ELECTROBUN_APPLEAPIKEYPATH: ${{ steps.signing.outputs.notarizationKeyPath }}
         run: bun run release:desktop "$appVersion" "$releaseMode"
       - name: 清理 ARM 签名与公证凭据
-        if: always() && matrix.target == 'macArm64'
+        if: always() && matrix.target == 'macArm64' && inputs.macCodesign
         run: |
           rm -f "$RUNNER_TEMP/toonflowSigning.p12" "$RUNNER_TEMP/toonflowNotarization.p8"
           keychainPath="$RUNNER_TEMP/toonflowSigning.keychain-db"
@@ -347,6 +353,17 @@ jobs:
           test -s "$app/Contents/Resources/AppIcon.icns"
           test -s "$app/Contents/Resources/app/bun/index.js"
           test -x "$app/Contents/MacOS/bun"
+          if [[ "${{ matrix.arch }}" == 'arm64' ]]; then
+            test -x "$app/Contents/Resources/uninstall"
+          fi
+          bun -e '
+          import { file } from "@toonflow/file/bun";
+          import { join } from "node:path";
+          const local = await file(join(process.env.inspectionDirectory, "toonflow.app/Contents/Resources/version.json")).json();
+          const manifest = await file(join(process.env.releaseDirectory, `stable-macos-${process.arch}-update.json`)).json();
+          const baseUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/releases/latest/download`;
+          if (local.version !== process.env.appVersion || local.version !== manifest.version || local.hash !== manifest.hash || local.identifier !== "local.toonflow.desktop" || local.channel !== "stable" || local.baseUrl !== baseUrl) throw new Error("Mac 程序与更新清单版本、构建标识或更新源不一致");
+          '
           verifyMacArtifact "$app"
           mountDirectory="$inspectionDirectory/dmg"
           mkdir -p "$mountDirectory"

@@ -234,15 +234,17 @@ Toonflow 是面向短剧、漫剧与短视频制作的开源 AI 创作平台，�
 
 | 操作系统 | GitHub                                                       |
 | -------- | ------------------------------------------------------------ |
-| Windows  | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) |
-| macOS    | [Release](https://github.com/HBAI-Ltd/Toonflow-app/releases) |
+| Windows  | [便携版下载](https://github.com/lboverfys/Toonflow-l/releases/latest) |
+| macOS（Apple Silicon / Intel） | [DMG 安装包下载](https://github.com/lboverfys/Toonflow-l/releases/latest) |
 | Android ARM64 | [APK 下载](https://github.com/HBAI-Ltd/Toonflow-app/releases/latest) |
 
 Android 版仅支持 ARM64 设备，下载发布页中的 `toonflow-版本号-android-arm64.apk` 安装。手机内置本地 Bun 后端，可独立运行；也可从首页「设备互联」扫码或手动连接已开启共享的电脑或远程后端（支持局域网与公网）。
 
 Windows 安装器会自动检测并安装 WebView2；如果安装后打开闪退，请前往 [WebView2 下载页面](https://developer.microsoft.com/microsoft-edge/webview2/) 手动安装运行时。
 
-macOS（Apple Silicon）将 Toonflow 拖入“应用程序”后直接打开即可，无需预先执行终端命令。若遇到系统安全提示，请按以下顺序处理。
+macOS 的 M 系列芯片选择 `arm64.dmg`，Intel 芯片选择 `x64.dmg`（以附件名称中的架构为准）。将 `toonflow.app` 复制到可写的应用目录（如 `~/Applications`）后打开，不要直接在 DMG 内运行。当前定制版未进行 Developer ID 签名或 Apple 公证，首次打开可能需要按下方说明允许运行。
+
+Windows 便携版和两种 Mac 均支持在「设置 → 关于」选择「GitHub（Toonflow-l）」，依次点击「检查更新 → 下载更新 → 重启并更新」。Mac 的设置保存在 `.app` 同级的 `data/` 中，更新保留设置和工作区；发布页的 `.json` 与 `.tar.zst` 附件由更新器自动使用。
 
 <details>
 <summary><strong>macOS 无法安装或打开时的处理方法</strong></summary>

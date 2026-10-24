@@ -6,7 +6,7 @@ import type { DesktopRuntime, desktopUpdateAttempt, updateSnapshot } from "@/typ
 
 const updateBaseUrls = {
   official: "https://api.toonflow.net/web/version/desktopUpdates",
-  github: "https://github.com/HBAI-Ltd/Toonflow-app/releases/latest/download",
+  github: "https://github.com/lboverfys/Toonflow-l/releases/latest/download",
 };
 const updateRuntimeId = crypto.randomUUID();
 let cancelledUpdateAttempt: string | undefined;
@@ -59,7 +59,7 @@ function getInstallFailure(local: Awaited<ReturnType<DesktopRuntime["updater"]["
     currentVersion: local.version,
     currentHash: local.hash,
     message,
-    downloadUrl: process.env.TOONFLOW_PORTABLE === "1" ? "https://github.com/lboverfys/Toonflow-l/releases/latest" : "https://github.com/HBAI-Ltd/Toonflow-app/releases/latest",
+    downloadUrl: "https://github.com/lboverfys/Toonflow-l/releases/latest",
   };
 }
 
@@ -84,9 +84,8 @@ export function isValidUpdateUrl(value: unknown): value is string {
 function getUpdateBaseUrl(): string {
   const settings = conf.get("settings", {});
   if (settings.desktopUpdateSource === "custom" && isValidUpdateUrl(settings.desktopUpdateCustomUrl)) return settings.desktopUpdateCustomUrl;
-  if (process.env.TOONFLOW_PORTABLE === "1") return "https://github.com/lboverfys/Toonflow-l/releases/latest/download";
-  if (settings.desktopUpdateSource === "github") return updateBaseUrls.github;
-  return updateBaseUrls.official;
+  if (process.env.TOONFLOW_PORTABLE === "1") return updateBaseUrls.github;
+  return settings.desktopUpdateSource === "official" ? updateBaseUrls.official : updateBaseUrls.github;
 }
 
 async function withUpdateSource<T>(updater: DesktopRuntime["updater"], updateBaseUrl: string, run: () => Promise<T>) {

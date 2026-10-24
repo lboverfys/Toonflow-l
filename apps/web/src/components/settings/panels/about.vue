@@ -30,7 +30,7 @@
                 <icon-world v-else :size="14" aria-hidden="true" />
               </template>
               <el-option v-if="!snapshot?.portable" label="官方源" value="official" />
-              <el-option :label="snapshot?.portable ? 'GitHub（Toonflow-l）' : 'GitHub'" value="github" />
+              <el-option label="GitHub（Toonflow-l）" value="github" />
               <el-option v-if="customUpdateUrl" label="自定义源" value="custom" />
             </el-select>
             <el-badge isDot :hidden="!hasDesktopUpdate">
@@ -55,7 +55,7 @@
     </el-card>
 
     <el-card class="infoCard repositoryCard" shadow="never">
-      <a class="repositoryLink" :href="repositoryUrl" target="_blank" rel="noopener noreferrer" aria-label="GitHub 仓库：HBAI-Ltd/Toonflow-app">
+      <a class="repositoryLink" :href="repositoryUrl" target="_blank" rel="noopener noreferrer" aria-label="GitHub 仓库：lboverfys/Toonflow-l">
         <icon-brand-github class="repositoryIcon" :size="22" aria-hidden="true" />
         <div class="repositoryInfo">
           <span class="repositoryTitle">GitHub 仓库</span>
@@ -197,7 +197,7 @@ import {
   runDesktopUpdate,
 } from "@/stores/desktopUpdate";
 
-const repositoryUrl = "https://github.com/HBAI-Ltd/Toonflow-app";
+const repositoryUrl = "https://github.com/lboverfys/Toonflow-l";
 const communityUrl = "https://work.weixin.qq.com/u/vc36adcc89845edcbe?v=5.0.3.63936&bb=85b8d228e8";
 const isDesktop = new URLSearchParams(window.location.search).get("desktop") === "1";
 const clientBuild = ref<{ version: string; channel: string }>();
