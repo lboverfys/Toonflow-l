@@ -166,7 +166,7 @@ export function h3PromptIssues(prompt: string, references: H3Reference[], durati
   const detail = h3SectionText(prompt, "detailed_description");
   if ((detail || prompt).match(h3VoiceoverBindingPattern)) issues.push("旁白和内心独白必须使用独立声源，不能绑定人物标签");
   const boundSpeakers = new Set([...prompt.matchAll(/<Subject\s+\d+>\s*\((S\d+(?:,\s*S\d+)*)\)/g)].flatMap(match => match[1].match(/S\d+/g)!));
-  if ([...(detail || prompt).matchAll(/(?:narrator|inner voice)\s*\((S\d+)\)/gi)].some(match => boundSpeakers.has(match[1]))) issues.push("旁白和内心独白不能复用已绑定人物的声音编号");
+  if ([...(detail || prompt).matchAll(/(?:narrator|inner (?:male |female )?voice)\s*\((S\d+)\)/gi)].some(match => boundSpeakers.has(match[1]))) issues.push("旁白和内心独白不能复用已绑定人物的声音编号");
   if (detail && (prompt.match(/<d>/g)?.length ?? 0) !== (detail.match(/<d>/g)?.length ?? 0)) issues.push("完整对白须放在详细描述 detailed_description 段内");
   const shots = [...detail.matchAll(/\[Shot\s+(\d+)\]/g)];
   if (shots.some((match, index) => Number(match[1]) !== index + 1)) issues.push("镜头编号须从 Shot 1 开始连续递增");

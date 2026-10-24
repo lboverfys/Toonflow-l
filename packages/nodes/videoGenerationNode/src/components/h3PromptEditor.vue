@@ -321,13 +321,13 @@ function openDialogue(value = "", occurrence = 0, inserting = false, at?: number
     let start = -1;
     for (let index = 0; index <= occurrence; index++) start = prompt.value.indexOf(value, start + 1);
     if (start < 0) return;
-    const prefix = /((?:<Subject\s+\d+>(?:\s*(?:and|和|、)\s*<Subject\s+\d+>)*|a (?:male |female )?narrator|an inner voice))\s*\((S\d+(?:,\s*S\d+)*)\)\s*([^<>\n]+)[,，]\s*$/.exec(prompt.value.slice(0, start));
+    const prefix = /((?:<Subject\s+\d+>(?:\s*(?:and|和|、)\s*<Subject\s+\d+>)*|a (?:[a-z]+[ -])*narrator|an inner (?:male |female )?voice))\s*\((S\d+(?:,\s*S\d+)*)\)\s*([^<>\n]+)[,，]\s*$/.exec(prompt.value.slice(0, start));
     const end = start + value.length;
     if (prefix) {
       start -= prefix[0].length;
       dialogue.subjects = [...prefix[1].matchAll(/<Subject\s+(\d+)>/g)].map(match => Number(match[1]));
       dialogue.speaker = Number(/S(\d+)/.exec(prefix[2])![1]);
-      dialogue.delivery = prefix[1] === "an inner voice" || /internal monologue|lips remain completely closed/i.test(prefix[3]) ? "inner monologue"
+      dialogue.delivery = prefix[1].startsWith("an inner ") || /internal monologue|lips remain completely closed/i.test(prefix[3]) ? "inner monologue"
         : prefix[1].includes("narrator") ? prefix[1].slice(2) : prefix[3];
     }
     editingDialogue = { start, end, original: prompt.value.slice(start, end) };
