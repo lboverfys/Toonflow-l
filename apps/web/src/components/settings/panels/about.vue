@@ -20,7 +20,7 @@
           </div>
         </div>
         <div class="updateActions">
-          <el-button v-if="isMobile" tag="a" size="small" type="primary" plain :href="`${repositoryUrl}/releases/latest`" target="_blank" rel="noopener noreferrer">
+          <el-button v-if="isMobile" tag="a" size="small" type="primary" plain href="https://github.com/HBAI-Ltd/Toonflow-app/releases/latest" target="_blank" rel="noopener noreferrer">
             前往 GitHub 更新
           </el-button>
           <template v-else>
