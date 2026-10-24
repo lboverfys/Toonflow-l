@@ -245,7 +245,8 @@ let resumeWhenReady = false;
 const defaultRatios = ["16:9", "9:16", "1:1", "4:3", "3:4"];
 const selectedModel = computed(() => models.value.find((item) => JSON.stringify([item.providerId, item.modelId]) === data.value.model));
 const isZealmanU06 = computed(() => selectedModel.value?.providerId === "zealmanH3" && selectedModel.value.modelId === "u06");
-const isH3Prompt = computed(() => selectedModel.value?.providerId === "zealmanH3" || selectedModel.value?.providerId === "autoDl" && selectedModel.value.modelId === "minimaxH3");
+const isH3Prompt = computed(() => ["zealmanH3", "yixianVideo"].includes(selectedModel.value?.providerId ?? "") || selectedModel.value?.providerId === "autoDl" && selectedModel.value.modelId === "minimaxH3");
+const h3VideoReferenceLimit = computed(() => Math.max(0, ...(selectedModel.value?.mode ?? []).filter(Array.isArray).flat().filter(item => item.startsWith("videoReference:")).map(item => Number(item.split(":")[1]))));
 const h3ReferenceList = computed(() => h3References([...refList.value, ...referenceUrls(selectedModel.value).map(url => ({ source: `url:${url}`, sourceHandle: "out", dataType: "IMAGE" as const, value: { url, mimeType: "image/jpeg" } }))], data.value.h3Prompt, isZealmanU06.value ? zealmanOptions.value?.voices ?? [] : undefined, referenceMentions.value));
 watch(() => isH3Prompt.value ? h3ReferenceList.value.map(item => ({ ...item })) : undefined, (references, previous) => {
   if (!references) return;
@@ -406,7 +407,7 @@ function clearReferences() {
   data.value.referenceImageUrlsText = "";
 }
 function validateReferenceFiles(uploads: { type: string; size: number }[], replacement?: H3Reference) {
-  const limits = { image: 9, video: isZealmanU06.value ? 3 : 0, audio: selectedModel.value?.modelId === "u32" ? 0 : 3 };
+  const limits = { image: 9, video: h3VideoReferenceLimit.value, audio: selectedModel.value?.modelId === "u32" ? 0 : 3 };
   const counts = { ...mediaCounts.value, image: mediaCounts.value.image + referenceUrls(selectedModel.value).length };
   if (replacement) counts[replacement.category === "picture" ? "image" : replacement.category as "video" | "audio"]--;
   for (const file of uploads) {
@@ -446,7 +447,7 @@ function uploadReferences(replacement?: H3Reference) {
   const input = document.createElement("input");
   input.type = "file";
   input.multiple = !replacement;
-  const limits = { image: 9, video: isZealmanU06.value ? 3 : 0, audio: selectedModel.value?.modelId === "u32" ? 0 : 3 };
+  const limits = { image: 9, video: h3VideoReferenceLimit.value, audio: selectedModel.value?.modelId === "u32" ? 0 : 3 };
   input.accept = replacement ? `${replacement.category === "picture" ? "image" : replacement.category}/*` : Object.entries(limits).filter(([, count]) => count).map(([kind]) => `${kind}/*`).join(",");
   const directory = files.getWorkspaceDirectory();
   const model = data.value.model;

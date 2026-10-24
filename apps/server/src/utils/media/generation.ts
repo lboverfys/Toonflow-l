@@ -276,6 +276,21 @@ async function generateMediaResult(
       if (total > 32 * 1024 * 1024) invalid("参考图合计超过当前 32 MiB 传输预算");
     }
   }
+  if (!restoring && providerInfo.id === "yixianVideo") {
+    if ((request.images?.length ?? 0) > 9 || (request.audios?.length ?? 0) > 3 || (request.videos?.length ?? 0) > (model.id === "yixian-h3-u06" ? 3 : 0)) invalid("逸仙 H3 最多支持 9 张图片、3 段音频，只有 U06 支持最多 3 段视频");
+    if (request.audios?.length && !request.images?.length && !request.videos?.length) invalid("使用音频参考时必须同时提供图片或视频参考");
+    let total = 0;
+    // ACT: 宿主通过 Base64 传递素材，读取前限制合计 100 MiB；更大素材需改为流式上传。
+    for (const [type, items, limit] of [["图片", request.images, 20], ["音频", request.audios, 64], ["视频", request.videos, 100]] as const) {
+      for (const input of items ?? []) {
+        const { path } = await resolveWorkspacePath(directory, input.path);
+        const info = await stat(path);
+        if (!info.isFile() || !info.size || info.size > limit * 1024 * 1024) invalid(`逸仙参考${type}为空或超过 ${limit} MiB`);
+        total += info.size;
+        if (total > maxMediaSize) invalid("逸仙本地参考素材合计不能超过 100 MiB");
+      }
+    }
+  }
   if (!restoring && providerInfo.id === "zealmanH3") {
     if ((request.images?.length ?? 0) > 9 || (request.audios?.length ?? 0) > (model.id === "u32" ? 0 : 3)) invalid("ZEALMAN-H3 最多支持 9 张图片、3 段音频，U32 不支持音频参考");
     if ((request.videos?.length ?? 0) > (model.id === "u06" ? 3 : 0) || request.firstFrame || request.lastFrame) invalid("ZEALMAN-H3 仅 U06 支持最多 3 段参考视频，预置工作流不支持首尾帧模式");

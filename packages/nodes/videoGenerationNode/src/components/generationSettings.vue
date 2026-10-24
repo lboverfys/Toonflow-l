@@ -4,7 +4,7 @@
       <el-button class="settingsButton" text size="small" :disabled="disabled" aria-label="视频生成设置">
         <span class="ratioShape" :style="ratioStyle(ratio)" aria-hidden="true" />
         <span class="settingValue"><small>比例</small>{{ ratio || '未选择' }}</span>
-        <span class="settingValue"><small>画质</small>{{ resolution || '未选择' }}</span>
+        <span v-if="resolutions.length" class="settingValue"><small>画质</small>{{ resolution || '未选择' }}</span>
         <span v-if="duration" class="settingValue"><small>时长</small>{{ duration }} 秒</span>
         <icon-chevron-up :size="14" aria-hidden="true" />
       </el-button>
