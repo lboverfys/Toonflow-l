@@ -80,6 +80,7 @@
           <el-input v-model="data.referenceImageUrlsText" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :disabled="generating || deleting || pendingTask || taskChecking || promptOptimizing || uploadingReferences" placeholder="https://example.com/reference.png" aria-label="参考图片 HTTPS 直链" />
         </template>
         <div v-if="selectedModel?.referenceAudioInput === 'url'" class="referenceHint">连接音频节点作为参考音频，按上方音频引用顺序使用；本地音频会通过「设置 → 素材存储」中的阿里云 OSS 自动上传。</div>
+        <p v-if="data.model && !selectedModel && !modelsLoading" role="alert">模型不可用，请选择其他模型</p>
         <div class="promptFooter">
           <el-select
             v-model="data.model"
@@ -161,6 +162,7 @@
 </template>
 
 <script setup lang="ts">
+import { validateReferenceSelection } from "@toonflow/node-shared/mediaLimits";
 import { computed, nextTick, onMounted, onScopeDispose, ref, watch, watchEffect } from "vue";
 import { ElButton, ElCard, ElSelect, ElOption, ElOptionGroup, ElLoading, ElDropdown, ElDropdownMenu, ElDropdownItem, ElInput } from "element-plus";
 import { IconCameraAi, IconSparkles, IconArrowUp, IconPlayerStop, IconTransfer, IconMusic, IconLayersSubtract, IconScissors, IconPhotoScan, IconPlayerSkipBack, IconPlayerSkipForward } from "@tabler/icons-vue";
@@ -245,7 +247,7 @@ let resumeWhenReady = false;
 const defaultRatios = ["16:9", "9:16", "1:1", "4:3", "3:4"];
 const selectedModel = computed(() => models.value.find((item) => JSON.stringify([item.providerId, item.modelId]) === data.value.model));
 const isZealmanU06 = computed(() => selectedModel.value?.providerId === "zealmanH3" && selectedModel.value.modelId === "u06");
-const isH3Prompt = computed(() => ["zealmanH3", "yixianVideo"].includes(selectedModel.value?.providerId ?? "") || selectedModel.value?.providerId === "autoDl" && selectedModel.value.modelId === "minimaxH3");
+const isH3Prompt = computed(() => selectedModel.value?.providerId === "yixianVideo" && selectedModel.value.modelId.startsWith("yixian-h3-"));
 const h3VideoReferenceLimit = computed(() => Math.max(0, ...(selectedModel.value?.mode ?? []).filter(Array.isArray).flat().filter(item => item.startsWith("videoReference:")).map(item => Number(item.split(":")[1]))));
 const h3ReferenceList = computed(() => h3References([...refList.value, ...referenceUrls(selectedModel.value).map(url => ({ source: `url:${url}`, sourceHandle: "out", dataType: "IMAGE" as const, value: { url, mimeType: "image/jpeg" } }))], data.value.h3Prompt, isZealmanU06.value ? zealmanOptions.value?.voices ?? [] : undefined, referenceMentions.value));
 watch(() => isH3Prompt.value ? h3ReferenceList.value.map(item => ({ ...item })) : undefined, (references, previous) => {
@@ -406,21 +408,22 @@ function clearReferences() {
   data.value.h3Prompt.audioBindings = {};
   data.value.referenceImageUrlsText = "";
 }
-function validateReferenceFiles(uploads: { type: string; size: number }[], replacement?: H3Reference) {
-  const limits = { image: 9, video: h3VideoReferenceLimit.value, audio: selectedModel.value?.modelId === "u32" ? 0 : 3 };
+async function validateReferenceFiles(uploads: { type: string; size: number }[], replacement?: H3Reference) {
+  const limits = Object.fromEntries(["image", "video", "audio"].map(type => [type, Math.max(0, ...(selectedModel.value?.mode ?? []).filter(Array.isArray).flat().filter(item => item.startsWith(type + "Reference:")).map(item => Number(item.split(":")[1])))])) as Record<"image" | "video" | "audio", number>;
   const counts = { ...mediaCounts.value, image: mediaCounts.value.image + referenceUrls(selectedModel.value).length };
   if (replacement) counts[replacement.category === "picture" ? "image" : replacement.category as "video" | "audio"]--;
   for (const file of uploads) {
     const kind = file.type.split("/")[0];
     if (!["image", "video", "audio"].includes(kind) || !limits[kind as keyof typeof limits] || replacement && kind !== (replacement.category === "picture" ? "image" : replacement.category)) throw new Error("当前模型或替换位置不支持此素材类型");
     if (++counts[kind as keyof typeof counts] > limits[kind as keyof typeof limits]) throw new Error("参考素材超过当前模型的数量上限");
-    if (file.size > 100 * 1024 * 1024) throw new Error("单个参考素材不能超过 100 MiB");
   }
+  const references = refList.value.filter(item => typeof item.dataType === "string" && ["IMAGE", "VIDEO", "AUDIO"].includes(item.dataType) && (!replacement?.input || item.source !== replacement.input.source || item.sourceHandle !== replacement.input.sourceHandle)).map(item => ({ path: (item.value as { url: string }).url, mimeType: (item.value as { mimeType: string }).mimeType, mediaType: String(item.dataType).toLowerCase() }));
+  await validateReferenceSelection(files.getWorkspaceDirectory(), references, uploads);
 }
 
 async function importPanelReferences(source: "input" | "output", items: ZealmanAsset[], signal: AbortSignal) {
   if (uploadingReferences.value || promptOptimizing.value || deleting.value) throw new Error("节点正在处理，请稍后导入素材");
-  validateReferenceFiles(items.map(item => ({ type: item.mimeType, size: item.size })));
+  await validateReferenceFiles(items.map(item => ({ type: item.mimeType, size: item.size })));
   const directory = files.getWorkspaceDirectory();
   uploadingReferences.value = true;
   try {
@@ -433,7 +436,7 @@ async function importPanelReferences(source: "input" | "output", items: ZealmanA
       if (disposed || directory !== files.getWorkspaceDirectory()) throw new Error("工作区已切换，导入已停止");
       const mimeType = blob.type.split(";")[0];
       const file = new File([blob], item.name, { type: mimeType });
-      validateReferenceFiles([file]);
+      await validateReferenceFiles([file]);
       const path = await files.uploadFile(file);
       signal.throwIfAborted();
       if (disposed || directory !== files.getWorkspaceDirectory()) throw new Error("工作区已切换，导入已停止");
@@ -447,7 +450,7 @@ function uploadReferences(replacement?: H3Reference) {
   const input = document.createElement("input");
   input.type = "file";
   input.multiple = !replacement;
-  const limits = { image: 9, video: h3VideoReferenceLimit.value, audio: selectedModel.value?.modelId === "u32" ? 0 : 3 };
+  const limits = Object.fromEntries(["image", "video", "audio"].map(type => [type, Math.max(0, ...(selectedModel.value?.mode ?? []).filter(Array.isArray).flat().filter(item => item.startsWith(type + "Reference:")).map(item => Number(item.split(":")[1])))])) as Record<"image" | "video" | "audio", number>;
   input.accept = replacement ? `${replacement.category === "picture" ? "image" : replacement.category}/*` : Object.entries(limits).filter(([, count]) => count).map(([kind]) => `${kind}/*`).join(",");
   const directory = files.getWorkspaceDirectory();
   const model = data.value.model;
@@ -455,7 +458,7 @@ function uploadReferences(replacement?: H3Reference) {
     uploadingReferences.value = true;
     try {
       const uploads = Array.from(input.files ?? []);
-      validateReferenceFiles(uploads, replacement);
+      await validateReferenceFiles(uploads, replacement);
       for (const file of uploads) {
         if (disposed || directory !== files.getWorkspaceDirectory() || model !== data.value.model) throw new Error("工作区或模型已切换，上传已停止");
         const path = await files.uploadFile(file);
