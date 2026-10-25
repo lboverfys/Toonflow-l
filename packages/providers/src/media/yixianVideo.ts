@@ -6,9 +6,11 @@ const rules = [
 const ratios = ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"];
 const mediaLimits = { image: 20 * 1024 * 1024, audio: 64 * 1024 * 1024, video: 100 * 1024 * 1024 };
 const extensions: Record<string, string> = {
-  "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif",
-  "audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/flac": "flac", "audio/ogg": "ogg",
-  "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov",
+  "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/bmp": "bmp", "image/tiff": "tiff",
+  "audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/mp4": "m4a", "audio/x-m4a": "m4a",
+  "audio/aac": "aac", "audio/x-aac": "aac", "audio/flac": "flac", "audio/x-flac": "flac", "audio/ogg": "ogg", "audio/opus": "opus",
+  "audio/aiff": "aiff", "audio/x-aiff": "aiff", "audio/amr": "amr",
+  "video/mp4": "mp4", "video/x-m4v": "m4v", "video/webm": "webm", "video/quicktime": "mov", "video/x-msvideo": "avi", "video/avi": "avi", "video/x-matroska": "mkv", "video/mpeg": "mpeg", "video/ogg": "ogv",
 };
 
 type YixianResponse = {
@@ -135,7 +137,7 @@ async function wait(context: ProviderContext, milliseconds: number) {
 export default {
   id: "yixianVideo",
   label: "逸仙视频",
-  version: "1.0.0",
+  version: "1.0.1",
   apiUrl: "https://yixian.lol",
   readme: "逸仙 API 的 MINIMAX-H3 极速版 U08 / 质量版 U06，支持 1～15 秒，默认 10 秒。U08 支持最多 9 张参考图片、3 段参考音频；U06 额外支持最多 3 段参考视频及 seed（0 有效）。音频必须搭配图片或视频。连接画布素材节点或在 H3 编辑器上传，图片上限 20 MiB、音频 64 MiB、视频及全部素材合计 100 MiB。素材直接上传逸仙，无需 OSS；提示词使用 <Picture 1>、<Audio 1>、<Video 1> 引用。画质与高级参数使用服务端配置。中断后恢复原任务，不会重复提交；若提交回执丢失且无任务编号，请到逸仙视频专栏核查。",
   rules,
