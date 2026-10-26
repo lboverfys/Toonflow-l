@@ -58,19 +58,21 @@ function responseMessage(context: ProviderContext, response: Response, value: Yi
 
 async function createSnapshot(context: ProviderContext, base: string, headers: Record<string, string>, request: VideoRequest): Promise<YixianSnapshot> {
   const isU06 = request.model === "yixian-h3-u06";
-  if (!isU06 && request.model !== "yixian-h3-u08") throw new Error("请选择逸仙 H3 极速版 U08 或质量版 U06");
+  const isU00n = request.model === "yixian-h3-u00n";
+  if (!isU06 && !isU00n && request.model !== "yixian-h3-u08") throw new Error("请选择逸仙 H3 极速版 U08、质量版 U06 或升级版 U00N");
   if (!request.prompt.trim() || request.prompt.length > 20000) throw new Error("逸仙提示词须为 1～20000 个字符，且不能全为空白");
   const images = request.images ?? [];
   const videos = request.videos ?? [];
   const audios = request.audios ?? [];
-  if (images.length > 9 || audios.length > 3 || videos.length > (isU06 ? 3 : 0)) throw new Error("逸仙 H3 最多支持 9 张图片、3 段音频，只有 U06 支持最多 3 段视频");
+  const maxVideos = isU06 ? 3 : isU00n ? 1 : 0;
+  if (images.length > 9 || audios.length > 3 || videos.length > maxVideos) throw new Error(`当前逸仙 H3 模型最多支持 9 张图片、3 段音频和 ${maxVideos} 段视频`);
   if (audios.length && !images.length && !videos.length) throw new Error("使用音频参考时必须同时提供图片或视频参考");
-  if (request.firstFrame || request.lastFrame) throw new Error("逸仙 H3 U08/U06 不支持首尾帧模式，请使用混合参考模式");
+  if (request.firstFrame || request.lastFrame) throw new Error("逸仙 H3 不支持首尾帧模式，请使用混合参考模式");
   if (request.mode && request.mode !== "text" && !Array.isArray(request.mode)) throw new Error("逸仙 H3 仅支持文生视频或混合参考模式");
   if (request.mode === "text" && images.length + videos.length + audios.length) throw new Error("文生视频模式不能携带参考素材，请选择混合参考模式");
   if (request.generateAudio !== undefined || request.watermark !== undefined || request.resolution || Object.keys(request.other ?? {}).length) throw new Error("逸仙 H3 的画质、声音和其他高级参数由服务端配置，请使用当前模型提供的选项");
   const duration = request.duration ?? 10;
-  const ratio = request.ratio ?? "16:9";
+  const ratio = request.ratio ?? (isU00n ? "9:16" : "16:9");
   if (!Number.isInteger(duration) || duration < 1 || duration > 15) throw new Error("逸仙 H3 时长须为 1～15 秒的整数");
   if (!ratios.includes(ratio)) throw new Error("逸仙 H3 不支持此画面比例");
   if (request.seed !== undefined && (!isU06 || !Number.isSafeInteger(request.seed) || request.seed < 0 || request.seed > 2 ** 50)) throw new Error("只有逸仙 U06 支持 seed，范围为 0～1125899906842624 的整数");
@@ -137,9 +139,9 @@ async function wait(context: ProviderContext, milliseconds: number) {
 export default {
   id: "yixianVideo",
   label: "逸仙视频",
-  version: "1.0.1",
+  version: "1.1.0",
   apiUrl: "https://yixian.lol",
-  readme: "逸仙 API 的 MINIMAX-H3 极速版 U08 / 质量版 U06，支持 1～15 秒，默认 10 秒。U08 支持最多 9 张参考图片、3 段参考音频；U06 额外支持最多 3 段参考视频及 seed（0 有效）。音频必须搭配图片或视频。连接画布素材节点或在 H3 编辑器上传，图片上限 20 MiB、音频 64 MiB、视频及全部素材合计 100 MiB。素材直接上传逸仙，无需 OSS；提示词使用 <Picture 1>、<Audio 1>、<Video 1> 引用。画质与高级参数使用服务端配置。中断后恢复原任务，不会重复提交；若提交回执丢失且无任务编号，请到逸仙视频专栏核查。",
+  readme: "逸仙 API 的 MINIMAX-H3 极速版 U08 / 质量版 U06 / 升级版 U00N，支持 1～15 秒，默认 10 秒。所有模型支持最多 9 张参考图片、3 段参考音频；U06 额外支持最多 3 段参考视频及 seed（0 有效）；U00N 额外支持 1 段参考视频，不支持 seed。音频必须搭配图片或视频。连接画布素材节点或在 H3 编辑器上传，图片上限 20 MiB、音频 64 MiB、视频及全部素材合计 100 MiB。素材直接上传逸仙，无需 OSS；提示词使用 <Picture 1>、<Audio 1>、<Video 1> 引用。画质与高级参数使用服务端配置。中断后恢复原任务，不会重复提交；若提交回执丢失且无任务编号，请到逸仙视频专栏核查。",
   rules,
   models: [{
     id: "yixian-h3-u08", label: "MINIMAX-H3 极速版 U08", type: "video",
@@ -150,6 +152,11 @@ export default {
     id: "yixian-h3-u06", label: "MINIMAX-H3 质量版 U06", type: "video",
     mode: ["text", ["imageReference:9", "videoReference:3", "audioReference:3"]], taskRecovery: true, supportsSeed: true, defaultDuration: 10,
     videoRatios: ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"],
+    durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: [] }],
+  }, {
+    id: "yixian-h3-u00n", label: "MINIMAX-H3 升级版 U00N", type: "video",
+    mode: ["text", ["imageReference:9", "videoReference:1", "audioReference:3"]], taskRecovery: true, defaultDuration: 10,
+    videoRatios: ["9:16", "16:9", "1:1", "2:3", "3:2", "3:4", "4:3", "21:9"],
     durationResolutionMap: [{ duration: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolution: [] }],
   }],
   async generateVideo(request: VideoRequest): Promise<MediaAsset[]> {

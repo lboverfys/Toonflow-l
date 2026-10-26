@@ -265,6 +265,10 @@ export async function initializeMediaProviders(sourceDirectory: string, bundled:
       const model = parseProvider(source).models.find(model => model.id === "u06");
       if (old && model) Object.assign(old, { mode: model.mode, durationResolutionMap: model.durationResolutionMap, defaultDuration: model.defaultDuration, defaultResolution: model.defaultResolution });
     }
+    if (saved?.id === "yixianVideo" && ["1.0.0", "1.0.1"].includes(saved.version ?? "") && !saved.models.some(model => model.id === "yixian-h3-u00n")) {
+      const model = parseProvider(source).models.find(model => model.id === "yixian-h3-u00n");
+      if (model) saved.models.push(model);
+    }
     const next = saved ? replaceProviderConfig(source, saved.models, saved.label) : source;
     metadata(name, next);
     await writeAtomic(target, next);

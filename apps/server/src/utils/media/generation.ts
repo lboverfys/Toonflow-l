@@ -277,7 +277,8 @@ async function generateMediaResult(
     }
   }
   if (!restoring && providerInfo.id === "yixianVideo") {
-    if ((request.images?.length ?? 0) > 9 || (request.audios?.length ?? 0) > 3 || (request.videos?.length ?? 0) > (model.id === "yixian-h3-u06" ? 3 : 0)) invalid("逸仙 H3 最多支持 9 张图片、3 段音频，只有 U06 支持最多 3 段视频");
+    const maxVideos = model.id === "yixian-h3-u06" ? 3 : model.id === "yixian-h3-u00n" ? 1 : 0;
+    if ((request.images?.length ?? 0) > 9 || (request.audios?.length ?? 0) > 3 || (request.videos?.length ?? 0) > maxVideos) invalid(`当前逸仙 H3 模型最多支持 9 张图片、3 段音频和 ${maxVideos} 段视频`);
     if (request.audios?.length && !request.images?.length && !request.videos?.length) invalid("使用音频参考时必须同时提供图片或视频参考");
     let total = 0;
     // ACT: 宿主通过 Base64 传递素材，读取前限制合计 100 MiB；更大素材需改为流式上传。
