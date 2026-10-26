@@ -83,7 +83,7 @@ async function createSnapshot(context: ProviderContext, base: string, headers: R
   if (resolution !== undefined && !rows.some(row => row.resolution.includes(resolution) && (duration === undefined || row.duration.includes(duration))))
     throw new Error("分辨率不在模型声明的范围内");
   if (request.ratio !== undefined && !model.videoRatios?.includes(request.ratio)) throw new Error("画面比例不在模型声明的范围内");
-  if (request.seed !== undefined && (!model.supportsSeed || !Number.isSafeInteger(request.seed))) throw new Error("模型不支持此 seed");
+  if (request.seed !== undefined && (!model.supportsSeed || !Number.isSafeInteger(request.seed) || request.seed < 0)) throw new Error("模型不支持此 seed 或 seed 不是非负安全整数");
   if (request.generateAudio !== undefined && ((model.audio === undefined || model.audio === false) && request.generateAudio || model.audio === true && !request.generateAudio))
     throw new Error("声音设置不符合模型声明");
   const parameters: Record<string, unknown> = { prompt: request.prompt };
@@ -111,8 +111,8 @@ async function generateImage(this: ProviderContext, request: ImageRequest): Prom
   const images = request.images ?? [];
   const modes = model.mode ?? [];
   if (!request.prompt.trim()) throw new Error("请输入生成提示词");
-  if ((!images.length && !modes.includes("text")) || (images.length === 1 && !modes.includes("singleImage") && !modes.includes("multiReference"))
-    || (images.length > 1 && !modes.includes("multiReference")) || images.length < (model.minReferenceImages ?? 0)) throw new Error("参考图片不符合模型声明的生成模式");
+  if (!modes.some(mode => mode === "text" && images.length === 0 || mode === "singleImage" && images.length === 1
+    || mode === "multiReference" && images.length >= Math.max(1, model.minReferenceImages ?? 0))) throw new Error("参考图片不符合模型声明的生成模式");
   if (request.size !== undefined && !model.imageSizes?.includes(request.size)) throw new Error("图片尺寸不在模型声明的范围内");
   if (request.ratio !== undefined && !model.imageRatios?.includes(request.ratio)) throw new Error("画面比例不在模型声明的范围内");
   const n = request.n ?? 1;

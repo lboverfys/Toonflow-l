@@ -532,7 +532,7 @@ async function startGeneration() {
     if (data.value.seed != null && data.value.seed < 0) throw new Error("U06 种子须为非负安全整数");
     if (/\{\{ref\s+\d+\}\}/.test(generationPrompt.value)) throw new Error("U06 提示词中存在无效引用，请重新选择图片或音频引用");
   }
-  if (choice.supportsSeed === true && data.value.seed != null && !Number.isSafeInteger(data.value.seed)) throw new Error("seed 必须为 JavaScript 安全范围内的整数");
+  if (choice.supportsSeed === true && data.value.seed != null && (!Number.isSafeInteger(data.value.seed) || data.value.seed < 0)) throw new Error("seed 必须为 JavaScript 安全范围内的非负整数");
   if (refList.value.some(item => item.value === undefined)) throw new Error("引用节点暂无内容，请先补充引用内容");
   const images = refList.value.flatMap((item) => item.dataType === "IMAGE" && item.value ? [{ path: item.value.url, mimeType: item.value.mimeType }] : []);
   const referenceImageUrls = referenceUrls(choice);
@@ -776,7 +776,7 @@ registerGenerationTools({
 
 nodeTools.register({
   name: "setConfig",
-  description: "修改视频节点配置，不启动生成。先用 getConfig 查询能力，providerId 与 modelId 同时提供。seed 为安全整数，0 有效，null 使用随机值；U06 为非负整数，并支持 other 中的 modelKey、clipKey、loraKey、loraStrength、extraLoraKey、extraLoraStrength、accelerated、steps、upscale、forceVramCleanupBeforeVae，选项键取自 videoOptions。referenceImageInput 为 url 的模型支持 referenceImageUrls；mode 使用 getConfig 返回的原始值，须匹配引用",
+  description: "修改视频节点配置，不启动生成。先用 getConfig 查询能力，providerId 与 modelId 同时提供。seed 为非负安全整数，0 有效，null 使用随机值；U06 支持 other 中的 modelKey、clipKey、loraKey、loraStrength、extraLoraKey、extraLoraStrength、accelerated、steps、upscale、forceVramCleanupBeforeVae，选项键取自 videoOptions。referenceImageInput 为 url 的模型支持 referenceImageUrls；mode 使用 getConfig 返回的原始值，须匹配引用",
   parameters: z.strictObject({
     providerId: z.string().min(1).optional(),
     modelId: z.string().min(1).optional(),
@@ -785,7 +785,7 @@ nodeTools.register({
     ratio: z.string().regex(/^[1-9]\d{0,3}:[1-9]\d{0,3}$/).optional(),
     mode: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
     generateAudio: z.boolean().optional(),
-    seed: z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+    seed: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
     other: z.strictObject({
       modelKey: z.string().min(1).optional(), clipKey: z.string().min(1).optional(), loraKey: z.string().min(1).optional(), extraLoraKey: z.string().min(1).optional(),
       loraStrength: z.number().min(0).max(2).optional(), extraLoraStrength: z.number().min(0).max(2).optional(),

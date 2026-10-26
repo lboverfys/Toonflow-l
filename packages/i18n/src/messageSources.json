@@ -6594,7 +6594,7 @@
   "本地参考图与 HTTPS 链接合计最多 9 张": [
     "apps/server/src/utils/media/generation.ts"
   ],
-  "当前模型不支持 seed 或 seed 不是安全整数": [
+  "当前模型不支持 seed 或 seed 不是非负安全整数": [
     "apps/server/src/utils/media/generation.ts"
   ],
   "逸仙参考素材须先保存到工作区": [

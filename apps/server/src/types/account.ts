@@ -22,16 +22,20 @@ export const modelSchema = z.object({
   defaultDuration: z.number().positive().optional(), defaultResolution: z.string().optional(),
   durationResolutionMap: z.array(z.object({ duration: z.array(z.number().int().min(1).max(3600)), resolution: z.array(z.string()) })).optional(),
 });
-const categorySchema = z.object({ enabled: z.boolean(), defaultModel: z.string().optional(),
-  models: z.array(modelSchema).max(2000), requestBodyLimitMiB: z.number().int().positive().optional(),
+const createCategorySchema = (itemSchema: z.ZodType<z.infer<typeof modelSchema>>) => z.object({ enabled: z.boolean(), defaultModel: z.string().optional(),
+  models: z.array(itemSchema).max(2000), requestBodyLimitMiB: z.number().int().positive().optional(),
 }).superRefine((category, context) => {
   if (new Set(category.models.map(model => model.id)).size !== category.models.length)
     context.addIssue({ code: "custom", message: "平台模型 ID 重复" });
   if (category.enabled && !category.models.some(model => model.id === category.defaultModel))
     context.addIssue({ code: "custom", message: "平台默认模型不存在" });
 });
+const textAndImageCategorySchema = createCategorySchema(modelSchema.extend({
+  audio: modelSchema.shape.audio.nullable().transform(value => value ?? undefined),
+}));
+const videoCategorySchema = createCategorySchema(modelSchema.required({ audio: true }));
 export const platformConfigSchema = z.object({ revision: z.string().min(1), min_client_version: z.string(),
-  categories: z.object({ text: categorySchema, image: categorySchema, video: categorySchema }), limits: uploadLimitsSchema });
+  categories: z.object({ text: textAndImageCategorySchema, image: textAndImageCategorySchema, video: videoCategorySchema }), limits: uploadLimitsSchema });
 export const accountInfoSchema = z.object({ user: userSchema, balance: z.object({ quota: z.number(), display: z.string() }),
   storage: z.object({ used_bytes: z.number().nonnegative(), quota_bytes: z.number().nonnegative() }),
   topup_url: z.url({ protocol: /^https$/ }).refine(value => { const url = new URL(value); return !url.username && !url.password; }),

@@ -202,7 +202,7 @@ async function generateMediaResult(
       if (request.images?.length || request.referenceImageUrls?.length || request.audios?.length || request.videos?.length) invalid("首尾帧模式不支持额外参考图片、音频或视频");
     }
     if (mediaType === "video" && model.referenceImageInput === "url" && (request.images?.length ?? 0) + (request.referenceImageUrls?.length ?? 0) > 9) invalid("本地参考图与 HTTPS 链接合计最多 9 张");
-    if (request.seed !== undefined && (mediaType !== "video" || model.supportsSeed !== true || !Number.isSafeInteger(request.seed))) invalid("当前模型不支持 seed 或 seed 不是安全整数");
+    if (request.seed !== undefined && (mediaType !== "video" || model.supportsSeed !== true || !Number.isSafeInteger(request.seed) || request.seed < 0)) invalid("当前模型不支持 seed 或 seed 不是非负安全整数");
     if (mediaType === "video" && model.referenceAudioInput === "url") {
       const modes = Array.isArray(model.mode) ? model.mode.filter(Array.isArray) : [];
       const limit = Math.max(0, ...modes.flat().filter((value): value is string => typeof value === "string" && /^audioReference:\d+$/.test(value)).map(value => Number(value.split(":")[1])));

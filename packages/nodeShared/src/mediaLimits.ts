@@ -13,7 +13,7 @@ export async function getMediaLimits() {
   if (!cache.pending || cache.expiresAt <= Date.now() || cache.language !== language) {
     cache.language = language;
     cache.expiresAt = Date.now() + 10 * 60_000;
-    cache.pending = fetch("/api/account/limits", { headers: { "Accept-Language": language }, cache: "no-store" }).then(async response => {
+    cache.pending = fetch("/api/account/limits", { headers: { "Accept-Language": language, "x-toonflow-workspace": "1" }, cache: "no-store" }).then(async response => {
       const result = await response.json();
       if (!response.ok || result.code !== 200) throw new Error(result.message);
       return result.data as LimitInfo;
