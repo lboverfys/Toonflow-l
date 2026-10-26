@@ -33,7 +33,7 @@
 
 <script setup lang="ts">
 import { signInVisible } from "@/stores/account";
-import { defineAsyncComponent, ref } from "vue";
+import { defineAsyncComponent, onBeforeUnmount, ref } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { IconQrcode, IconDeviceDesktop } from "@tabler/icons-vue";
@@ -61,6 +61,9 @@ async function completeSetup() {
     saving.value = false;
   }
 }
+
+window.addEventListener("toonflow:signed-in", completeSetup);
+onBeforeUnmount(() => window.removeEventListener("toonflow:signed-in", completeSetup));
 
 </script>
 

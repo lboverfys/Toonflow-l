@@ -35,7 +35,12 @@ async function poll(current: number) {
   try {
     const state = await refreshAccount();
     if (current !== generation) return;
-    if (state.authenticated && state.loginStatus === "idle") { stopWaiting(); visible.value = false; return; }
+    if (state.authenticated && state.loginStatus === "idle") {
+      stopWaiting();
+      visible.value = false;
+      window.dispatchEvent(new Event("toonflow:signed-in"));
+      return;
+    }
     if (["cancelled", "failed", "expired"].includes(state.loginStatus) || Date.now() >= deadline) {
       message.value = state.message || t`登录已超时，请重新登录`;
       stopWaiting();
