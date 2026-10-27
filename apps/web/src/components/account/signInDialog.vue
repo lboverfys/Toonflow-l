@@ -56,8 +56,8 @@ async function start(screen: "signin" | "signup") {
   starting.value = true;
   message.value = "";
   try {
-    const { data } = await api.post("/api/account/start", { screen }, { timeout: 10000 });
-    window.open(data.data.url, "_blank", "noopener,noreferrer");
+    const { data } = await api.post<{ data: { url: string; browserOpened: boolean } }>("/api/account/start", { screen }, { timeout: 10000 });
+    if (!data.data.browserOpened) window.open(data.data.url, "_blank", "noopener,noreferrer");
     waiting.value = true;
     deadline = Date.now() + 10 * 60_000;
     void poll(++generation);
