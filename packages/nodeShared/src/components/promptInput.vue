@@ -351,12 +351,45 @@ watch(senderElement, (element, _previous, onCleanup) => {
   const editor = instance.chatElement.richText;
   // ACT: 1.4.6 未检查卸载节点和空 Range 矩形；只适配当前实例，升级到库内修复后可移除。
   const chatEditor = instance.chatEditor as typeof instance.chatEditor & {
+    undoHistory: { nodes: AnyTagProps[][]; selection?: { anchor: number; focus: number } }[];
+    redoHistory: { nodes: AnyTagProps[][]; selection?: { anchor: number; focus: number } }[];
     focusFirst(): void;
     focusLast(): void;
     focusMark(): void;
     cursorView(): void;
     insertNodes(nodes: AnyTagProps[][]): Promise<void>;
   };
+  // ACT: XSender 1.4.6 只记录上次输入后的光标；沿用其 50 条历史，补记本次编辑前的选区。
+  const captureHistorySelection = () => {
+    const entry = chatEditor.undoHistory.at(-1);
+    if (entry && JSON.stringify(entry.nodes) === JSON.stringify(instance.getModel())) entry.selection = getSelection() ?? entry.selection;
+  };
+  let restoringHistory = false;
+  const restoreHistory = async (event: KeyboardEvent) => {
+    if (props.disabled || event.isComposing || event.defaultPrevented) return;
+    const key = event.key.toLowerCase();
+    const historyKey = (event.ctrlKey || event.metaKey) && !event.altKey && (key === "z" || key === "y");
+    if (!historyKey) { captureHistorySelection(); return; }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (restoringHistory) return;
+    restoringHistory = true;
+    try {
+      await instance.nextTick();
+      if (sender !== instance) return;
+      captureHistorySelection();
+      const redo = key === "y" || event.shiftKey;
+      const entry = redo ? chatEditor.redoHistory.at(-1) : chatEditor.undoHistory.at(-2);
+      if (!entry) return;
+      await (redo ? instance.redo() : instance.undo());
+      await resetTask;
+      if (sender === instance && entry.selection) restoreSelection(entry.selection);
+    } finally { restoringHistory = false; }
+  };
+  editor.addEventListener("beforeinput", captureHistorySelection, true);
+  editor.addEventListener("paste", captureHistorySelection, true);
+  editor.addEventListener("cut", captureHistorySelection, true);
+  editor.addEventListener("keydown", restoreHistory, true);
   for (const method of ["focusFirst", "focusLast", "focusMark"] as const) {
     const focus = chatEditor[method].bind(chatEditor);
     chatEditor[method] = () => {
@@ -417,6 +450,10 @@ watch(senderElement, (element, _previous, onCleanup) => {
     sender = undefined;
     editor.removeEventListener("copy", copyText);
     editor.removeEventListener("cut", copyText);
+    editor.removeEventListener("beforeinput", captureHistorySelection, true);
+    editor.removeEventListener("paste", captureHistorySelection, true);
+    editor.removeEventListener("cut", captureHistorySelection, true);
+    editor.removeEventListener("keydown", restoreHistory, true);
     document.removeEventListener("pointerdown", closeOutside, true);
     popup.removeEventListener("click", selectReference, true);
     // ACT: 1.4.6 的 destroy 会删除排队回调仍需用到的字段；先走公开清理事件，库修复后可直接 destroy。
