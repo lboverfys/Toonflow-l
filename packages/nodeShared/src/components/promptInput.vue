@@ -58,18 +58,80 @@ const tokenPattern = computed(() => props.recognizeTokens && props.references.le
   ? new RegExp(`(${[...new Set(props.references.filter(item => !item.action).map(item => item.value))].filter(Boolean).sort((a, b) => b.length - a.length).map(value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "g")
   : /(\{\{ref \d+\}\})/g);
 
-function caretOffset() {
+function selectionOffset(node: Node | null, offset: number) {
   if (!sender) return;
-  const cursor = sender.getCurrentNode();
-  const row = sender.chatEditor.NODES.findIndex(grid => grid.children.includes(cursor.instance));
-  if (row < 0) return;
-  const column = sender.chatEditor.NODES[row].children.indexOf(cursor.instance);
   const value = sender.getModel();
-  return (row ? getPromptText(value.slice(0, row)).length + 1 : 0) + getPromptText([value[row].slice(0, column)]).length + Math.min(cursor.instance.text.length, Math.max(0, cursor.offset));
+  if (node === sender.chatElement.richText) return getPromptText(value.slice(0, offset)).length + (offset > 0 && offset < value.length ? 1 : 0);
+  const row = sender.chatEditor.NODES.findIndex(grid => grid.$el.contains(node));
+  if (row < 0) return;
+  const grid = sender.chatEditor.NODES[row];
+  const start = row ? getPromptText(value.slice(0, row)).length + 1 : 0;
+  if (node === grid.$el) return start + getPromptText([value[row].slice(0, offset)]).length;
+  const column = grid.children.findIndex(child => child.$el.contains(node));
+  if (column < 0) return;
+  const child = grid.children[column];
+  const range = document.createRange();
+  range.selectNodeContents(child.$el);
+  range.setEnd(node!, offset);
+  const length = getPromptText([[value[row][column]]]).length;
+  const local = child.type === "Write" || child.type === "Input" ? range.toString().replace(/[\uFEFF\u200B]/g, "").length : offset ? length : 0;
+  return start + getPromptText([value[row].slice(0, column)]).length + Math.min(length, local);
+}
+
+function getSelection() {
+  const selection = sender?.getSelection();
+  if (!selection?.rangeCount) return;
+  const anchor = selectionOffset(selection.anchorNode, selection.anchorOffset);
+  const focus = selectionOffset(selection.focusNode, selection.focusOffset);
+  if (anchor !== undefined && focus !== undefined) return { anchor, focus };
+}
+
+function restoreSelection(selection: { anchor: number; focus: number }) {
+  const instance = sender;
+  if (!instance || props.disabled) return;
+  const value = instance.getModel();
+  const length = getPromptText(value).length;
+  const endpoint = (position: number) => {
+    let offset = Math.max(0, Math.min(length, position));
+    for (const [row, grid] of instance.chatEditor.NODES.entries()) {
+      for (const [column, target] of grid.children.entries()) {
+        const size = getPromptText([[value[row][column]]]).length;
+        if ((target.type === "Write" || target.type === "Input") && offset <= size) {
+          const node = target.type === "Write" ? target.$el.children[0].firstChild : target.$el.children[0].children[0].firstChild;
+          if (!node) return;
+          // XSender 用零宽字符承载空行及内部换行，历史位置只计算实际提示词。
+          let domOffset = 0;
+          let remaining = Math.min(target.text.length, Math.max(0, offset));
+          for (const character of node.textContent ?? "") {
+            if (character !== "\uFEFF" && character !== "\u200B") {
+              if (remaining <= 0) break;
+              remaining -= character.length;
+            }
+            domOffset += character.length;
+          }
+          return { target, node, offset: domOffset };
+        }
+        offset -= size;
+      }
+      offset--;
+    }
+  };
+  const anchor = endpoint(selection.anchor);
+  const focus = endpoint(selection.focus);
+  if (!anchor || !focus) return;
+  focus.target.focus(focus.offset);
+  instance.getSelection().setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset);
+}
+
+function caretOffset() {
+  const cursor = sender?.getCurrentNode();
+  return getSelection()?.focus ?? (cursor && selectionOffset(cursor.node, cursor.offset));
 }
 
 defineExpose({
   getCaretOffset: caretOffset,
+  getSelection,
+  restoreSelection,
   replaceText(value: string) { syncModel(value.split("\n").map(text => [{ type: "Write", text }])); },
   async insertText(value: string) {
     if (!sender || props.disabled) return;

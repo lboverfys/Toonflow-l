@@ -280,8 +280,9 @@ async function confirmInpaint() {
 }
 
 async function startGeneration() {
+  const shouldResume = pendingTask.value;
   await refreshImageTask();
-  if (pendingTask.value) return resumeGeneration();
+  if (shouldResume || pendingTask.value) return resumeGeneration();
   const choice = selectedModel.value;
   if (generating.value) throw new Error("图片正在生成，请等待完成");
   if (panorama.value?.visible) throw new Error("请先关闭全景图，再启动图片生成");
