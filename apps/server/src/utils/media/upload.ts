@@ -17,8 +17,9 @@ const assetSchema = z.object({ success: z.literal(true), data: z.object({
   asset: z.object({ id: z.string().min(1).max(2048), media_type: z.enum(["image", "audio", "video"]) }), content_url: z.url({ protocol: /^https$/ }),
 }) });
 
-export async function preparePlatformReferences(directory: string, references: Reference[], signal?: AbortSignal) {
+export async function preparePlatformReferences(directory: string, references: Reference[], signal?: AbortSignal, totalLimit?: number) {
   const { limits } = getConfigState();
+  const maxTotalBytes = Math.min(limits.requestTotalMaxBytes, totalLimit ?? limits.requestTotalMaxBytes);
   if (references.length > limits.maxReferencesPerRequest) invalid(t`参考素材最多 ${limits.maxReferencesPerRequest} 个`);
   const prepared: { path: string; size: number; modified: number; mediaType: Reference["mediaType"]; mimeType: string; name: string }[] = [];
   let total = 0;
@@ -29,7 +30,7 @@ export async function preparePlatformReferences(directory: string, references: R
     const limit = limits[`${reference.mediaType}MaxBytes`];
     if (!info.isFile() || !info.size || info.size > limit) invalid(t`参考素材为空或超过 ${limit / 1024 / 1024} MiB`, 413);
     total += info.size;
-    if (total > limits.requestTotalMaxBytes) invalid(t`参考素材合计不能超过 ${limits.requestTotalMaxBytes / 1024 / 1024} MiB`, 413);
+    if (total > maxTotalBytes) invalid(t`参考素材合计不能超过 ${maxTotalBytes / 1024 / 1024} MiB`, 413);
     prepared.push({ path, size: info.size, modified: info.mtimeMs, mediaType: reference.mediaType, mimeType: reference.mimeType, name: basename(path) });
   }
   for (const reference of prepared) {

@@ -5,7 +5,7 @@ import conf from "@/utils/conf";
 import type { DesktopRuntime, desktopUpdateAttempt, updateSnapshot } from "@/types/desktop";
 
 const updateBaseUrls = {
-  official: "https://updates.yixian.lol",
+  official: "https://yixian.lol/toonflow/updates",
   github: "https://github.com/lboverfys/Toonflow-l/releases/latest/download",
 };
 const updateRuntimeId = crypto.randomUUID();

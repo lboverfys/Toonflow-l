@@ -13,7 +13,10 @@ let timer: ReturnType<typeof setInterval> | undefined;
 export function getConfigState() {
   const saved = conf.get("settings.yixianConfig") as { baseUrl?: string; userId?: number; config?: unknown } | undefined;
   const parsed = saved?.baseUrl === getBaseUrl() && saved.userId === getAccount()?.user.id ? platformConfigSchema.safeParse(saved.config) : undefined;
-  return { limits: parsed?.success ? parsed.data.limits : defaultUploadLimits,
+  const limits = parsed?.success ? parsed.data.limits : defaultUploadLimits;
+  const imageBodyLimit = parsed?.success ? parsed.data.categories.image.requestBodyLimitMiB : undefined;
+  return { limits,
+    imageTotalMaxBytes: Math.min(limits.requestTotalMaxBytes, imageBodyLimit ? Math.max(0, imageBodyLimit - 1) * 1024 * 1024 : limits.requestTotalMaxBytes),
     revision: parsed?.success ? parsed.data.revision : undefined, configError: getAccount() ? translateMessage(configError) : "" };
 }
 
@@ -30,13 +33,17 @@ export async function refreshConfig(): Promise<void> {
     try {
       const config = platformConfigSchema.parse(await accountFetch("/v1/toonflow/config"));
       if (getAccount() !== account) return;
-      if (getConfigState().revision === config.revision) { configError = ""; return; }
       const { text, image, video } = config.categories;
       const provider = await getMediaProvider("yixianVideo");
       const models = [
         ...(image.enabled ? image.models.map(model => ({ ...model, type: "image" as const })) : []),
         ...(video.enabled ? video.models.map(model => ({ ...model, type: "video" as const, taskRecovery: true, referenceInput: "platformAsset" as const })) : []),
       ];
+      const saved = conf.get("settings.yixianConfig") as { config?: unknown } | undefined;
+      if (JSON.stringify(saved?.config) === JSON.stringify(config) && JSON.stringify(provider.models) === JSON.stringify(models)) {
+        configError = "";
+        return;
+      }
       if (getAccount() !== account) return;
       await saveMediaProvider(provider.fileName, models, provider.revision);
       if (getAccount() !== account) return;

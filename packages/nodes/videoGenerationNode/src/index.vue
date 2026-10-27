@@ -512,8 +512,10 @@ onScopeDispose(() => {
 async function startGeneration() {
   if (promptOptimizing.value || uploadingReferences.value) throw new Error("请等待提示词优化或素材上传完成");
   if (zealmanEnqueuing.value) throw new Error("正在加入队列，请稍候");
+  const shouldResume = pendingTask.value && !isZealmanU06.value;
   if (!generating.value) await refreshVideoTask();
-  if (pendingTask.value && !isZealmanU06.value) return resumeGeneration();
+  // 保留点击时的恢复意图，原任务在刷新期间完成或失败也不能转成新生成。
+  if (shouldResume || pendingTask.value && !isZealmanU06.value) return resumeGeneration();
   const choice = selectedModel.value;
   if (generating.value && !isZealmanU06.value) throw new Error("视频正在生成，请等待完成");
   if (uploading.value) throw new Error("视频正在替换，请等待完成");

@@ -39,14 +39,15 @@ function imageOptions(value: unknown, pattern: RegExp) {
 
 export async function listMediaModels(): Promise<MediaModel[]> {
   const installedProviders = await listMediaProviders();
-  const uploadLimits = getConfigState().limits;
+  const { limits: uploadLimits, imageTotalMaxBytes } = getConfigState();
   const defaults = conf.get("settings.defaultModels") as Record<string, { modelId: string } | null> | undefined;
   return installedProviders.flatMap(provider => provider.models.flatMap(model => {
     if (model.type !== "image" && model.type !== "video") return [];
     const builtIn = (mediaProviders as readonly Provider[]).find(item => item.id === provider.id)?.models.find(item => item.id === model.id);
     return [{
       providerId: provider.id, providerLabel: provider.label, modelId: model.id, label: model.label, type: model.type,
-      uploadLimits, isDefault: defaults?.[model.type]?.modelId === model.id,
+      uploadLimits: model.type === "image" ? { ...uploadLimits, requestTotalMaxBytes: imageTotalMaxBytes } : uploadLimits,
+      isDefault: defaults?.[model.type]?.modelId === model.id,
       mode: model.mode, durationResolutionMap: model.durationResolutionMap, audio: model.audio,
       ...(model.type === "video" ? {
         videoRatios: imageOptions(model.videoRatios, /^[1-9]\d{0,3}:[1-9]\d{0,3}$/),
@@ -243,7 +244,7 @@ async function generateMediaResult(
       if (request.firstFrame) firstFrame = uploaded[index++];
       if (request.lastFrame) lastFrame = uploaded[index];
     } else if (mediaType === "image") {
-      const prepared = await preparePlatformReferences(directory, references, signal);
+      const prepared = await preparePlatformReferences(directory, references, signal, getConfigState().imageTotalMaxBytes);
       images = prepared.map(item => ({ type: "file", file: file(item.path, { type: item.mimeType }), mimeType: item.mimeType, name: item.name }));
     }
   }
